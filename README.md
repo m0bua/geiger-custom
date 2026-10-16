@@ -4,7 +4,7 @@ Initial application scaffold for the STM32L051C8T6 target. Requirements and UI a
 
 ## Status
 
-This is an early test firmware. It switches the onboard RGB LED off at startup and uses the right button to step off → red → yellow → green → cyan (green + blue) → blue → purple (red + blue) → white (all channels); the left button steps backward. Pressing right from green adds blue; pressing left from green adds red. Short presses change color on release. Holding right for 800 ms raises brightness to the next level; holding left lowers it. Levels are 1, 3, 5, 10, 30, 50, 70, and 100%, starting at 30%. The sequence stops at both ends. Confirmed RGB pins are PA0=red, PA1=green, PA6=blue, active-low; buttons are PB9=left and PA4=right, active-low. In the UI, left is Exit/Off and right is Enter. The firmware does not enable the detector HV generator or write to external flash.
+This is an early test firmware. It switches the RGB LED off at startup and steps through off → red → yellow → green → cyan → blue → purple → white; right advances and left reverses. The LCD controller initializes at startup while its backlight remains off. The backlight turns on at a button press; after one second without button activity, the RGB LED and backlight turn off. While the LCD initializes or draws a frame, the backlight stays on and the idle countdown resumes after rendering. The color selection is retained; the first short press wakes the LED and backlight at that color without advancing, and later short presses change color. Holding right for 800 ms raises RGB brightness; holding left lowers it. Levels are 1, 3, 5, 10, 30, 50, 70, and 100%, starting at 30%. Confirmed RGB pins are PA0=red, PA1=green, PA6=blue, active-low; buttons are PB9=left and PA4=right, active-low. Current LCD diagnostic uses SPI2 on PB13/PB15, with PA8 reset, PB11 D/C, and active-low PA11 CS. It attempts a solid-color frame, but LCD pixels have not responded. The green diagnostic LED confirms activity and output readback at the MCU only; continuity and panel response remain unverified. See [LCD bring-up log](docs/docs/LCD_BRINGUP.md). The firmware does not enable the detector HV generator or write to external flash.
 
 ## Layout
 
@@ -16,11 +16,9 @@ This is an early test firmware. It switches the onboard RGB LED off at startup a
 
 ## Next steps
 
-1. Build and flash the RGB/button test image with HV left disabled.
-2. Check the color order and which physical key maps to each direction; correct `include/board_config.h` if needed.
-3. Measure LED/button polarity and replace the candidate mapping with verified board facts.
-4. Add LCD support and then connect and validate detector pulse capture.
-5. Confirm the exact SPI NOR part and geometry before defining any erase or journal operations.
+1. Flash and visually verify LCD color order, orientation, and backlight behavior.
+2. Implement detector pulse capture after establishing the input pin and safe interrupt/timer configuration.
+3. Confirm the exact SPI NOR part and geometry before defining any erase or journal operations.
 
 ## Build with PlatformIO
 

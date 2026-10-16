@@ -1,0 +1,4 @@
+[env:geiger2]
+upload_protocol = serial
+upload_port = COM
+upload_speed = 115200

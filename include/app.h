@@ -14,7 +14,7 @@ typedef struct {
 
 void app_init(app_t *app);
 /* Portable one-second task hook. Hardware scheduler and display integration
- * belong to the board layer and are not present yet. */
+ * belong to the board layer. */
 void app_tick_1s(app_t *app, uint32_t *cps, uint32_t *cpm);
 /* Advance the logical LED state; return R/G/B channel mask for the board
  * adapter. Starts at off. */
