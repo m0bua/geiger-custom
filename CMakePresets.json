@@ -1,0 +1,26 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "arm-debug",
+      "displayName": "STM32L051C8 Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/arm-none-eabi-toolchain.cmake"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "arm-debug",
+      "configurePreset": "arm-debug"
+    }
+  ]
+}
