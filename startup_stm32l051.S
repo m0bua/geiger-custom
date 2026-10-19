@@ -21,7 +21,11 @@ g_pfnVectors:
     .word Default_Handler
     .word Default_Handler /* PendSV */
     .word SysTick_Handler
-    .rept 32
+    .rept 7
+    .word Default_Handler
+    .endr
+    .word EXTI4_15_IRQHandler
+    .rept 24
     .word Default_Handler
     .endr
 

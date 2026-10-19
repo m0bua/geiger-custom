@@ -8,6 +8,7 @@
 #define BOARD_RGB_B_PIN             6u  /* PA6 */
 #define BOARD_BUTTON_LEFT_PIN       9u  /* PB9; reverse / UI Exit-Off */
 #define BOARD_BUTTON_RIGHT_PIN      4u  /* PA4; forward / enter */
+#define BOARD_DETECTOR_PIN          6u  /* PB6; inferred from stock EXTI usage */
 
 /* PB2 is used as the LCD backlight PWM output (LPTIM1_OUT, AF2). */
 #define BOARD_LCD_BACKLIGHT_PIN     2u  /* PB2; LPTIM1_OUT */

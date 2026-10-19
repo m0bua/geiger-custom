@@ -7,6 +7,11 @@
 #include <stdint.h>
 
 volatile uint32_t board_millis;
+static volatile uint32_t detector_pulse_count;
+
+#define DETECTOR_GPIO_BASE GPIOB_BASE
+#define DETECTOR_PIN       BOARD_DETECTOR_PIN
+#define DETECTOR_EXTI_MASK (1u << DETECTOR_PIN)
 
 #define REG32(address) (*(volatile uint32_t *)(uintptr_t)(address))
 
@@ -49,6 +54,13 @@ volatile uint32_t board_millis;
 #define GPIO_BSRR      0x18u
 #define GPIO_AFRL      0x20u
 #define GPIO_AFRH      0x24u
+#define SYSCFG_BASE    0x40010000u
+#define EXTI_BASE      0x40010400u
+#define EXTI_IMR       REG32(EXTI_BASE + 0x00u)
+#define EXTI_RTSR      REG32(EXTI_BASE + 0x08u)
+#define EXTI_FTSR      REG32(EXTI_BASE + 0x0Cu)
+#define EXTI_PR        REG32(EXTI_BASE + 0x14u)
+#define NVIC_ISER      REG32(0xE000E100u)
 
 #define TIM2_BASE      0x40000000u
 #define TIM22_BASE     0x40011400u
@@ -91,7 +103,18 @@ volatile uint32_t board_millis;
     LCD_SMALL_TEXT_ROW_GAP) + 1u) / 2u)
 #define LCD_TEXT_FIRST_Y ((LCD_HEIGHT - (LCD_TEXT_ROWS * FONT_LARGE_CELL_HEIGHT + \
     (LCD_TEXT_ROWS - 1u) * LCD_TEXT_ROW_GAP)) / 2u)
+#define LCD_CPM_MAX_VALUE 9999u
+#define LCD_CPM_MAX_DIGITS 4u
+#define LCD_CPM_FIELD_X ((LCD_WIDTH - (LCD_CPM_MAX_DIGITS * \
+    FONT_LARGE_CELL_WIDTH + (LCD_CPM_MAX_DIGITS - 1u) * \
+    LCD_TEXT_GAP)) / 2u)
+#define LCD_CPM_LABEL_LENGTH 3u
+#define LCD_CPM_LABEL_WIDTH (LCD_CPM_LABEL_LENGTH * \
+    FONT_SMALL_CELL_WIDTH + (LCD_CPM_LABEL_LENGTH - 1u) * \
+    LCD_SMALL_TEXT_GAP)
+#define LCD_COUNTER_GREEN 0x07E0u
 #define LCD_LARGE_GLYPH_PIXELS (FONT_LARGE_CELL_WIDTH * FONT_LARGE_CELL_HEIGHT)
+#define LCD_CPM_LABEL_PIXELS (LCD_CPM_LABEL_WIDTH * FONT_SMALL_CELL_HEIGHT)
 #define LCD_TEXT_GLYPH_PIXELS ((LCD_LARGE_GLYPH_PIXELS > \
     LCD_SMALL_TEXT_ROW_PIXELS) ? LCD_LARGE_GLYPH_PIXELS : \
     LCD_SMALL_TEXT_ROW_PIXELS)
@@ -142,10 +165,14 @@ static bool lcd_dma_active;
 static bool lcd_dma_is_text_row;
 static uint8_t lcd_dma_text_glyph_advance;
 static bool lcd_text_active;
+static bool lcd_cpm_redraw_pending;
 static bool lcd_text_row_commands_queued;
 static uint8_t lcd_text_glyph_index;
 static uint8_t lcd_text_dma_glyph_advance;
 static uint16_t lcd_text_glyph_pixels;
+static char lcd_cpm_digits[LCD_CPM_MAX_DIGITS + 1u] = "0";
+static uint8_t lcd_cpm_digit_count = 1u;
+static const char lcd_cpm_label[] = "CPM";
 static uint8_t lcd_screen_page;
 static uint16_t lcd_text_glyph[LCD_TEXT_GLYPH_PIXELS];
 static uint16_t lcd_draw_pixel;
@@ -188,6 +215,26 @@ static void lcd_check_output_level(uint32_t base, uint32_t pin, bool expected_hi
 static bool deadline_reached(uint32_t deadline)
 {
     return (int32_t)(board_millis - deadline) >= 0;
+}
+
+static void lcd_format_cpm(uint32_t cpm)
+{
+    char reversed[LCD_CPM_MAX_DIGITS];
+    uint8_t digits = 0u;
+
+    if (cpm > LCD_CPM_MAX_VALUE) {
+        cpm = LCD_CPM_MAX_VALUE;
+    }
+    do {
+        reversed[digits++] = (char)('0' + cpm % 10u);
+        cpm /= 10u;
+    } while (cpm != 0u && digits < sizeof(reversed));
+
+    for (uint8_t i = 0u; i < digits; ++i) {
+        lcd_cpm_digits[i] = reversed[digits - i - 1u];
+    }
+    lcd_cpm_digits[digits] = '\0';
+    lcd_cpm_digit_count = digits;
 }
 
 static uint16_t lcd_color_for_glyph(char glyph)
@@ -581,29 +628,84 @@ static void lcd_begin_fill(void)
 
 static bool lcd_text_prepare_glyph(void)
 {
-    static const char large_glyphs[] = "0123456789:.";
     static const char small_glyphs[] = "0123456789:.-/+ACDEGhHmMnNOPRST\xB5vVX";
     if (lcd_screen_page == 0u) {
-        const uint8_t glyph_count = (uint8_t)(sizeof(large_glyphs) - 1u);
-        uint8_t column;
-        uint8_t row;
+        const uint8_t glyph_count = LCD_CPM_MAX_DIGITS;
         uint8_t x_start;
         uint8_t y_start;
         uint8_t x_window[4];
         uint8_t y_window[4];
-        uint16_t glyph_color;
+        char glyph;
 
-        if (lcd_text_glyph_index >= glyph_count) {
+        if (lcd_text_glyph_index > glyph_count) {
             lcd_text_active = false;
             return false;
         }
 
-        column = (uint8_t)(lcd_text_glyph_index % LCD_TEXT_COLUMNS);
-        row = (uint8_t)(lcd_text_glyph_index / LCD_TEXT_COLUMNS);
-        x_start = (uint8_t)(LCD_TEXT_FIRST_X +
-            column * (FONT_LARGE_CELL_WIDTH + LCD_TEXT_GAP));
-        y_start = (uint8_t)(LCD_TEXT_FIRST_Y +
-            row * (FONT_LARGE_CELL_HEIGHT + LCD_TEXT_ROW_GAP));
+        if (lcd_text_glyph_index == glyph_count) {
+            const uint16_t label_width = LCD_CPM_LABEL_WIDTH;
+
+            {
+                const uint8_t first_digit = (uint8_t)(LCD_CPM_MAX_DIGITS -
+                    lcd_cpm_digit_count);
+                const uint8_t value_right_edge = (uint8_t)(LCD_CPM_FIELD_X +
+                    (first_digit + lcd_cpm_digit_count - 1u) *
+                        (FONT_LARGE_CELL_WIDTH + LCD_TEXT_GAP) +
+                    FONT_LARGE_CELL_WIDTH - 1u);
+                x_start = (uint8_t)(value_right_edge - label_width + 1u);
+            }
+            /* Keep the row inside the active 80-line panel after the stock
+             * controller's vertical offset. */
+            y_start = (uint8_t)(LCD_HEIGHT - FONT_SMALL_CELL_HEIGHT - 4u);
+            x_window[0] = 0u;
+            x_window[1] = x_start;
+            x_window[2] = 0u;
+            x_window[3] = (uint8_t)(x_start + label_width - 1u);
+            y_window[0] = 0u;
+            y_window[1] = (uint8_t)(LCD_Y_OFFSET + y_start);
+            y_window[2] = 0u;
+            y_window[3] = (uint8_t)(LCD_Y_OFFSET + y_start +
+                FONT_SMALL_CELL_HEIGHT - 1u);
+
+            lcd_text_glyph_pixels = LCD_CPM_LABEL_PIXELS;
+            lcd_text_dma_glyph_advance = 1u;
+            for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
+                for (uint8_t x = 0u; x < label_width; ++x) {
+                    uint8_t column = (uint8_t)(x /
+                        (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
+                    uint8_t glyph_x = (uint8_t)(x %
+                        (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
+                    uint16_t pixel_index = (uint16_t)y * label_width + x;
+
+                    lcd_text_glyph[pixel_index] =
+                        column < LCD_CPM_LABEL_LENGTH &&
+                        glyph_x < FONT_SMALL_CELL_WIDTH &&
+                        font_small_pixel(lcd_cpm_label[column], glyph_x, y) ?
+                            LCD_TEXT_FOREGROUND : LCD_TEXT_BACKGROUND;
+                }
+            }
+
+            REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
+            lcd_command(0x2Au, x_window, sizeof(x_window));
+            lcd_command(0x2Bu, y_window, sizeof(y_window));
+            lcd_command(0x2Cu, 0, 0u);
+            lcd_text_row_commands_queued = true;
+            return true;
+        }
+
+        x_start = (uint8_t)(LCD_CPM_FIELD_X +
+            lcd_text_glyph_index * (FONT_LARGE_CELL_WIDTH + LCD_TEXT_GAP));
+        y_start = (uint8_t)((LCD_HEIGHT - FONT_LARGE_CELL_HEIGHT) / 2u);
+        {
+            const uint8_t first_digit = (uint8_t)(glyph_count -
+                lcd_cpm_digit_count);
+            if (lcd_text_glyph_index >= first_digit &&
+                lcd_text_glyph_index < first_digit + lcd_cpm_digit_count) {
+                glyph = lcd_cpm_digits[lcd_text_glyph_index - first_digit];
+            } else {
+                glyph = ' ';
+            }
+        }
         x_window[0] = 0u;
         x_window[1] = x_start;
         x_window[2] = 0u;
@@ -616,13 +718,11 @@ static bool lcd_text_prepare_glyph(void)
 
         lcd_text_glyph_pixels = LCD_LARGE_GLYPH_PIXELS;
         lcd_text_dma_glyph_advance = 1u;
-        glyph_color = lcd_color_for_glyph(
-            large_glyphs[lcd_text_glyph_index]);
         for (uint8_t y = 0u; y < FONT_LARGE_CELL_HEIGHT; ++y) {
             for (uint8_t x = 0u; x < FONT_LARGE_CELL_WIDTH; ++x) {
                 lcd_text_glyph[(uint16_t)y * FONT_LARGE_CELL_WIDTH + x] =
-                    font_large_pixel(large_glyphs[lcd_text_glyph_index], x, y) ?
-                        glyph_color : LCD_TEXT_BACKGROUND;
+                    font_large_pixel(glyph, x, y) ?
+                        LCD_COUNTER_GREEN : LCD_TEXT_BACKGROUND;
             }
         }
 
@@ -712,6 +812,7 @@ static void lcd_request_screen_redraw(void)
 {
     lcd_background_pending = true;
     lcd_text_active = false;
+    lcd_cpm_redraw_pending = false;
     lcd_text_row_commands_queued = false;
     lcd_text_glyph_index = 0u;
 }
@@ -725,9 +826,33 @@ void board_display_test_next(void)
     }
 }
 
+void board_display_set_cpm(uint32_t cpm)
+{
+    static uint32_t previous_cpm = UINT32_MAX;
+
+    if (cpm == previous_cpm) {
+        return;
+    }
+    previous_cpm = cpm;
+    lcd_format_cpm(cpm);
+    if (lcd_ready && lcd_screen_page == 0u) {
+        lcd_cpm_redraw_pending = true;
+    }
+}
+
 static void lcd_text_render_service(void)
 {
-    if (!lcd_text_active || lcd_dma_active || !lcd_queue_drained()) {
+    if (lcd_dma_active || !lcd_queue_drained()) {
+        return;
+    }
+    if (!lcd_text_active && lcd_cpm_redraw_pending &&
+        lcd_screen_page == 0u) {
+        lcd_text_active = true;
+        lcd_text_glyph_index = 0u;
+        lcd_text_row_commands_queued = false;
+        lcd_cpm_redraw_pending = false;
+    }
+    if (!lcd_text_active) {
         return;
     }
     if (!lcd_text_row_commands_queued) {
@@ -918,6 +1043,43 @@ static void pin_input_with_pull(uint32_t base, uint32_t pin)
     *pupdr = (*pupdr & ~(3u << shift)) | (pull << shift);
 }
 
+static void detector_input_init(void)
+{
+    volatile uint32_t *exticr2 =
+        (volatile uint32_t *)(uintptr_t)(SYSCFG_BASE + 0x0Cu);
+    const uint32_t exti_port_shift = (DETECTOR_PIN - 4u) * 4u;
+
+    /* Stock HEX dispatches EXTI lines 4, 6 and 9. Lines 4/9 are the known
+     * buttons; PA6 is the confirmed blue LED output, so PB6 is the remaining
+     * detector-input candidate. Route PB6 to EXTI6 and count its falling edge. */
+    pin_input_with_pull(DETECTOR_GPIO_BASE, DETECTOR_PIN);
+    RCC_APB2ENR |= 1u; /* SYSCFG clock */
+    (void)RCC_APB2ENR;
+    *exticr2 = (*exticr2 & ~(0xFu << exti_port_shift)) |
+        (1u << exti_port_shift); /* EXTI6 source = GPIOB */
+    EXTI_IMR &= ~DETECTOR_EXTI_MASK;
+    EXTI_RTSR &= ~DETECTOR_EXTI_MASK;
+    EXTI_FTSR |= DETECTOR_EXTI_MASK;
+    EXTI_PR = DETECTOR_EXTI_MASK;
+    NVIC_ISER = 1u << 7u; /* EXTI4_15_IRQn */
+    EXTI_IMR |= DETECTOR_EXTI_MASK;
+}
+
+uint32_t board_detector_count(void)
+{
+    return detector_pulse_count;
+}
+
+void EXTI4_15_IRQHandler(void)
+{
+    if ((EXTI_PR & DETECTOR_EXTI_MASK) != 0u) {
+        EXTI_PR = DETECTOR_EXTI_MASK;
+        if (detector_pulse_count < 999999u) {
+            ++detector_pulse_count;
+        }
+    }
+}
+
 static bool button_pressed(uint32_t base, uint32_t pin)
 {
     uint32_t level = gpio_read(base, pin);
@@ -1047,6 +1209,11 @@ void board_init(void)
     RCC_IOPENR |= 3u; /* GPIOA and GPIOB clocks */
     (void)RCC_IOPENR;
 
+    /* Stock enables the detector/power stage by driving PA5 high while active.
+     * Keep the evidence-based stock state so the tube can produce pulses. */
+    REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 5u;
+    *gpioa_moder = (*gpioa_moder & ~(3u << 10u)) | (1u << 10u);
+
     /* Preload the assumed inactive LED level before enabling output mode. */
     REG32(GPIOA_BASE + GPIO_BSRR) = BOARD_RGB_ACTIVE_HIGH ? (led_mask << 16) : led_mask;
 
@@ -1067,6 +1234,7 @@ void board_init(void)
 
     pin_input_with_pull(GPIOB_BASE, BOARD_BUTTON_LEFT_PIN);
     pin_input_with_pull(GPIOA_BASE, BOARD_BUTTON_RIGHT_PIN);
+    detector_input_init();
 
     /* Start with LCD backlight disabled; PB2 switches to LPTIM1 PWM on wake. */
     REG32(GPIOB_BASE + GPIO_BSRR) =
