@@ -1,5 +1,7 @@
 #include "board.h"
 #include "board_config.h"
+#include "font_large.h"
+#include "font_small.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -67,8 +69,44 @@ volatile uint32_t board_millis;
 #define LCD_DIAGNOSTIC_COMMANDS 1u
 #define LCD_WIDTH 160u
 #define LCD_HEIGHT 80u
-#define LCD_Y_OFFSET 24u
-#define LCD_TEST_SQUARE_SIZE 15u
+#define LCD_PANEL_Y_OFFSET 24u
+#define LCD_Y_OFFSET 28u
+#define LCD_TEXT_COLUMNS 6u
+#define LCD_TEXT_ROWS 2u
+#define LCD_TEXT_GAP 3u
+#define LCD_TEXT_ROW_GAP 6u
+#define LCD_SMALL_TEXT_COLUMNS 6u
+#define LCD_SMALL_TEXT_ROWS 6u
+#define LCD_SMALL_TEXT_GAP 1u
+#define LCD_SMALL_TEXT_ROW_GAP 2u
+#define LCD_SMALL_TEXT_ROW_WIDTH (LCD_SMALL_TEXT_COLUMNS * \
+    FONT_SMALL_CELL_WIDTH + (LCD_SMALL_TEXT_COLUMNS - 1u) * \
+    LCD_SMALL_TEXT_GAP)
+#define LCD_SMALL_TEXT_ROW_PIXELS (LCD_SMALL_TEXT_ROW_WIDTH * \
+    FONT_SMALL_CELL_HEIGHT)
+#define LCD_TEXT_FIRST_X ((LCD_WIDTH - (LCD_TEXT_COLUMNS * \
+    FONT_LARGE_CELL_WIDTH + (LCD_TEXT_COLUMNS - 1u) * LCD_TEXT_GAP)) / 2u)
+#define LCD_SMALL_TEXT_FIRST_Y ((LCD_HEIGHT - (LCD_SMALL_TEXT_ROWS * \
+    FONT_SMALL_CELL_HEIGHT + (LCD_SMALL_TEXT_ROWS - 1u) * \
+    LCD_SMALL_TEXT_ROW_GAP) + 1u) / 2u)
+#define LCD_TEXT_FIRST_Y ((LCD_HEIGHT - (LCD_TEXT_ROWS * FONT_LARGE_CELL_HEIGHT + \
+    (LCD_TEXT_ROWS - 1u) * LCD_TEXT_ROW_GAP)) / 2u)
+#define LCD_LARGE_GLYPH_PIXELS (FONT_LARGE_CELL_WIDTH * FONT_LARGE_CELL_HEIGHT)
+#define LCD_TEXT_GLYPH_PIXELS ((LCD_LARGE_GLYPH_PIXELS > \
+    LCD_SMALL_TEXT_ROW_PIXELS) ? LCD_LARGE_GLYPH_PIXELS : \
+    LCD_SMALL_TEXT_ROW_PIXELS)
+#define LCD_TEXT_FOREGROUND 0xD6BAu
+#define LCD_TEXT_BACKGROUND 0x0000u
+
+static const char lcd_test_glyphs[] =
+    "0123456789:.-/+ACDEGhHmMnNOPRST\xB5vVX";
+static const uint16_t lcd_glyph_colors[] = {
+    0xF800u, 0xF960u, 0xFAC0u, 0xFC00u, 0xFD60u, 0xFEC0u, 0xF7E0u,
+    0xCFE0u, 0x9FE0u, 0x77E0u, 0x4FE0u, 0x27E0u, 0x07E2u, 0x07E7u,
+    0x07ECu, 0x07F2u, 0x07F7u, 0x07FCu, 0x075Fu, 0x05FFu, 0x049Fu,
+    0x033Fu, 0x01DFu, 0x009Fu, 0x201Fu, 0x481Fu, 0x701Fu, 0x981Fu,
+    0xC81Fu, 0xF01Fu, 0xF81Bu, 0xF815u, 0xF810u, 0xF80Bu, 0xF805u
+};
 
 #define SYST_CSR       REG32(0xE000E010u)
 #define SYST_RVR       REG32(0xE000E014u)
@@ -92,22 +130,25 @@ static bool backlight_requested_on;
 static uint8_t rgb_channels;
 static bool lcd_spi_ready = true;
 static bool lcd_spi_error;
-static bool lcd_diag_reported;
 static bool lcd_control_error;
 static bool lcd_started;
 static bool lcd_ready;
 static uint8_t lcd_init_state;
 static uint32_t lcd_init_deadline;
+static bool lcd_background_pending;
 static bool lcd_fill_start_pending;
 static bool lcd_fill_active;
 static bool lcd_dma_active;
-static bool lcd_fill_center_square;
-/* With the stock init sequence and SPI2 restored, render the full active
- * area so a remaining geometry/offset issue cannot hide a small test mark. */
-static bool lcd_center_square_pending;
-static bool lcd_color_dirty;
+static bool lcd_dma_is_text_row;
+static uint8_t lcd_dma_text_glyph_advance;
+static bool lcd_text_active;
+static bool lcd_text_row_commands_queued;
+static uint8_t lcd_text_glyph_index;
+static uint8_t lcd_text_dma_glyph_advance;
+static uint16_t lcd_text_glyph_pixels;
+static uint8_t lcd_screen_page;
+static uint16_t lcd_text_glyph[LCD_TEXT_GLYPH_PIXELS];
 static uint16_t lcd_draw_pixel;
-static uint8_t lcd_requested_color;
 typedef struct {
     uint8_t value;
     uint8_t is_data;
@@ -147,6 +188,16 @@ static void lcd_check_output_level(uint32_t base, uint32_t pin, bool expected_hi
 static bool deadline_reached(uint32_t deadline)
 {
     return (int32_t)(board_millis - deadline) >= 0;
+}
+
+static uint16_t lcd_color_for_glyph(char glyph)
+{
+    for (uint8_t i = 0u; i < sizeof(lcd_test_glyphs) - 1u; ++i) {
+        if (lcd_test_glyphs[i] == glyph) {
+            return lcd_glyph_colors[i];
+        }
+    }
+    return LCD_TEXT_FOREGROUND;
 }
 
 static bool lptim_wait_flag(uint32_t flag)
@@ -274,23 +325,28 @@ static bool lcd_spi_send_byte(uint8_t value)
     return timeout != 0u;
 }
 
-static void lcd_spi_fill_dma_start(uint32_t pixel_count)
+static void lcd_spi_dma_start(const uint16_t *pixels, uint32_t pixel_count,
+                              bool increment_source, bool text_row,
+                              uint8_t text_glyph_advance)
 {
-    /* DMA1 channel 5 is SPI2_TX. Keep the source fixed to repeat one RGB565
-     * pixel while DMA fills the entire LCD window without CPU pacing gaps. */
+    /* DMA1 channel 5 is SPI2_TX. Repeat the background pixel for the base
+     * frame; increment through a short RGB565 row buffer for glyphs. */
     DMA1_CH5_CCR = 0u;
     DMA1_IFCR = 0xFu << 16u;
     DMA1_CSELR = (DMA1_CSELR & ~(0xFu << 16u)) | (2u << 16u);
     DMA1_CH5_CPAR = SPI2_BASE + SPI_DR;
-    DMA1_CH5_CMAR = (uint32_t)(uintptr_t)&lcd_draw_pixel;
+    DMA1_CH5_CMAR = (uint32_t)(uintptr_t)pixels;
     DMA1_CH5_CNDTR = pixel_count;
-    DMA1_CH5_CCR = (1u << 4u) | (1u << 8u) | (1u << 10u) | (2u << 12u);
+    DMA1_CH5_CCR = (1u << 4u) | (1u << 8u) | (1u << 10u) |
+                   (2u << 12u) | (increment_source ? (1u << 7u) : 0u);
     REG32(SPI2_BASE + SPI_CR1) &= ~(1u << 6u);
     REG32(SPI2_BASE + SPI_CR1) |= 1u << 11u; /* DFF: 16-bit frames */
     REG32(SPI2_BASE + SPI_CR1) |= 1u << 6u;
     REG32(SPI2_BASE + SPI_CR2) |= 1u << 1u; /* TXDMAEN */
     DMA1_CH5_CCR |= 1u;
     lcd_dma_active = true;
+    lcd_dma_is_text_row = text_row;
+    lcd_dma_text_glyph_advance = text_glyph_advance;
 }
 
 static void lcd_spi_pump(void)
@@ -308,7 +364,6 @@ static void lcd_spi_pump(void)
             lcd_dma_active = false;
             lcd_spi_error = true;
             lcd_spi_ready = false;
-            board_rgb_set(1u);
             return;
         }
         if ((status & (1u << 17u)) == 0u) {
@@ -316,7 +371,20 @@ static void lcd_spi_pump(void)
         }
         DMA1_CH5_CCR = 0u;
         REG32(SPI2_BASE + SPI_CR2) &= ~(1u << 1u);
-        while ((REG32(SPI2_BASE + SPI_SR) & (1u << 7u)) != 0u) { }
+        {
+            uint32_t timeout = 100000u;
+            while ((REG32(SPI2_BASE + SPI_SR) & (1u << 7u)) != 0u &&
+                   --timeout != 0u) { }
+            if (timeout == 0u) {
+                lcd_dma_active = false;
+                lcd_dma_is_text_row = false;
+                lcd_fill_active = false;
+                lcd_text_active = false;
+                lcd_spi_error = true;
+                lcd_spi_ready = false;
+                return;
+            }
+        }
         (void)*(volatile uint16_t *)(uintptr_t)(SPI2_BASE + SPI_DR);
         (void)REG32(SPI2_BASE + SPI_SR);
         DMA1_IFCR = 0xFu << 16u;
@@ -324,14 +392,19 @@ static void lcd_spi_pump(void)
         REG32(SPI2_BASE + SPI_CR1) &= ~(1u << 11u);
         REG32(SPI2_BASE + SPI_CR1) |= 1u << 6u;
         lcd_dma_active = false;
-        lcd_fill_active = false;
-        lcd_fill_center_square = false;
+        if (lcd_dma_is_text_row) {
+            lcd_text_glyph_index = (uint8_t)(lcd_text_glyph_index +
+                lcd_dma_text_glyph_advance);
+            lcd_text_row_commands_queued = false;
+        } else {
+            lcd_fill_active = false;
+            lcd_text_active = true;
+            lcd_text_glyph_index = 0u;
+        }
+        lcd_dma_is_text_row = false;
+        lcd_dma_text_glyph_advance = 0u;
         REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 11u;
         lcd_check_output_level(GPIOA_BASE, 11u, true);
-        if (!lcd_diag_reported) {
-            lcd_diag_reported = true;
-            board_rgb_set(lcd_control_error ? 3u : 2u);
-        }
         return;
     }
 
@@ -348,7 +421,6 @@ static void lcd_spi_pump(void)
         if (!lcd_spi_send_byte(item.value)) {
             lcd_spi_error = true;
             lcd_spi_ready = false;
-            board_rgb_set(1u); /* diagnostic: SPI timeout */
         }
         return;
     }
@@ -361,9 +433,9 @@ static void lcd_spi_pump(void)
     if (lcd_fill_active) {
         REG32(GPIOB_BASE + GPIO_BSRR) = 1u << 11u; /* PB11 D/C data */
         lcd_check_output_level(GPIOB_BASE, 11u, true);
-        uint32_t pixel_count = lcd_fill_center_square ?
-            LCD_TEST_SQUARE_SIZE * LCD_TEST_SQUARE_SIZE : LCD_WIDTH * LCD_HEIGHT;
-        lcd_spi_fill_dma_start(pixel_count);
+        lcd_spi_dma_start(&lcd_draw_pixel,
+            LCD_WIDTH * (LCD_Y_OFFSET + LCD_HEIGHT - LCD_PANEL_Y_OFFSET),
+            false, false, 0u);
     }
 }
 
@@ -484,44 +556,16 @@ void board_lcd_backlight_set_brightness(uint8_t percent)
     }
 }
 
-void board_display_set_color(uint8_t logical_rgb_mask)
-{
-    lcd_requested_color = logical_rgb_mask & 7u;
-    lcd_color_dirty = true;
-}
-
 static void lcd_begin_fill(void)
 {
-    bool center_square = lcd_center_square_pending;
-    uint8_t x_start = 0u;
-    uint8_t x_end = (uint8_t)(LCD_WIDTH - 1u);
-    uint8_t y_start = (uint8_t)LCD_Y_OFFSET;
-    uint8_t y_end = (uint8_t)(LCD_Y_OFFSET + LCD_HEIGHT - 1u);
-    uint16_t red = (lcd_requested_color & 1u) != 0u ? 31u : 0u;
-    uint16_t green = (lcd_requested_color & 2u) != 0u ? 63u : 0u;
-    uint16_t blue = (lcd_requested_color & 4u) != 0u ? 31u : 0u;
-    uint8_t x_window[4];
-    uint8_t y_window[4];
+    uint8_t x_window[4] = {0u, 0u, 0u, (uint8_t)(LCD_WIDTH - 1u)};
+    uint8_t y_window[4] = {0u, LCD_PANEL_Y_OFFSET, 0u,
+        (uint8_t)(LCD_Y_OFFSET + LCD_HEIGHT - 1u)};
 
-    if (center_square) {
-        x_start = (uint8_t)((LCD_WIDTH - LCD_TEST_SQUARE_SIZE) / 2u);
-        x_end = (uint8_t)(x_start + LCD_TEST_SQUARE_SIZE - 1u);
-        y_start = (uint8_t)(LCD_Y_OFFSET +
-            (LCD_HEIGHT - LCD_TEST_SQUARE_SIZE) / 2u);
-        y_end = (uint8_t)(y_start + LCD_TEST_SQUARE_SIZE - 1u);
-    }
-    x_window[0] = 0u;
-    x_window[1] = x_start;
-    x_window[2] = 0u;
-    x_window[3] = x_end;
-    y_window[0] = 0u;
-    y_window[1] = y_start;
-    y_window[2] = 0u;
-    y_window[3] = y_end;
-
-    lcd_draw_pixel = (uint16_t)((red << 11u) | (green << 5u) | blue);
-    lcd_fill_center_square = center_square;
-    lcd_center_square_pending = false;
+    lcd_draw_pixel = LCD_TEXT_BACKGROUND;
+    lcd_text_active = false;
+    lcd_text_row_commands_queued = false;
+    lcd_text_glyph_index = 0u;
     REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u); /* CS low */
     lcd_check_output_level(GPIOA_BASE, 11u, false);
     lcd_command(0x2Au, x_window, sizeof(x_window));
@@ -533,7 +577,168 @@ static void lcd_begin_fill(void)
     }
     lcd_fill_active = false;
     lcd_fill_start_pending = true;
-    lcd_color_dirty = false;
+}
+
+static bool lcd_text_prepare_glyph(void)
+{
+    static const char large_glyphs[] = "0123456789:.";
+    static const char small_glyphs[] = "0123456789:.-/+ACDEGhHmMnNOPRST\xB5vVX";
+    if (lcd_screen_page == 0u) {
+        const uint8_t glyph_count = (uint8_t)(sizeof(large_glyphs) - 1u);
+        uint8_t column;
+        uint8_t row;
+        uint8_t x_start;
+        uint8_t y_start;
+        uint8_t x_window[4];
+        uint8_t y_window[4];
+        uint16_t glyph_color;
+
+        if (lcd_text_glyph_index >= glyph_count) {
+            lcd_text_active = false;
+            return false;
+        }
+
+        column = (uint8_t)(lcd_text_glyph_index % LCD_TEXT_COLUMNS);
+        row = (uint8_t)(lcd_text_glyph_index / LCD_TEXT_COLUMNS);
+        x_start = (uint8_t)(LCD_TEXT_FIRST_X +
+            column * (FONT_LARGE_CELL_WIDTH + LCD_TEXT_GAP));
+        y_start = (uint8_t)(LCD_TEXT_FIRST_Y +
+            row * (FONT_LARGE_CELL_HEIGHT + LCD_TEXT_ROW_GAP));
+        x_window[0] = 0u;
+        x_window[1] = x_start;
+        x_window[2] = 0u;
+        x_window[3] = (uint8_t)(x_start + FONT_LARGE_CELL_WIDTH - 1u);
+        y_window[0] = 0u;
+        y_window[1] = (uint8_t)(LCD_Y_OFFSET + y_start);
+        y_window[2] = 0u;
+        y_window[3] = (uint8_t)(LCD_Y_OFFSET + y_start +
+            FONT_LARGE_CELL_HEIGHT - 1u);
+
+        lcd_text_glyph_pixels = LCD_LARGE_GLYPH_PIXELS;
+        lcd_text_dma_glyph_advance = 1u;
+        glyph_color = lcd_color_for_glyph(
+            large_glyphs[lcd_text_glyph_index]);
+        for (uint8_t y = 0u; y < FONT_LARGE_CELL_HEIGHT; ++y) {
+            for (uint8_t x = 0u; x < FONT_LARGE_CELL_WIDTH; ++x) {
+                lcd_text_glyph[(uint16_t)y * FONT_LARGE_CELL_WIDTH + x] =
+                    font_large_pixel(large_glyphs[lcd_text_glyph_index], x, y) ?
+                        glyph_color : LCD_TEXT_BACKGROUND;
+            }
+        }
+
+        REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u); /* CS low */
+        lcd_command(0x2Au, x_window, sizeof(x_window));
+        lcd_command(0x2Bu, y_window, sizeof(y_window));
+        lcd_command(0x2Cu, 0, 0u); /* RAMWR */
+        lcd_text_row_commands_queued = true;
+        return true;
+    }
+
+    {
+        const uint8_t glyph_count = (uint8_t)(sizeof(small_glyphs) - 1u);
+        uint8_t row;
+        uint8_t remaining_glyphs;
+        uint8_t row_glyph_count;
+        uint16_t row_width;
+        uint8_t x_start;
+        uint8_t y_start;
+        uint8_t x_window[4];
+        uint8_t y_window[4];
+        uint16_t row_colors[LCD_SMALL_TEXT_COLUMNS];
+
+        if (lcd_text_glyph_index >= glyph_count) {
+            lcd_text_active = false;
+            return false;
+        }
+
+        row = (uint8_t)(lcd_text_glyph_index / LCD_SMALL_TEXT_COLUMNS);
+        remaining_glyphs = (uint8_t)(glyph_count -
+            row * LCD_SMALL_TEXT_COLUMNS);
+        row_glyph_count = remaining_glyphs > LCD_SMALL_TEXT_COLUMNS ?
+            LCD_SMALL_TEXT_COLUMNS : remaining_glyphs;
+        row_width = (uint16_t)row_glyph_count * FONT_SMALL_CELL_WIDTH +
+            (uint16_t)(row_glyph_count - 1u) * LCD_SMALL_TEXT_GAP;
+        x_start = 0u;
+        y_start = (uint8_t)(LCD_SMALL_TEXT_FIRST_Y + row *
+            (FONT_SMALL_CELL_HEIGHT + LCD_SMALL_TEXT_ROW_GAP));
+        x_window[0] = 0u;
+        x_window[1] = x_start;
+        x_window[2] = 0u;
+        x_window[3] = (uint8_t)(x_start + row_width - 1u);
+        y_window[0] = 0u;
+        y_window[1] = (uint8_t)(LCD_Y_OFFSET + y_start);
+        y_window[2] = 0u;
+        y_window[3] = (uint8_t)(LCD_Y_OFFSET + y_start +
+            FONT_SMALL_CELL_HEIGHT - 1u);
+
+        lcd_text_glyph_pixels = (uint16_t)(row_width *
+            FONT_SMALL_CELL_HEIGHT);
+        lcd_text_dma_glyph_advance = row_glyph_count;
+        for (uint8_t column = 0u; column < row_glyph_count; ++column) {
+            row_colors[column] = lcd_color_for_glyph(small_glyphs[
+                (uint8_t)(row * LCD_SMALL_TEXT_COLUMNS + column)]);
+        }
+        for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
+            for (uint16_t x = 0u; x < row_width; ++x) {
+                uint8_t column = (uint8_t)(x /
+                    (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
+                uint8_t glyph_x = (uint8_t)(x %
+                    (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
+                uint16_t pixel_index = (uint16_t)y * row_width + x;
+
+                if (column < row_glyph_count &&
+                    glyph_x < FONT_SMALL_CELL_WIDTH) {
+                    char glyph = small_glyphs[(uint8_t)(row *
+                        LCD_SMALL_TEXT_COLUMNS + column)];
+                    lcd_text_glyph[pixel_index] =
+                        font_small_pixel(glyph, glyph_x, y) ?
+                            row_colors[column] : LCD_TEXT_BACKGROUND;
+                } else {
+                    lcd_text_glyph[pixel_index] = LCD_TEXT_BACKGROUND;
+                }
+            }
+        }
+
+        REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u); /* CS low */
+        lcd_command(0x2Au, x_window, sizeof(x_window));
+        lcd_command(0x2Bu, y_window, sizeof(y_window));
+        lcd_command(0x2Cu, 0, 0u); /* RAMWR */
+        lcd_text_row_commands_queued = true;
+    }
+    return true;
+}
+
+static void lcd_request_screen_redraw(void)
+{
+    lcd_background_pending = true;
+    lcd_text_active = false;
+    lcd_text_row_commands_queued = false;
+    lcd_text_glyph_index = 0u;
+}
+
+void board_display_test_next(void)
+{
+    lcd_screen_page = (uint8_t)(lcd_screen_page == 0u ? 1u : 0u);
+
+    if (lcd_ready) {
+        lcd_request_screen_redraw();
+    }
+}
+
+static void lcd_text_render_service(void)
+{
+    if (!lcd_text_active || lcd_dma_active || !lcd_queue_drained()) {
+        return;
+    }
+    if (!lcd_text_row_commands_queued) {
+        (void)lcd_text_prepare_glyph();
+        return;
+    }
+
+    REG32(GPIOB_BASE + GPIO_BSRR) = 1u << 11u; /* D/C=data */
+    lcd_check_output_level(GPIOB_BASE, 11u, true);
+    lcd_spi_dma_start(lcd_text_glyph, lcd_text_glyph_pixels, true, true,
+                      lcd_text_dma_glyph_advance);
 }
 
 void board_display_service(void)
@@ -654,10 +859,8 @@ void board_display_service(void)
             lcd_check_output_level(GPIOA_BASE, 11u, true);
             lcd_ready = true;
             lcd_init_state = LCD_INIT_READY;
-            /* Paint a diagnostic frame immediately after controller startup.
-             * The backlight remains independently controlled by the keys. */
-            lcd_requested_color = 7u;
-            lcd_color_dirty = true;
+            /* Clear the panel before drawing the large-glyph test screen. */
+            lcd_background_pending = true;
         }
         break;
     case LCD_INIT_READY:
@@ -669,9 +872,12 @@ void board_display_service(void)
     if (!lcd_ready || !lcd_spi_ready) {
         return;
     }
-    if (lcd_color_dirty && lcd_queue_drained() && !lcd_fill_active) {
+    if (lcd_background_pending && lcd_queue_drained() && !lcd_fill_active &&
+        !lcd_dma_active) {
+        lcd_background_pending = false;
         lcd_begin_fill();
     }
+    lcd_text_render_service();
 }
 
 bool board_display_busy(void)
@@ -679,8 +885,12 @@ bool board_display_busy(void)
     if (!lcd_started) {
         return false;
     }
-    return !lcd_ready || !lcd_queue_drained() || lcd_fill_start_pending ||
-           lcd_fill_active || lcd_color_dirty;
+    if (lcd_spi_error || lcd_control_error) {
+        return false;
+    }
+    return !lcd_ready || !lcd_queue_drained() || lcd_background_pending ||
+           lcd_fill_start_pending ||
+           lcd_fill_active || lcd_text_active;
 }
 
 void board_display_init(void)

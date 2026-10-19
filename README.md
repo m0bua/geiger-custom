@@ -4,7 +4,7 @@ STM32L051C8T6 firmware for the Geiger-2. The current prototype verifies the RGB 
 
 ## Status
 
-The RGB LED starts off and steps through off → red → yellow → green → cyan → blue → purple → white; right advances and left reverses. The LCD initializes at startup with its backlight off. A button turns on the backlight; after three seconds without button activity, the RGB LED and backlight turn off. The color selection is retained; the first short press wakes the current color without advancing. Holding right for 800 ms raises RGB and backlight brightness by 1% repeatedly; holding left lowers both. Repeats start at about 10 per second and accelerate to 50 per second over four seconds. RGB brightness starts at 30%; backlight brightness starts at 100%. Confirmed RGB pins are PA0=red, PA1=green, PA6=blue, active-low; buttons are PB9=left and PA4=right, active-low. LCD uses SPI2 on PB13/PB15, PA8 reset, PB11 D/C, and active-low PA11 CS. See [display bring-up log](docs/docs/LCD_BRINGUP.md). Detector pulse capture, HV control, and external flash writes are not implemented.
+Current test image shows twelve large glyphs (`0–9`, `:`, `.`) on a black LCD background. The glyph cells are 23×33 px with 3 px spacing. The RGB LED is forced off. LCD backlight starts off, turns on at a button press at fixed 10% brightness, and turns off after three seconds without button activity. Buttons only wake the backlight; they do not change colors or brightness. LCD uses SPI2 on PB13/PB15, PA8 reset, PB11 D/C, and active-low PA11 CS. See [display bring-up log](docs/docs/LCD_BRINGUP.md). Detector pulse capture, HV control, and external flash writes are not implemented.
 
 ## Layout
 

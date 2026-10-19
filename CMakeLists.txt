@@ -17,6 +17,7 @@ add_executable(geiger2
     src/app_config.c
     src/measurement.c
     src/rgb_cycle.c
+    src/font_large.c
 )
 target_include_directories(geiger2 PRIVATE include)
 target_compile_options(geiger2 PRIVATE

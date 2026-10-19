@@ -6,15 +6,11 @@ PA0=red, PA1=green, PA6=blue. Buttons are active-low on PB9 (left) and PA4
 adds red from green. Purple is followed by white (all channels); the sequence
 is bounded at off and white.
 
-Short presses change color on release. After three seconds without button
-activity, the RGB LED and LCD backlight turn off. During LCD initialization or
-frame rendering, the backlight stays on and the idle countdown resumes after
-the update. The color selection is retained; the first short press wakes it
-without advancing. Holding right for 800 ms raises both LCD backlight and RGB
-brightness by 1% repeatedly; holding left lowers them. Repeats start at about
-10 per second and accelerate to 50 per second over four seconds, bounded by
-0–100%. Backlight starts at 100%; RGB starts at the application default of
-30%. Backlight PWM uses inverted LPTIM1_OUT on PB2 at 32 kHz. A timer
+Current diagnostic firmware draws twelve large glyphs (`0–9`, `:`, `.`) on a
+black background. The RGB LED is forced off. Backlight starts off and buttons
+only wake it at fixed 10% brightness; after three seconds without activity it
+turns off. Button color and brightness changes are disabled for this test.
+Backlight PWM uses inverted LPTIM1_OUT on PB2 at 32 kHz. A timer
 configuration timeout falls back to GPIO high at 100% so the screen remains
 usable. GPIO low is off. RGB PWM runs at 32 kHz:
 TIM2 drives red/green on PA0/PA1, and TIM22 drives blue on PA6.
@@ -34,8 +30,8 @@ Two earlier DMA issues were fixed: SPI2_TX selector and DMA clock register
 address. Earlier variants included hangs; record new
 observed outcomes in
 [`docs/docs/LCD_BRINGUP.md`](../docs/docs/LCD_BRINGUP.md). Three-second idle
-timeout and button wake have been tested. The continuous accelerated brightness
-change is a new experiment and still needs hardware verification.
+timeout and button wake have been tested. The large glyph test is built and
+awaits verification on the display.
 The exact panel model, RGB/BGR interpretation, and orientation still need
 visual confirmation. The firmware does not enable the
 detector HV generator or write to external flash. See
