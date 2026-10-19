@@ -4,7 +4,7 @@ STM32L051C8T6 firmware for the Geiger-2. The current prototype displays rolling 
 
 ## Status
 
-The current LCD prototype has two cyclic pages. The first shows dose rate in µSv/h and CPM; the second shows accumulated dose, switching between nSv and µSv. Both pages share ADC8/ADC9/ADC2 diagnostics in the header. Button presses switch pages and wake the backlight; it starts off and times out after 10 seconds. A detector pulse triggers a brief green LED blink. LCD uses SPI2 on PB13/PB15, PA8 reset, PB11 D/C, and active-low PA11 CS. See [display status](docs/docs/LCD_AND_DISPLAY.md). Physical dose calibration, HV control, and external flash writes remain open.
+The current LCD prototype has two cyclic pages. The first shows dose rate in µSv/h and CPM; the second shows accumulated dose, switching between nSv and µSv. Both pages show solar and battery percentages in the header. The backlight starts off; the first button press wakes it, and later presses switch pages. It times out after 10 seconds. A detector pulse briefly flashes the LED in the current dose-rate color. LCD uses SPI2 on PB13/PB15, PA8 reset, PB11 D/C, and active-low PA11 CS. See [display status](docs/docs/LCD_AND_DISPLAY.md). Physical dose calibration, HV control, and external flash writes remain open.
 
 ## Layout
 

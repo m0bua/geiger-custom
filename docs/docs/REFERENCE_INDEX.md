@@ -1,6 +1,6 @@
 # Індекс довідкових матеріалів
 
-Компонентні документи: [LCD_STOCK_GUIDE](LCD_STOCK_GUIDE.md) описує LCD зі
+Детальний розбір стокового ADC і живлення — [STOCK_BATTERY_ADC_AND_POWER](STOCK_BATTERY_ADC_AND_POWER.md). Компонентні документи: [LCD_STOCK_GUIDE](LCD_STOCK_GUIDE.md) описує LCD зі
 стокового HEX, [LCD_AND_DISPLAY](LCD_AND_DISPLAY.md) — перевірену реалізацію
 екрана, а [STOCK_RATE_DOSE](STOCK_RATE_DOSE.md) — алгоритм вимірювань у стоку.
 

@@ -1,0 +1,25 @@
+VAL
+    TIME
+    DEBUG
+        %S
+        RAW_VALS
+        MEMORY
+    SETTINGS
+        INDICATION
+            DIODE: ON/ALWAYS/OFF
+            CLICKS: OFF/ON/ON-ALWAYS
+            LIGHT: OFF/ALARM
+            S_ALARM: OFF/ON
+            D_ALARAM: OFF/ON
+        UNITS
+            MAIN: Sv/CNT/R
+            PREFFIX: if(Sv/R): u/m-u-n-p else: CPM/CPS
+        MEMORY:
+            USE-SPI: OFF/ON
+        RESET
+            SETTINGS/DATA/ALL
+
+DSOSE
+    STATISTICS
+        M-H-D
+        MOVE

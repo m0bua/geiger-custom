@@ -11,6 +11,8 @@ int main(void)
     uint32_t event_count = 0u;
     uint32_t previous_minute_sample = 0u;
     uint32_t minute_total = 0u;
+    uint32_t pulses_since_start = 0u;
+    uint8_t rate_window_seconds = 0u;
     uint32_t dose_thousandths = 0u;
     uint32_t dose_fraction = 0u;
     uint32_t minute_bins[60] = {0u};
@@ -40,6 +42,7 @@ int main(void)
         if ((uint32_t)(now - next_sample) >= 10u) {
             const uint8_t events = board_buttons_sample_10ms();
             const uint32_t detected_pulses = board_detector_count();
+            bool woke_display = false;
             const uint8_t button_events = BOARD_BUTTON_LEFT_DOWN |
                 BOARD_BUTTON_RIGHT_DOWN | BOARD_BUTTON_LEFT |
                 BOARD_BUTTON_RIGHT | BOARD_BUTTON_LEFT_LONG |
@@ -47,18 +50,20 @@ int main(void)
 
             next_sample += 10u;
             if ((events & button_events) != 0u) {
+                woke_display = !backlight_on;
                 board_lcd_backlight_set(true);
                 backlight_on = true;
                 inactivity_deadline = now + 10000u;
             }
-            if ((events & (BOARD_BUTTON_LEFT_DOWN |
+            if (!woke_display &&
+                (events & (BOARD_BUTTON_LEFT_DOWN |
                            BOARD_BUTTON_RIGHT_DOWN)) != 0u) {
                 board_display_next_page();
             }
 
             if (detected_pulses != event_count) {
                 event_count = detected_pulses;
-                board_rgb_set(2u); /* Green event flash; independent of LCD. */
+                board_rgb_set(board_display_rate_led_mask());
                 event_led_on = true;
                 led_blink_deadline = now + 100u;
             }
@@ -68,14 +73,26 @@ int main(void)
                     detected_pulses - previous_minute_sample;
 
                 previous_minute_sample = detected_pulses;
+                if (UINT32_MAX - pulses_since_start < second_pulses) {
+                    pulses_since_start = UINT32_MAX;
+                } else {
+                    pulses_since_start += second_pulses;
+                }
                 minute_total -= minute_bins[minute_head];
                 minute_bins[minute_head] = second_pulses;
                 minute_total += second_pulses;
                 minute_head = (uint8_t)((minute_head + 1u) % 60u);
-                /* For the stock 60 s window, rate = N * 0.00666 µSv/h. */
+                if (rate_window_seconds < 60u) ++rate_window_seconds;
+                uint32_t cpm = minute_total;
+                if (rate_window_seconds < 60u) {
+                    cpm = (uint32_t)(((uint64_t)minute_total * 60u +
+                        rate_window_seconds / 2u) / rate_window_seconds);
+                }
+                /* Rate = normalized CPM * 0.00666 µSv/h. */
                 const uint32_t rate_thousandths = (uint32_t)(
-                    ((uint64_t)minute_total * 666u + 50u) / 100u);
-                board_display_set_rate(rate_thousandths, minute_total);
+                    ((uint64_t)cpm * 666u + 50u) / 100u);
+                board_display_set_rate(rate_thousandths, cpm,
+                                       pulses_since_start >= 25u);
                 dose_fraction += rate_thousandths;
                 dose_thousandths += dose_fraction / 3600u;
                 dose_fraction %= 3600u;
