@@ -1,10 +1,10 @@
 #include "font_small.h"
 
 /* 5x7 masks; the micro sign has one extra row for its descender. */
-#define SMALL_GLYPH_COUNT 38u
+#define SMALL_GLYPH_COUNT 39u
 
 static const char small_glyphs[SMALL_GLYPH_COUNT + 1u] =
-    "0123456789:.-/+ACDEGhHmMnNOPRST\xB5vVX%\x01\x02";
+    "0123456789:.-/+ACDEGhHmMnNOPRST\xB5vVX%\x01\x02 ";
 
 static const uint8_t small_rows[SMALL_GLYPH_COUNT][7] = {
     { 14, 17, 19, 21, 25, 17, 14 }, /* 0 */
@@ -44,7 +44,8 @@ static const uint8_t small_rows[SMALL_GLYPH_COUNT][7] = {
     { 17, 17, 10, 4, 10, 17, 17 }, /* X */
     { 17, 2, 4, 4, 8, 17, 0 },      /* % */
     { 4, 21, 14, 31, 14, 21, 4 },   /* ☼ */
-    { 4, 31, 17, 17, 17, 17, 31 }  /* 🔋 */
+    { 4, 31, 17, 17, 17, 17, 31 }, /* 🔋 */
+    { 0, 0, 0, 0, 0, 0, 0 }        /* space */
 };
 
 /* Eight-row micro sign (U+00B5), with a left descender. */

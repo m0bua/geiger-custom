@@ -11,6 +11,8 @@ int main(void)
     uint32_t event_count = 0u;
     uint32_t previous_minute_sample = 0u;
     uint32_t minute_total = 0u;
+    uint32_t dose_thousandths = 0u;
+    uint32_t dose_fraction = 0u;
     uint32_t minute_bins[60] = {0u};
     uint32_t next_minute_tick;
     uint8_t minute_head = 0u;
@@ -49,6 +51,10 @@ int main(void)
                 backlight_on = true;
                 inactivity_deadline = now + 10000u;
             }
+            if ((events & (BOARD_BUTTON_LEFT_DOWN |
+                           BOARD_BUTTON_RIGHT_DOWN)) != 0u) {
+                board_display_next_page();
+            }
 
             if (detected_pulses != event_count) {
                 event_count = detected_pulses;
@@ -66,7 +72,14 @@ int main(void)
                 minute_bins[minute_head] = second_pulses;
                 minute_total += second_pulses;
                 minute_head = (uint8_t)((minute_head + 1u) % 60u);
-                board_display_set_cpm(minute_total);
+                /* For the stock 60 s window, rate = N * 0.00666 µSv/h. */
+                const uint32_t rate_thousandths = (uint32_t)(
+                    ((uint64_t)minute_total * 666u + 50u) / 100u);
+                board_display_set_rate(rate_thousandths, minute_total);
+                dose_fraction += rate_thousandths;
+                dose_thousandths += dose_fraction / 3600u;
+                dose_fraction %= 3600u;
+                board_display_set_dose(dose_thousandths, dose_fraction);
                 next_minute_tick += 1000u;
             }
 

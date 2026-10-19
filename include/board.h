@@ -22,7 +22,10 @@ void board_rgb_set(uint8_t logical_rgb_mask);
 void board_rgb_set_brightness(uint8_t percent);
 void board_display_init(void);
 void board_display_service(void);
-void board_display_set_cpm(uint32_t cpm);
+void board_display_next_page(void);
+void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm);
+void board_display_set_dose(uint32_t dose_thousandths,
+                            uint32_t dose_fraction);
 void board_display_set_adc(uint16_t channel2, uint16_t channel8,
                            uint16_t channel9);
 bool board_display_busy(void);
