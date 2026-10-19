@@ -6,6 +6,7 @@
 int main(void)
 {
     uint32_t next_sample;
+    uint32_t next_adc_sample;
     uint32_t inactivity_deadline;
     uint32_t event_count = 0u;
     uint32_t previous_minute_sample = 0u;
@@ -18,6 +19,7 @@ int main(void)
     bool event_led_on = false;
 
     board_init();
+    board_adc_init();
     board_rgb_set(0u);
     board_rgb_set_brightness(30u);
     board_lcd_backlight_set_brightness(10u);
@@ -25,8 +27,9 @@ int main(void)
     board_display_init();
 
     next_sample = board_millis;
+    next_adc_sample = board_millis;
     next_minute_tick = board_millis + 1000u;
-    inactivity_deadline = board_millis + 3000u;
+    inactivity_deadline = board_millis + 10000u;
 
     for (;;) {
         board_display_service();
@@ -44,7 +47,7 @@ int main(void)
             if ((events & button_events) != 0u) {
                 board_lcd_backlight_set(true);
                 backlight_on = true;
-                inactivity_deadline = now + 3000u;
+                inactivity_deadline = now + 10000u;
             }
 
             if (detected_pulses != event_count) {
@@ -77,6 +80,15 @@ int main(void)
                 board_rgb_set(0u);
                 event_led_on = false;
             }
+        }
+
+        if ((int32_t)(now - next_adc_sample) >= 0) {
+            const uint16_t channel2 = board_adc_read(2u);
+            const uint16_t channel8 = board_adc_read(8u);
+            const uint16_t channel9 = board_adc_read(9u);
+
+            board_display_set_adc(channel2, channel8, channel9);
+            next_adc_sample += 1000u;
         }
     }
 }

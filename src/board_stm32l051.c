@@ -8,6 +8,7 @@
 
 volatile uint32_t board_millis;
 static volatile uint32_t detector_pulse_count;
+static bool adc_ready;
 
 #define DETECTOR_GPIO_BASE GPIOB_BASE
 #define DETECTOR_PIN       BOARD_DETECTOR_PIN
@@ -23,6 +24,14 @@ static volatile uint32_t detector_pulse_count;
 #define RCC_IOPENR     REG32(RCC_BASE + 0x2Cu)
 #define RCC_APB1ENR    REG32(RCC_BASE + 0x38u)
 #define RCC_APB2ENR    REG32(RCC_BASE + 0x34u)
+#define ADC_BASE       0x40012400u
+#define ADC_ISR        REG32(ADC_BASE + 0x00u)
+#define ADC_CR         REG32(ADC_BASE + 0x08u)
+#define ADC_CFGR1      REG32(ADC_BASE + 0x0Cu)
+#define ADC_CFGR2      REG32(ADC_BASE + 0x10u)
+#define ADC_SMPR       REG32(ADC_BASE + 0x14u)
+#define ADC_CHSELR     REG32(ADC_BASE + 0x28u)
+#define ADC_DR         REG32(ADC_BASE + 0x40u)
 #define SPI2_BASE      0x40003800u
 #define LPTIM1_BASE    0x40007C00u
 #define LPTIM_ISR      REG32(LPTIM1_BASE + 0x00u)
@@ -109,27 +118,19 @@ static volatile uint32_t detector_pulse_count;
     FONT_LARGE_CELL_WIDTH + (LCD_CPM_MAX_DIGITS - 1u) * \
     LCD_TEXT_GAP)) / 2u)
 #define LCD_CPM_LABEL_LENGTH 3u
+#define LCD_ADC_TEXT_LENGTH 18u
 #define LCD_CPM_LABEL_WIDTH (LCD_CPM_LABEL_LENGTH * \
     FONT_SMALL_CELL_WIDTH + (LCD_CPM_LABEL_LENGTH - 1u) * \
     LCD_SMALL_TEXT_GAP)
 #define LCD_COUNTER_GREEN 0x07E0u
 #define LCD_LARGE_GLYPH_PIXELS (FONT_LARGE_CELL_WIDTH * FONT_LARGE_CELL_HEIGHT)
 #define LCD_CPM_LABEL_PIXELS (LCD_CPM_LABEL_WIDTH * FONT_SMALL_CELL_HEIGHT)
+#define LCD_TOP_ROW_PIXELS (LCD_WIDTH * FONT_SMALL_CELL_HEIGHT)
 #define LCD_TEXT_GLYPH_PIXELS ((LCD_LARGE_GLYPH_PIXELS > \
-    LCD_SMALL_TEXT_ROW_PIXELS) ? LCD_LARGE_GLYPH_PIXELS : \
-    LCD_SMALL_TEXT_ROW_PIXELS)
+    LCD_TOP_ROW_PIXELS) ? LCD_LARGE_GLYPH_PIXELS : \
+    LCD_TOP_ROW_PIXELS)
 #define LCD_TEXT_FOREGROUND 0xD6BAu
 #define LCD_TEXT_BACKGROUND 0x0000u
-
-static const char lcd_test_glyphs[] =
-    "0123456789:.-/+ACDEGhHmMnNOPRST\xB5vVX";
-static const uint16_t lcd_glyph_colors[] = {
-    0xF800u, 0xF960u, 0xFAC0u, 0xFC00u, 0xFD60u, 0xFEC0u, 0xF7E0u,
-    0xCFE0u, 0x9FE0u, 0x77E0u, 0x4FE0u, 0x27E0u, 0x07E2u, 0x07E7u,
-    0x07ECu, 0x07F2u, 0x07F7u, 0x07FCu, 0x075Fu, 0x05FFu, 0x049Fu,
-    0x033Fu, 0x01DFu, 0x009Fu, 0x201Fu, 0x481Fu, 0x701Fu, 0x981Fu,
-    0xC81Fu, 0xF01Fu, 0xF81Bu, 0xF815u, 0xF810u, 0xF80Bu, 0xF805u
-};
 
 #define SYST_CSR       REG32(0xE000E010u)
 #define SYST_RVR       REG32(0xE000E014u)
@@ -173,7 +174,10 @@ static uint16_t lcd_text_glyph_pixels;
 static char lcd_cpm_digits[LCD_CPM_MAX_DIGITS + 1u] = "0";
 static uint8_t lcd_cpm_digit_count = 1u;
 static const char lcd_cpm_label[] = "CPM";
-static uint8_t lcd_screen_page;
+static char lcd_adc_glyphs[LCD_ADC_TEXT_LENGTH + 1u] =
+    "----  \x01  0% \x02  0% ";
+static uint16_t lcd_adc_values[3] = { UINT16_MAX, UINT16_MAX, UINT16_MAX };
+static const uint8_t lcd_screen_page = 0u;
 static uint16_t lcd_text_glyph[LCD_TEXT_GLYPH_PIXELS];
 static uint16_t lcd_draw_pixel;
 typedef struct {
@@ -235,16 +239,6 @@ static void lcd_format_cpm(uint32_t cpm)
     }
     lcd_cpm_digits[digits] = '\0';
     lcd_cpm_digit_count = digits;
-}
-
-static uint16_t lcd_color_for_glyph(char glyph)
-{
-    for (uint8_t i = 0u; i < sizeof(lcd_test_glyphs) - 1u; ++i) {
-        if (lcd_test_glyphs[i] == glyph) {
-            return lcd_glyph_colors[i];
-        }
-    }
-    return LCD_TEXT_FOREGROUND;
 }
 
 static bool lptim_wait_flag(uint32_t flag)
@@ -626,23 +620,91 @@ static void lcd_begin_fill(void)
     lcd_fill_start_pending = true;
 }
 
+static void lcd_top_row_draw_glyph(char glyph, uint16_t x_start)
+{
+    for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
+        for (uint8_t x = 0u; x < FONT_SMALL_CELL_WIDTH; ++x) {
+            const uint16_t pixel_x = (uint16_t)(x_start + x);
+            if (pixel_x < LCD_WIDTH && font_small_pixel(glyph, x, y)) {
+                lcd_text_glyph[(uint16_t)y * LCD_WIDTH + pixel_x] =
+                    LCD_TEXT_FOREGROUND;
+            }
+        }
+    }
+}
+
+static void lcd_top_row_draw_percent(uint8_t offset, char icon,
+                                    uint8_t right_edge)
+{
+    uint8_t first = offset;
+    uint8_t count;
+    uint16_t width;
+    uint16_t x;
+
+    while (first < offset + 3u && lcd_adc_glyphs[first] == ' ') {
+        ++first;
+    }
+    count = (uint8_t)(offset + 4u - first + 1u);
+    width = (uint16_t)count * FONT_SMALL_CELL_WIDTH +
+        (uint16_t)(count - 1u) * LCD_SMALL_TEXT_GAP;
+    x = (uint16_t)(right_edge + 1u - width);
+
+    lcd_top_row_draw_glyph(icon, x);
+    x = (uint16_t)(x + FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP);
+    for (uint8_t i = first; i < offset + 4u; ++i) {
+        lcd_top_row_draw_glyph(lcd_adc_glyphs[i], x);
+        x = (uint16_t)(x + FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP);
+    }
+}
+
 static bool lcd_text_prepare_glyph(void)
 {
-    static const char small_glyphs[] = "0123456789:.-/+ACDEGhHmMnNOPRST\xB5vVX";
     if (lcd_screen_page == 0u) {
-        const uint8_t glyph_count = LCD_CPM_MAX_DIGITS;
+        const uint8_t last_glyph = (uint8_t)(LCD_CPM_MAX_DIGITS + 1u);
         uint8_t x_start;
         uint8_t y_start;
         uint8_t x_window[4];
         uint8_t y_window[4];
         char glyph;
 
-        if (lcd_text_glyph_index > glyph_count) {
+        if (lcd_text_glyph_index > last_glyph) {
             lcd_text_active = false;
             return false;
         }
 
-        if (lcd_text_glyph_index == glyph_count) {
+        if (lcd_text_glyph_index == 0u) {
+            lcd_text_glyph_pixels = LCD_TOP_ROW_PIXELS;
+            lcd_text_dma_glyph_advance = 1u;
+            for (uint16_t i = 0u; i < LCD_TOP_ROW_PIXELS; ++i) {
+                lcd_text_glyph[i] = LCD_TEXT_BACKGROUND;
+            }
+            for (uint8_t column = 0u; column < 4u; ++column) {
+                lcd_top_row_draw_glyph(lcd_adc_glyphs[column],
+                    (uint16_t)(column * (FONT_SMALL_CELL_WIDTH +
+                                         LCD_SMALL_TEXT_GAP)));
+            }
+            lcd_top_row_draw_percent(7u, FONT_SMALL_GLYPH_SUN, 98u);
+            lcd_top_row_draw_percent(13u, FONT_SMALL_GLYPH_BATTERY, 154u);
+
+            x_window[0] = 0u;
+            x_window[1] = 0u;
+            x_window[2] = 0u;
+            x_window[3] = (uint8_t)(LCD_WIDTH - 1u);
+            y_start = 1u;
+            y_window[0] = 0u;
+            y_window[1] = (uint8_t)(LCD_Y_OFFSET + y_start);
+            y_window[2] = 0u;
+            y_window[3] = (uint8_t)(LCD_Y_OFFSET + y_start +
+                FONT_SMALL_CELL_HEIGHT - 1u);
+            REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
+            lcd_command(0x2Au, x_window, sizeof(x_window));
+            lcd_command(0x2Bu, y_window, sizeof(y_window));
+            lcd_command(0x2Cu, 0, 0u);
+            lcd_text_row_commands_queued = true;
+            return true;
+        }
+
+        if (lcd_text_glyph_index == last_glyph) {
             const uint16_t label_width = LCD_CPM_LABEL_WIDTH;
 
             {
@@ -694,14 +756,16 @@ static bool lcd_text_prepare_glyph(void)
         }
 
         x_start = (uint8_t)(LCD_CPM_FIELD_X +
-            lcd_text_glyph_index * (FONT_LARGE_CELL_WIDTH + LCD_TEXT_GAP));
+            (lcd_text_glyph_index - 1u) *
+                (FONT_LARGE_CELL_WIDTH + LCD_TEXT_GAP));
         y_start = (uint8_t)((LCD_HEIGHT - FONT_LARGE_CELL_HEIGHT) / 2u);
         {
-            const uint8_t first_digit = (uint8_t)(glyph_count -
+            const uint8_t first_digit = (uint8_t)(LCD_CPM_MAX_DIGITS -
                 lcd_cpm_digit_count);
-            if (lcd_text_glyph_index >= first_digit &&
-                lcd_text_glyph_index < first_digit + lcd_cpm_digit_count) {
-                glyph = lcd_cpm_digits[lcd_text_glyph_index - first_digit];
+            const uint8_t digit_index = (uint8_t)(lcd_text_glyph_index - 1u);
+            if (digit_index >= first_digit &&
+                digit_index < first_digit + lcd_cpm_digit_count) {
+                glyph = lcd_cpm_digits[digit_index - first_digit];
             } else {
                 glyph = ' ';
             }
@@ -735,7 +799,8 @@ static bool lcd_text_prepare_glyph(void)
     }
 
     {
-        const uint8_t glyph_count = (uint8_t)(sizeof(small_glyphs) - 1u);
+        const uint8_t glyph_count = LCD_ADC_TEXT_LENGTH;
+        const char *small_glyphs = lcd_adc_glyphs;
         uint8_t row;
         uint8_t remaining_glyphs;
         uint8_t row_glyph_count;
@@ -775,8 +840,7 @@ static bool lcd_text_prepare_glyph(void)
             FONT_SMALL_CELL_HEIGHT);
         lcd_text_dma_glyph_advance = row_glyph_count;
         for (uint8_t column = 0u; column < row_glyph_count; ++column) {
-            row_colors[column] = lcd_color_for_glyph(small_glyphs[
-                (uint8_t)(row * LCD_SMALL_TEXT_COLUMNS + column)]);
+            row_colors[column] = LCD_TEXT_FOREGROUND;
         }
         for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
             for (uint16_t x = 0u; x < row_width; ++x) {
@@ -808,24 +872,6 @@ static bool lcd_text_prepare_glyph(void)
     return true;
 }
 
-static void lcd_request_screen_redraw(void)
-{
-    lcd_background_pending = true;
-    lcd_text_active = false;
-    lcd_cpm_redraw_pending = false;
-    lcd_text_row_commands_queued = false;
-    lcd_text_glyph_index = 0u;
-}
-
-void board_display_test_next(void)
-{
-    lcd_screen_page = (uint8_t)(lcd_screen_page == 0u ? 1u : 0u);
-
-    if (lcd_ready) {
-        lcd_request_screen_redraw();
-    }
-}
-
 void board_display_set_cpm(uint32_t cpm)
 {
     static uint32_t previous_cpm = UINT32_MAX;
@@ -837,6 +883,70 @@ void board_display_set_cpm(uint32_t cpm)
     lcd_format_cpm(cpm);
     if (lcd_ready && lcd_screen_page == 0u) {
         lcd_cpm_redraw_pending = true;
+    }
+}
+
+static uint16_t lcd_battery_percent(uint16_t raw)
+{
+    if (raw <= 1295u) {
+        return 0u;
+    }
+    if (raw >= 1670u) {
+        return 100u;
+    }
+    return (uint16_t)(((uint32_t)(raw - 1295u) * 100u) / 375u);
+}
+
+static void lcd_format_percent(uint16_t value, uint8_t offset)
+{
+    if (value > 999u) {
+        value = 999u;
+    }
+
+    lcd_adc_glyphs[offset + 0u] = value >= 100u ?
+        (char)('0' + (value / 100u)) : ' ';
+    lcd_adc_glyphs[offset + 1u] = value >= 10u ?
+        (char)('0' + ((value / 10u) % 10u)) : ' ';
+    lcd_adc_glyphs[offset + 2u] = (char)('0' + (value % 10u));
+    lcd_adc_glyphs[offset + 3u] = '%';
+}
+
+static void lcd_format_adc_value(uint16_t value, uint8_t offset)
+{
+    if (value > 4095u) {
+        lcd_adc_glyphs[offset + 0u] = '-';
+        lcd_adc_glyphs[offset + 1u] = '-';
+        lcd_adc_glyphs[offset + 2u] = '-';
+        lcd_adc_glyphs[offset + 3u] = '-';
+        return;
+    }
+
+    lcd_adc_glyphs[offset + 0u] = (char)('0' + (value / 1000u));
+    lcd_adc_glyphs[offset + 1u] = (char)('0' + ((value / 100u) % 10u));
+    lcd_adc_glyphs[offset + 2u] = (char)('0' + ((value / 10u) % 10u));
+    lcd_adc_glyphs[offset + 3u] = (char)('0' + (value % 10u));
+}
+
+void board_display_set_adc(uint16_t channel2, uint16_t channel8,
+                           uint16_t channel9)
+{
+    const uint16_t values[3] = { channel2, channel8, channel9 };
+    bool changed = false;
+
+    for (uint8_t i = 0u; i < 3u; ++i) {
+        if (lcd_adc_values[i] != values[i]) {
+            lcd_adc_values[i] = values[i];
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        lcd_format_percent(lcd_battery_percent(channel2), 13u);
+        lcd_format_percent((uint16_t)(channel9 / 31u), 7u);
+        lcd_format_adc_value(channel8, 0u);
+        if (lcd_ready) {
+            lcd_cpm_redraw_pending = true;
+        }
     }
 }
 
@@ -1068,6 +1178,57 @@ static void detector_input_init(void)
 uint32_t board_detector_count(void)
 {
     return detector_pulse_count;
+}
+
+void board_adc_init(void)
+{
+    uint32_t timeout;
+
+    /* These are the three analog inputs configured by the stock firmware:
+     * ADC channel 2 = PA2, channel 8 = PB0, and channel 9 = PB1. */
+    REG32(GPIOA_BASE + GPIO_MODER) |= 3u << 4u;
+    REG32(GPIOA_BASE + GPIO_PUPDR) &= ~(3u << 4u);
+    REG32(GPIOB_BASE + GPIO_MODER) |= (3u << 0u) | (3u << 2u);
+    REG32(GPIOB_BASE + GPIO_PUPDR) &= ~((3u << 0u) | (3u << 2u));
+
+    RCC_APB2ENR |= 1u << 9u; /* ADC1 clock */
+    (void)RCC_APB2ENR;
+    ADC_CR = 0u;
+    ADC_CFGR1 = 0u; /* Single conversion, software trigger, 12-bit result. */
+    ADC_CFGR2 = 1u << 30u; /* PCLK/4: 8 MHz ADC clock at 32 MHz PCLK. */
+    ADC_SMPR = 7u; /* Longest sample time for high source impedance. */
+
+    ADC_CR = 1u << 31u; /* Calibrate before enabling. */
+    timeout = 1000000u;
+    while ((ADC_CR & (1u << 31u)) != 0u && --timeout != 0u) { }
+    if (timeout == 0u) {
+        return;
+    }
+
+    ADC_ISR = 1u; /* Clear ADRDY, if set. */
+    ADC_CR = 1u; /* ADEN */
+    timeout = 1000000u;
+    while ((ADC_ISR & 1u) == 0u && --timeout != 0u) { }
+    adc_ready = timeout != 0u;
+}
+
+uint16_t board_adc_read(uint8_t channel)
+{
+    uint32_t timeout;
+
+    if (!adc_ready || channel > 18u) {
+        return UINT16_MAX;
+    }
+
+    ADC_CHSELR = 1u << channel;
+    ADC_ISR = 1u << 2u; /* Clear EOC. */
+    ADC_CR |= 1u << 2u; /* ADSTART */
+    timeout = 1000000u;
+    while ((ADC_ISR & (1u << 2u)) == 0u && --timeout != 0u) { }
+    if (timeout == 0u) {
+        return UINT16_MAX;
+    }
+    return (uint16_t)(ADC_DR & 0x0FFFu);
 }
 
 void EXTI4_15_IRQHandler(void)
