@@ -18,6 +18,8 @@ uint8_t board_buttons_sample_10ms(void);
 uint32_t board_detector_count(void);
 void board_adc_init(void);
 uint16_t board_adc_read(uint8_t channel);
+void board_adc_read_all(uint16_t *channel2, uint16_t *channel8,
+                        uint16_t *channel9);
 void board_rgb_set(uint8_t logical_rgb_mask);
 void board_rgb_set_brightness(uint8_t percent);
 void board_display_init(void);

@@ -96,10 +96,11 @@ int main(void)
         }
 
         if ((int32_t)(now - next_adc_sample) >= 0) {
-            const uint16_t channel2 = board_adc_read(2u);
-            const uint16_t channel8 = board_adc_read(8u);
-            const uint16_t channel9 = board_adc_read(9u);
+            uint16_t channel2;
+            uint16_t channel8;
+            uint16_t channel9;
 
+            board_adc_read_all(&channel2, &channel8, &channel9);
             board_display_set_adc(channel2, channel8, channel9);
             next_adc_sample += 1000u;
         }

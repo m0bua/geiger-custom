@@ -1,45 +1,436 @@
 #include "font_large.h"
 
-#define SEG_TOP    (1u << 0u)
-#define SEG_UPPER_RIGHT (1u << 1u)
-#define SEG_LOWER_RIGHT (1u << 2u)
-#define SEG_BOTTOM (1u << 3u)
-#define SEG_LOWER_LEFT (1u << 4u)
-#define SEG_UPPER_LEFT (1u << 5u)
-#define SEG_MIDDLE (1u << 6u)
-#define SEGMENT_THICKNESS 4u
+/* Bitmap glyphs adapted from Anonymous Pro Regular; see docs/reference/ANONYMOUS_PRO_LICENSE.txt. */
+static const uint32_t digit_rows[10][FONT_LARGE_CELL_HEIGHT] = {    { /* 0 */
+        0x000000u,
+        0x000000u,
+        0x007F00u,
+        0x03FFC0u,
+        0x07FFE0u,
+        0x0F81F0u,
+        0x1F0078u,
+        0x1E003Cu,
+        0x3C001Cu,
+        0x3C001Cu,
+        0x7E000Eu,
+        0x7F000Eu,
+        0x73800Eu,
+        0x71C00Eu,
+        0x70E007u,
+        0x707007u,
+        0x703807u,
+        0xF01C07u,
+        0x700E07u,
+        0x700707u,
+        0x70038Eu,
+        0x7001CEu,
+        0x7000EEu,
+        0x78007Eu,
+        0x38003Eu,
+        0x3C003Cu,
+        0x1C003Cu,
+        0x1E0078u,
+        0x0F81F0u,
+        0x07FFE0u,
+        0x03FFC0u,
+        0x00FF00u,
+        0x000000u
+    },
+    { /* 1 */
+        0x000000u,
+        0x000000u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x007800u,
+        0x007800u,
+        0x007C00u,
+        0x007E00u,
+        0x007F00u,
+        0x007780u,
+        0x0073F0u,
+        0x0071F8u,
+        0x0070F8u,
+        0x007038u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x0FFF80u,
+        0x0FFF80u,
+        0x0FFF80u,
+        0x000000u
+    },
+    { /* 2 */
+        0x000000u,
+        0x000000u,
+        0x00FF00u,
+        0x03FFC0u,
+        0x07FFE0u,
+        0x0F81F0u,
+        0x1E0078u,
+        0x1C003Cu,
+        0x3C001Cu,
+        0x38001Cu,
+        0x38001Cu,
+        0x3C000Eu,
+        0x1C000Eu,
+        0x1C0000u,
+        0x0E0000u,
+        0x0F0000u,
+        0x078000u,
+        0x03C000u,
+        0x01E000u,
+        0x00F000u,
+        0x007800u,
+        0x003C00u,
+        0x001E00u,
+        0x380F00u,
+        0x380780u,
+        0x3803C0u,
+        0x3801E0u,
+        0x3800F0u,
+        0x380078u,
+        0x3FFFFCu,
+        0x3FFFFCu,
+        0x3FFFFCu,
+        0x000000u
+    },
+    { /* 3 */
+        0x000000u,
+        0x000000u,
+        0x00FE00u,
+        0x03FF80u,
+        0x0FFFE0u,
+        0x1F01F0u,
+        0x1E0070u,
+        0x3C0038u,
+        0x3C0038u,
+        0x38001Cu,
+        0x38001Cu,
+        0x38001Cu,
+        0x1C0000u,
+        0x1E0000u,
+        0x0F8000u,
+        0x03F800u,
+        0x03F800u,
+        0x0FF800u,
+        0x1F0000u,
+        0x1C0000u,
+        0x380000u,
+        0x380000u,
+        0x38001Cu,
+        0x38001Cu,
+        0x38001Cu,
+        0x38003Cu,
+        0x3C0038u,
+        0x1E00F8u,
+        0x1F81F0u,
+        0x0FFFE0u,
+        0x03FF80u,
+        0x00FE00u,
+        0x000000u
+    },
+    { /* 4 */
+        0x000000u,
+        0x000000u,
+        0x03C000u,
+        0x03E000u,
+        0x03F000u,
+        0x03B800u,
+        0x039800u,
+        0x039C00u,
+        0x038E00u,
+        0x038600u,
+        0x038700u,
+        0x038380u,
+        0x038180u,
+        0x0381C0u,
+        0x0380E0u,
+        0x038070u,
+        0x038070u,
+        0x038038u,
+        0x03801Cu,
+        0x03801Cu,
+        0x7FFFFEu,
+        0x7FFFFEu,
+        0x7FFFFEu,
+        0x038000u,
+        0x038000u,
+        0x038000u,
+        0x038000u,
+        0x038000u,
+        0x038000u,
+        0x7FFC00u,
+        0x7FFC00u,
+        0x7FFC00u,
+        0x000000u
+    },
+    { /* 5 */
+        0x000000u,
+        0x000000u,
+        0x1FFFFCu,
+        0x1FFFFCu,
+        0x1FFFFCu,
+        0x00001Cu,
+        0x00001Cu,
+        0x00001Cu,
+        0x00001Cu,
+        0x00001Cu,
+        0x00001Cu,
+        0x00FE1Cu,
+        0x03FF9Cu,
+        0x0FFFFCu,
+        0x1F81FCu,
+        0x1E007Cu,
+        0x3C003Cu,
+        0x380000u,
+        0x780000u,
+        0x700000u,
+        0x700000u,
+        0x700000u,
+        0x70000Eu,
+        0x70001Eu,
+        0x38001Cu,
+        0x38001Cu,
+        0x3C003Cu,
+        0x1E0078u,
+        0x0F81F0u,
+        0x07FFE0u,
+        0x03FFC0u,
+        0x007F00u,
+        0x000000u
+    },
+    { /* 6 */
+        0x000000u,
+        0x000000u,
+        0x01FC00u,
+        0x07FF00u,
+        0x0FFFC0u,
+        0x1E03E0u,
+        0x0C00F0u,
+        0x000078u,
+        0x000038u,
+        0x00001Cu,
+        0x00FC1Cu,
+        0x03FF1Cu,
+        0x0FFF8Eu,
+        0x1F81CEu,
+        0x3E006Eu,
+        0x3C003Eu,
+        0x78003Eu,
+        0x70001Eu,
+        0x70001Eu,
+        0x70001Eu,
+        0x70000Eu,
+        0x70000Eu,
+        0x70001Eu,
+        0x70001Cu,
+        0x70001Cu,
+        0x78003Cu,
+        0x3C0038u,
+        0x3E0078u,
+        0x1F81F0u,
+        0x0FFFE0u,
+        0x03FF80u,
+        0x00FE00u,
+        0x000000u
+    },
+    { /* 7 */
+        0x000000u,
+        0x000000u,
+        0x3FFFFCu,
+        0x3FFFFCu,
+        0x3FFFFCu,
+        0x38001Cu,
+        0x1C001Cu,
+        0x0E001Cu,
+        0x06001Cu,
+        0x07001Cu,
+        0x038000u,
+        0x018000u,
+        0x01C000u,
+        0x01C000u,
+        0x00E000u,
+        0x00E000u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x007000u,
+        0x003800u,
+        0x003800u,
+        0x003800u,
+        0x003800u,
+        0x003800u,
+        0x003800u,
+        0x003800u,
+        0x003800u,
+        0x003C00u,
+        0x003C00u,
+        0x003C00u,
+        0x003C00u,
+        0x000000u
+    },
+    { /* 8 */
+        0x000000u,
+        0x000000u,
+        0x00FF00u,
+        0x03FFC0u,
+        0x0FFFF0u,
+        0x1F80F8u,
+        0x1E0078u,
+        0x3C003Cu,
+        0x38001Cu,
+        0x38001Cu,
+        0x38001Cu,
+        0x3C003Cu,
+        0x1E0038u,
+        0x0F00F0u,
+        0x07FFE0u,
+        0x03FFC0u,
+        0x07FFE0u,
+        0x1F00F8u,
+        0x1C003Cu,
+        0x38001Cu,
+        0x78001Eu,
+        0x70000Eu,
+        0x70000Eu,
+        0x70000Eu,
+        0x70000Eu,
+        0x78001Eu,
+        0x38001Eu,
+        0x3C003Cu,
+        0x1F81F8u,
+        0x0FFFF0u,
+        0x07FFE0u,
+        0x00FF00u,
+        0x000000u
+    },
+    { /* 9 */
+        0x000000u,
+        0x000000u,
+        0x007F00u,
+        0x01FFC0u,
+        0x07FFF0u,
+        0x0F80F8u,
+        0x0E003Cu,
+        0x1C001Cu,
+        0x3C001Eu,
+        0x38000Eu,
+        0x38000Eu,
+        0x78000Eu,
+        0x70000Eu,
+        0x78000Eu,
+        0x78000Eu,
+        0x78000Eu,
+        0x78001Eu,
+        0x7C001Cu,
+        0x7E003Cu,
+        0x7780F8u,
+        0x73FFF0u,
+        0x70FFC0u,
+        0x383F00u,
+        0x380000u,
+        0x380000u,
+        0x1C0000u,
+        0x0E0000u,
+        0x0F0030u,
+        0x07C078u,
+        0x03FFF0u,
+        0x00FFE0u,
+        0x003F80u,
+        0x000000u
+    }
+};
 
-static uint8_t digit_segments(uint8_t digit)
-{
-    static const uint8_t segments[10] = {
-        SEG_TOP | SEG_UPPER_RIGHT | SEG_LOWER_RIGHT | SEG_BOTTOM |
-            SEG_LOWER_LEFT | SEG_UPPER_LEFT,
-        SEG_UPPER_RIGHT | SEG_LOWER_RIGHT,
-        SEG_TOP | SEG_UPPER_RIGHT | SEG_MIDDLE | SEG_LOWER_LEFT | SEG_BOTTOM,
-        SEG_TOP | SEG_UPPER_RIGHT | SEG_MIDDLE | SEG_LOWER_RIGHT | SEG_BOTTOM,
-        SEG_UPPER_LEFT | SEG_UPPER_RIGHT | SEG_MIDDLE | SEG_LOWER_RIGHT,
-        SEG_TOP | SEG_UPPER_LEFT | SEG_MIDDLE | SEG_LOWER_RIGHT | SEG_BOTTOM,
-        SEG_TOP | SEG_UPPER_LEFT | SEG_MIDDLE | SEG_LOWER_LEFT |
-            SEG_LOWER_RIGHT | SEG_BOTTOM,
-        SEG_TOP | SEG_UPPER_RIGHT | SEG_LOWER_RIGHT,
-        SEG_TOP | SEG_UPPER_RIGHT | SEG_LOWER_RIGHT | SEG_BOTTOM |
-            SEG_LOWER_LEFT | SEG_UPPER_LEFT | SEG_MIDDLE,
-        SEG_TOP | SEG_UPPER_RIGHT | SEG_LOWER_RIGHT | SEG_BOTTOM |
-            SEG_UPPER_LEFT | SEG_MIDDLE
-    };
-    return segments[digit];
-}
+static const uint32_t colon_rows[FONT_LARGE_CELL_HEIGHT] = {
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x003C00u,
+    0x003C00u,
+    0x003C00u,
+    0x003C00u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x003C00u,
+    0x003C00u,
+    0x003C00u,
+    0x003C00u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u,
+    0x000000u
+};
+
+static const uint8_t dot_rows[FONT_LARGE_CELL_HEIGHT] = {
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x00u,
+    0x3Cu,
+    0x3Cu,
+    0x3Cu,
+    0x3Cu
+};
+/* Keep the common glyph order in sync with the start of small_glyphs. */
+static const char large_glyphs[] = "0123456789:. ";
 
 static int8_t glyph_index(char glyph)
 {
-    if (glyph >= '0' && glyph <= '9') {
-        return (int8_t)(glyph - '0');
-    }
-    if (glyph == ':') {
-        return 10;
-    }
-    if (glyph == '.') {
-        return 11;
+    for (uint8_t i = 0u; i < sizeof(large_glyphs) - 1u; ++i) {
+        if (large_glyphs[i] == glyph) return (int8_t)i;
     }
     return -1;
 }
@@ -49,52 +440,25 @@ bool font_large_has_glyph(char glyph)
     return glyph_index(glyph) >= 0;
 }
 
+uint8_t font_large_glyph_width(char glyph)
+{
+    if (glyph == ' ') return FONT_LARGE_SPACE_WIDTH;
+    return FONT_LARGE_CELL_WIDTH;
+}
+
 bool font_large_pixel(char glyph, uint8_t x, uint8_t y)
 {
     int8_t index = glyph_index(glyph);
-    uint8_t segments;
-    bool dot;
 
-    if (index < 0 || x >= FONT_LARGE_CELL_WIDTH ||
-        y >= FONT_LARGE_CELL_HEIGHT) {
-        return false;
-    }
-
-    if (glyph == '.') {
-        return x >= 9u && x < 9u + SEGMENT_THICKNESS &&
-               y >= 29u && y < 29u + SEGMENT_THICKNESS;
+    if (index < 0 || index == 12 || y >= FONT_LARGE_CELL_HEIGHT) return false;
+    if (index < 10) {
+        return x < FONT_LARGE_CELL_WIDTH &&
+               (digit_rows[(uint8_t)index][y] & (1u << x)) != 0u;
     }
     if (glyph == ':') {
-        dot = x >= 9u && x < 9u + SEGMENT_THICKNESS &&
-            ((y >= 7u && y < 7u + SEGMENT_THICKNESS) ||
-             (y >= 23u && y < 23u + SEGMENT_THICKNESS));
-        return dot;
+        return x < FONT_LARGE_CELL_WIDTH &&
+               (colon_rows[y] & (1u << x)) != 0u;
     }
-
-    segments = digit_segments((uint8_t)index);
-    if ((segments & SEG_TOP) != 0u && x >= 4u && x < 19u && y < SEGMENT_THICKNESS) {
-        return true;
-    }
-    if ((segments & SEG_MIDDLE) != 0u && x >= 4u && x < 19u &&
-        y >= 14u && y < 14u + SEGMENT_THICKNESS) {
-        return true;
-    }
-    if ((segments & SEG_BOTTOM) != 0u && x >= 4u && x < 19u &&
-        y >= 29u && y < 29u + SEGMENT_THICKNESS) {
-        return true;
-    }
-    if ((segments & SEG_UPPER_LEFT) != 0u && x < SEGMENT_THICKNESS &&
-        y >= 3u && y < 16u) {
-        return true;
-    }
-    if ((segments & SEG_LOWER_LEFT) != 0u && x < SEGMENT_THICKNESS &&
-        y >= 16u && y < 30u) {
-        return true;
-    }
-    if ((segments & SEG_UPPER_RIGHT) != 0u && x >= 19u &&
-        y >= 3u && y < 16u) {
-        return true;
-    }
-    return (segments & SEG_LOWER_RIGHT) != 0u && x >= 19u &&
-           y >= 16u && y < 30u;
+    return x >= 8u && x < 16u &&
+           (dot_rows[y] & (uint8_t)(1u << (x - 8u))) != 0u;
 }

@@ -57,6 +57,7 @@ static bool adc_ready;
 #define GPIOA_BASE     0x50000000u
 #define GPIOB_BASE     0x50000400u
 #define GPIO_MODER     0x00u
+#define GPIO_OTYPER    0x04u
 #define GPIO_OSPEEDR   0x08u
 #define GPIO_PUPDR     0x0Cu
 #define GPIO_IDR       0x10u
@@ -113,13 +114,16 @@ static bool adc_ready;
 #define LCD_TEXT_FIRST_Y ((LCD_HEIGHT - (LCD_TEXT_ROWS * FONT_LARGE_CELL_HEIGHT + \
     (LCD_TEXT_ROWS - 1u) * LCD_TEXT_ROW_GAP)) / 2u)
 #define LCD_RATE_MAX_VALUE 9999999u
-#define LCD_RATE_MAX_DIGITS 4u
-#define LCD_RATE_FIELD_X ((LCD_WIDTH - (LCD_RATE_MAX_DIGITS * \
-    FONT_LARGE_CELL_WIDTH + (LCD_RATE_MAX_DIGITS - 1u) * \
-    LCD_TEXT_GAP)) / 2u)
+#define LCD_RATE_MAX_DIGITS 5u
+#define LCD_RATE_MAX_GLYPHS (LCD_RATE_MAX_DIGITS + 1u)
+#define LCD_RATE_PREFIX_WIDTH FONT_LARGE_SPACE_WIDTH
+#define LCD_CPM_MAX_DIGITS 4u
+#define LCD_RATE_FIELD_WIDTH (LCD_RATE_MAX_GLYPHS * FONT_LARGE_CELL_WIDTH + \
+    LCD_RATE_PREFIX_WIDTH)
+#define LCD_RATE_FIELD_X ((LCD_WIDTH - LCD_RATE_FIELD_WIDTH) / 2u)
 #define LCD_RATE_LABEL_LENGTH 5u
 #define LCD_DOSE_LABEL_LENGTH 5u
-#define LCD_CPM_TEXT_LENGTH 8u
+#define LCD_CPM_TEXT_LENGTH (LCD_CPM_MAX_DIGITS + 4u)
 #define LCD_ADC_TEXT_LENGTH 18u
 #define LCD_RATE_LABEL_WIDTH (LCD_RATE_LABEL_LENGTH * \
     FONT_SMALL_CELL_WIDTH + (LCD_RATE_LABEL_LENGTH - 1u) * \
@@ -136,6 +140,8 @@ static bool adc_ready;
     LCD_TOP_ROW_PIXELS)
 #define LCD_TEXT_FOREGROUND 0xD6BAu
 #define LCD_TEXT_BACKGROUND 0x0000u
+
+static void adc_wait_ms(uint32_t duration);
 
 #define SYST_CSR       REG32(0xE000E010u)
 #define SYST_RVR       REG32(0xE000E014u)
@@ -176,15 +182,16 @@ static bool lcd_text_row_commands_queued;
 static uint8_t lcd_text_glyph_index;
 static uint8_t lcd_text_dma_glyph_advance;
 static uint16_t lcd_text_glyph_pixels;
-static char lcd_rate_glyphs[LCD_RATE_MAX_DIGITS + 1u] = ".000";
-static uint8_t lcd_rate_glyph_count = LCD_RATE_MAX_DIGITS;
+static char lcd_rate_glyphs[LCD_RATE_MAX_GLYPHS + 1u] = ".0000";
+static uint8_t lcd_rate_glyph_count = LCD_RATE_MAX_GLYPHS;
 static uint16_t lcd_rate_color = LCD_COUNTER_GREEN;
-static const char lcd_rate_label[] = "\xB5Sv/h";
-static bool lcd_dose_in_nsv;
+static char lcd_rate_label[] = "mSv/h";
+static char lcd_display_unit_prefix = 'm';
 static char lcd_cpm_text[LCD_CPM_TEXT_LENGTH + 1u] = "   0 CPM";
 static char lcd_adc_glyphs[LCD_ADC_TEXT_LENGTH + 1u] =
-    "----  \x01  0% \x02  0% ";
-static uint16_t lcd_adc_values[3] = { UINT16_MAX, UINT16_MAX, UINT16_MAX };
+    "      \x01  0% \x02  0% ";
+static uint16_t lcd_displayed_battery_percent;
+static uint16_t lcd_displayed_solar_percent;
 static uint8_t lcd_screen_page;
 static uint32_t lcd_rate_value_thousandths;
 static uint32_t lcd_dose_value_thousandths;
@@ -232,68 +239,117 @@ static bool deadline_reached(uint32_t deadline)
     return (int32_t)(board_millis - deadline) >= 0;
 }
 
+static void lcd_format_scaled_sv(uint64_t value_picosv_x18)
+{
+    /* Scales are multiplied by 18 to retain the dose accumulator's
+     * 1/18-pSv remainder without floating-point arithmetic. */
+    static const uint64_t unit_scales[] = {
+        18000000000ull, 18000000u, 18000u, 18u
+    };
+    static const char unit_prefixes[] = { 'm', (char)0xB5u, 'n', 'p' };
+    uint8_t unit = 3u;
+    uint8_t fallback_unit = 3u;
+    bool has_fallback = false;
+
+    for (uint8_t i = 0u; i < 4u; ++i) {
+        const uint64_t whole = value_picosv_x18 / unit_scales[i];
+        if (whole >= 10u && whole < 1000u) {
+            unit = i;
+            has_fallback = false;
+            break;
+        }
+        if (whole != 0u && !has_fallback) {
+            fallback_unit = i;
+            has_fallback = true;
+        }
+    }
+    if (has_fallback) {
+        /* A value from 1 to 9.999 has no adjacent SI prefix that yields
+         * 10..999, so retain that unit and pad to two integer places. */
+        const uint64_t whole = value_picosv_x18 / unit_scales[unit];
+        if (whole < 10u || whole >= 1000u) {
+            unit = fallback_unit;
+        }
+    }
+
+    for (;;) {
+        const uint64_t scale = unit_scales[unit];
+        const uint64_t whole = value_picosv_x18 / scale;
+        uint8_t integer_digits = 1u;
+        uint8_t integer_places;
+        uint8_t decimals;
+        uint64_t value = whole;
+        uint64_t factor = 1u;
+        uint64_t scaled;
+        uint64_t integer_part;
+        uint64_t fraction;
+        uint64_t divisor;
+        char reversed[5];
+
+        while (value >= 10u) {
+            value /= 10u;
+            ++integer_digits;
+        }
+        integer_places = integer_digits < 2u ? 2u : integer_digits;
+        decimals = integer_places < 5u ?
+            (uint8_t)(5u - integer_places) : 0u;
+        for (uint8_t i = 0u; i < decimals; ++i) {
+            factor *= 10u;
+        }
+        scaled = (value_picosv_x18 * factor + scale / 2u) / scale;
+        integer_part = scaled / factor;
+
+        /* Rounding can cross 1000. Move to the next coarser unit so the
+         * displayed value keeps at most three places before the separator. */
+        if (integer_part >= 1000u && unit != 0u) {
+            --unit;
+            continue;
+        }
+
+        fraction = scaled % factor;
+        value = integer_part;
+        integer_digits = 0u;
+        do {
+            reversed[integer_digits++] = (char)('0' + value % 10u);
+            value /= 10u;
+        } while (value != 0u && integer_digits < sizeof(reversed));
+
+        lcd_rate_glyph_count = 0u;
+        if (integer_digits < 2u) {
+            lcd_rate_glyphs[lcd_rate_glyph_count++] = '0';
+        }
+        while (integer_digits != 0u) {
+            lcd_rate_glyphs[lcd_rate_glyph_count++] =
+                reversed[--integer_digits];
+        }
+        lcd_rate_glyphs[lcd_rate_glyph_count++] = '.';
+        divisor = decimals == 0u ? 1u : factor / 10u;
+        for (uint8_t i = 0u; i < decimals; ++i) {
+            lcd_rate_glyphs[lcd_rate_glyph_count++] =
+                (char)('0' + ((fraction / divisor) % 10u));
+            if (divisor > 1u) {
+                divisor /= 10u;
+            }
+        }
+        lcd_rate_glyphs[lcd_rate_glyph_count] = '\0';
+        lcd_display_unit_prefix = unit_prefixes[unit];
+        lcd_rate_label[0] = lcd_display_unit_prefix;
+        return;
+    }
+}
+
 static void lcd_format_rate(uint32_t rate_thousandths)
 {
     if (rate_thousandths > LCD_RATE_MAX_VALUE) {
         rate_thousandths = LCD_RATE_MAX_VALUE;
     }
-
-    if (rate_thousandths < 1000u) {
-        lcd_rate_glyphs[0] = '.';
-        lcd_rate_glyphs[1] = (char)('0' + ((rate_thousandths / 100u) % 10u));
-        lcd_rate_glyphs[2] = (char)('0' + ((rate_thousandths / 10u) % 10u));
-        lcd_rate_glyphs[3] = (char)('0' + (rate_thousandths % 10u));
-        lcd_rate_glyph_count = 4u;
-    } else if (rate_thousandths < 10000u) {
-        const uint32_t hundredths = (rate_thousandths + 5u) / 10u;
-        if (hundredths < 1000u) {
-            lcd_rate_glyphs[0] = (char)('0' + (hundredths / 100u));
-            lcd_rate_glyphs[1] = '.';
-            lcd_rate_glyphs[2] = (char)('0' + ((hundredths / 10u) % 10u));
-            lcd_rate_glyphs[3] = (char)('0' + (hundredths % 10u));
-        } else {
-            lcd_rate_glyphs[0] = '1';
-            lcd_rate_glyphs[1] = '0';
-            lcd_rate_glyphs[2] = '.';
-            lcd_rate_glyphs[3] = '0';
-        }
-        lcd_rate_glyph_count = 4u;
-    } else if (rate_thousandths < 100000u) {
-        const uint32_t tenths = (rate_thousandths + 50u) / 100u;
-        if (tenths < 1000u) {
-            lcd_rate_glyphs[0] = (char)('0' + (tenths / 100u));
-            lcd_rate_glyphs[1] = (char)('0' + ((tenths / 10u) % 10u));
-            lcd_rate_glyphs[2] = '.';
-            lcd_rate_glyphs[3] = (char)('0' + (tenths % 10u));
-            lcd_rate_glyph_count = 4u;
-        } else {
-            lcd_rate_glyphs[0] = '1';
-            lcd_rate_glyphs[1] = '0';
-            lcd_rate_glyphs[2] = '0';
-            lcd_rate_glyphs[3] = '\0';
-            lcd_rate_glyph_count = 3u;
-        }
-    } else {
-        const uint32_t whole = (rate_thousandths + 500u) / 1000u;
-        char reversed[LCD_RATE_MAX_DIGITS];
-        uint8_t digits = 0u;
-        uint32_t value = whole;
-
-        do {
-            reversed[digits++] = (char)('0' + value % 10u);
-            value /= 10u;
-        } while (value != 0u && digits < sizeof(reversed));
-        for (uint8_t i = 0u; i < digits; ++i) {
-            lcd_rate_glyphs[i] = reversed[digits - i - 1u];
-        }
-        lcd_rate_glyph_count = digits;
-    }
-    lcd_rate_glyphs[lcd_rate_glyph_count] = '\0';
+    /* Input is in 0.001 µSv/h (nSv/h), in units of 1/18 pSv. */
+    lcd_format_scaled_sv((uint64_t)rate_thousandths * 18000u);
 }
 
 static void lcd_format_cpm(uint32_t cpm)
 {
-    char reversed[LCD_RATE_MAX_DIGITS];
+    char reversed[LCD_CPM_MAX_DIGITS];
     uint8_t digits = 0u;
 
     if (cpm > 9999u) {
@@ -304,59 +360,29 @@ static void lcd_format_cpm(uint32_t cpm)
         cpm /= 10u;
     } while (cpm != 0u && digits < sizeof(reversed));
 
-    for (uint8_t i = 0u; i < LCD_RATE_MAX_DIGITS; ++i) {
+    for (uint8_t i = 0u; i < LCD_CPM_MAX_DIGITS; ++i) {
         lcd_cpm_text[i] = ' ';
     }
     for (uint8_t i = 0u; i < digits; ++i) {
-        lcd_cpm_text[LCD_RATE_MAX_DIGITS - digits + i] =
+        lcd_cpm_text[LCD_CPM_MAX_DIGITS - digits + i] =
             reversed[digits - i - 1u];
     }
-    lcd_cpm_text[4] = ' ';
-    lcd_cpm_text[5] = 'C';
-    lcd_cpm_text[6] = 'P';
-    lcd_cpm_text[7] = 'M';
+    lcd_cpm_text[LCD_CPM_MAX_DIGITS] = ' ';
+    lcd_cpm_text[LCD_CPM_MAX_DIGITS + 1u] = 'C';
+    lcd_cpm_text[LCD_CPM_MAX_DIGITS + 2u] = 'P';
+    lcd_cpm_text[LCD_CPM_MAX_DIGITS + 3u] = 'M';
     lcd_cpm_text[LCD_CPM_TEXT_LENGTH] = '\0';
-}
-
-static void lcd_format_integer(uint32_t value)
-{
-    char reversed[LCD_RATE_MAX_DIGITS];
-    uint8_t digits = 0u;
-
-    if (value > 9999u) {
-        value = 9999u;
-    }
-    do {
-        reversed[digits++] = (char)('0' + value % 10u);
-        value /= 10u;
-    } while (value != 0u && digits < sizeof(reversed));
-
-    for (uint8_t i = 0u; i < digits; ++i) {
-        lcd_rate_glyphs[i] = reversed[digits - i - 1u];
-    }
-    lcd_rate_glyph_count = digits;
-    lcd_rate_glyphs[digits] = '\0';
 }
 
 static void lcd_format_dose(uint32_t dose_thousandths,
                             uint32_t dose_fraction)
 {
-    lcd_dose_in_nsv = dose_thousandths < 1000u;
-    if (dose_thousandths == 0u) {
-        const uint32_t hundredths_nsv = dose_fraction / 36u;
-
-        /* Keep sub-nSv changes visible as hundredths, without a leading 0. */
-        lcd_rate_glyphs[0] = '.';
-        lcd_rate_glyphs[1] = (char)('0' + ((hundredths_nsv / 10u) % 10u));
-        lcd_rate_glyphs[2] = (char)('0' + (hundredths_nsv % 10u));
-        lcd_rate_glyphs[3] = '\0';
-        lcd_rate_glyph_count = 3u;
-    } else if (lcd_dose_in_nsv) {
-        /* 0.001 µSv equals 1 nSv; the stored value is in 0.001 µSv. */
-        lcd_format_integer(dose_thousandths);
-    } else {
-        lcd_format_rate(dose_thousandths);
-    }
+    /* The whole part is in nSv; the remainder is in 1/3600 nSv.
+     * One accumulator step is 5/18 pSv; keep that fraction exactly. */
+    const uint64_t value_picosv_x18 =
+        (uint64_t)dose_thousandths * 18000u +
+        (uint64_t)dose_fraction * 5u;
+    lcd_format_scaled_sv(value_picosv_x18);
 }
 
 static bool lptim_wait_flag(uint32_t flag)
@@ -779,8 +805,8 @@ static void lcd_top_row_draw_percent(uint8_t offset, char icon,
 static bool lcd_text_prepare_glyph(void)
 {
     {
-        const uint8_t rate_label_glyph = (uint8_t)(LCD_RATE_MAX_DIGITS + 2u);
-        const uint8_t cpm_glyph = (uint8_t)(LCD_RATE_MAX_DIGITS + 3u);
+        const uint8_t rate_label_glyph = (uint8_t)(LCD_RATE_MAX_GLYPHS + 4u);
+        const uint8_t cpm_glyph = (uint8_t)(LCD_RATE_MAX_GLYPHS + 5u);
         const uint8_t last_glyph = lcd_screen_page == 0u ? cpm_glyph :
             rate_label_glyph;
         uint8_t x_start;
@@ -799,11 +825,6 @@ static bool lcd_text_prepare_glyph(void)
             lcd_text_dma_glyph_advance = 1u;
             for (uint16_t i = 0u; i < LCD_TOP_ROW_PIXELS; ++i) {
                 lcd_text_glyph[i] = LCD_TEXT_BACKGROUND;
-            }
-            for (uint8_t column = 0u; column < 4u; ++column) {
-                lcd_top_row_draw_glyph(lcd_adc_glyphs[column],
-                    (uint16_t)(column * (FONT_SMALL_CELL_WIDTH +
-                                         LCD_SMALL_TEXT_GAP)), LCD_WIDTH);
             }
             lcd_top_row_draw_percent(7u, FONT_SMALL_GLYPH_SUN, 98u);
             lcd_top_row_draw_percent(13u, FONT_SMALL_GLYPH_BATTERY, 154u);
@@ -826,48 +847,11 @@ static bool lcd_text_prepare_glyph(void)
             return true;
         }
 
-        if (lcd_text_glyph_index == 1u) {
-            const uint16_t value_width = 4u * FONT_SMALL_CELL_WIDTH +
-                3u * LCD_SMALL_TEXT_GAP;
-            const uint16_t x_start = (uint16_t)(154u + 1u - value_width);
-            const uint16_t raw = lcd_adc_values[0];
-            uint8_t x_window[4] = {
-                0u, (uint8_t)x_start, 0u,
-                (uint8_t)(x_start + value_width - 1u)
-            };
-            uint8_t y_window[4] = {
-                0u, (uint8_t)(LCD_Y_OFFSET + 12u), 0u,
-                (uint8_t)(LCD_Y_OFFSET + 12u + FONT_SMALL_CELL_HEIGHT - 1u)
-            };
-            char digits[4];
-
-            if (raw > 4095u) {
-                digits[0] = digits[1] = digits[2] = digits[3] = '-';
-            } else {
-                digits[0] = (char)('0' + (raw / 1000u));
-                digits[1] = (char)('0' + ((raw / 100u) % 10u));
-                digits[2] = (char)('0' + ((raw / 10u) % 10u));
-                digits[3] = (char)('0' + (raw % 10u));
-            }
-
-            lcd_text_glyph_pixels = (uint16_t)(value_width *
-                FONT_SMALL_CELL_HEIGHT);
-            lcd_text_dma_glyph_advance = 1u;
-            for (uint16_t i = 0u; i < lcd_text_glyph_pixels; ++i) {
-                lcd_text_glyph[i] = LCD_TEXT_BACKGROUND;
-            }
-            for (uint8_t column = 0u; column < 4u; ++column) {
-                lcd_top_row_draw_glyph(digits[column],
-                    (uint16_t)(column * (FONT_SMALL_CELL_WIDTH +
-                                         LCD_SMALL_TEXT_GAP)), value_width);
-            }
-
-            REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
-            lcd_command(0x2Au, x_window, sizeof(x_window));
-            lcd_command(0x2Bu, y_window, sizeof(y_window));
-            lcd_command(0x2Cu, 0, 0u);
-            lcd_text_row_commands_queued = true;
-            return true;
+        if (lcd_text_glyph_index == 1u || lcd_text_glyph_index == 2u) {
+            /* These slots used to draw raw ADC values and clear the full
+             * large-number field. Neither operation is needed anymore. */
+            ++lcd_text_glyph_index;
+            return false;
         }
 
         if (lcd_text_glyph_index == rate_label_glyph) {
@@ -881,7 +865,7 @@ static bool lcd_text_prepare_glyph(void)
                 LCD_SMALL_TEXT_GAP);
 
             if (lcd_screen_page != 0u) {
-                dose_label[0] = lcd_dose_in_nsv ? 'n' : (char)0xB5u;
+                dose_label[0] = lcd_display_unit_prefix;
                 dose_label[1] = 'S';
                 dose_label[2] = 'v';
                 /* Two trailing space glyphs overwrite the old /h pixels. */
@@ -889,12 +873,8 @@ static bool lcd_text_prepare_glyph(void)
             }
 
             {
-                const uint8_t first_digit = (uint8_t)(LCD_RATE_MAX_DIGITS -
-                    lcd_rate_glyph_count);
                 const uint8_t value_right_edge = (uint8_t)(LCD_RATE_FIELD_X +
-                    (first_digit + lcd_rate_glyph_count - 1u) *
-                        (FONT_LARGE_CELL_WIDTH + LCD_TEXT_GAP) +
-                    FONT_LARGE_CELL_WIDTH - 1u);
+                    LCD_RATE_FIELD_WIDTH - 1u);
                 x_start = (uint8_t)(value_right_edge - label_width + 1u);
             }
             /* Keep the row inside the active 80-line panel after the stock
@@ -971,47 +951,71 @@ static bool lcd_text_prepare_glyph(void)
             return true;
         }
 
-        x_start = (uint8_t)(LCD_RATE_FIELD_X +
-            (lcd_text_glyph_index - 2u) *
-                (FONT_LARGE_CELL_WIDTH + LCD_TEXT_GAP));
-        y_start = (uint8_t)((LCD_HEIGHT - FONT_LARGE_CELL_HEIGHT) / 2u);
         {
-            const uint8_t first_digit = (uint8_t)(LCD_RATE_MAX_DIGITS -
+            const uint8_t digit_slot = (uint8_t)(lcd_text_glyph_index - 3u);
+            const bool is_prefix_space = digit_slot == 0u;
+            const uint8_t digit_index = is_prefix_space ? 0u :
+                (uint8_t)(digit_slot - 1u);
+            const uint8_t first_digit = (uint8_t)(LCD_RATE_MAX_GLYPHS -
                 lcd_rate_glyph_count);
-            const uint8_t digit_index = (uint8_t)(lcd_text_glyph_index - 2u);
-            if (digit_index >= first_digit &&
-                digit_index < first_digit + lcd_rate_glyph_count) {
-                glyph = lcd_rate_glyphs[digit_index - first_digit];
+            uint16_t text_width = 0u;
+            uint16_t glyph_x = (uint16_t)(LCD_RATE_FIELD_X +
+                LCD_RATE_FIELD_WIDTH);
+            uint8_t glyph_width;
+
+            glyph = is_prefix_space ? ' ' :
+                (digit_index < first_digit ? ' ' :
+                 lcd_rate_glyphs[digit_index - first_digit]);
+            for (uint8_t i = 0u; i < lcd_rate_glyph_count; ++i) {
+                text_width = (uint16_t)(text_width +
+                    font_large_glyph_width(lcd_rate_glyphs[i]));
+            }
+            glyph_x = (uint16_t)(glyph_x - text_width);
+            if (is_prefix_space) {
+                glyph_x = LCD_RATE_FIELD_X;
+            } else if (digit_index < first_digit) {
+                glyph_x = (uint16_t)(LCD_RATE_FIELD_X +
+                    LCD_RATE_PREFIX_WIDTH +
+                    digit_index * FONT_LARGE_CELL_WIDTH);
             } else {
-                glyph = ' ';
+                for (uint8_t i = 0u; i < digit_index - first_digit; ++i) {
+                    glyph_x = (uint16_t)(glyph_x +
+                        font_large_glyph_width(lcd_rate_glyphs[i]));
+                }
             }
-        }
-        x_window[0] = 0u;
-        x_window[1] = x_start;
-        x_window[2] = 0u;
-        x_window[3] = (uint8_t)(x_start + FONT_LARGE_CELL_WIDTH - 1u);
-        y_window[0] = 0u;
-        y_window[1] = (uint8_t)(LCD_Y_OFFSET + y_start);
-        y_window[2] = 0u;
-        y_window[3] = (uint8_t)(LCD_Y_OFFSET + y_start +
-            FONT_LARGE_CELL_HEIGHT - 1u);
+            x_start = (uint8_t)glyph_x;
+            glyph_width = digit_index < first_digit ? FONT_LARGE_CELL_WIDTH :
+                font_large_glyph_width(glyph);
 
-        lcd_text_glyph_pixels = LCD_LARGE_GLYPH_PIXELS;
-        lcd_text_dma_glyph_advance = 1u;
-        for (uint8_t y = 0u; y < FONT_LARGE_CELL_HEIGHT; ++y) {
-            for (uint8_t x = 0u; x < FONT_LARGE_CELL_WIDTH; ++x) {
-                lcd_text_glyph[(uint16_t)y * FONT_LARGE_CELL_WIDTH + x] =
-                    font_large_pixel(glyph, x, y) ?
-                        lcd_rate_color : LCD_TEXT_BACKGROUND;
+            y_start = (uint8_t)((LCD_HEIGHT - FONT_LARGE_CELL_HEIGHT) / 2u);
+            x_window[0] = 0u;
+            x_window[1] = x_start;
+            x_window[2] = 0u;
+            x_window[3] = (uint8_t)(x_start + glyph_width - 1u);
+            y_window[0] = 0u;
+            y_window[1] = (uint8_t)(LCD_Y_OFFSET + y_start);
+            y_window[2] = 0u;
+            y_window[3] = (uint8_t)(LCD_Y_OFFSET + y_start +
+                FONT_LARGE_CELL_HEIGHT - 1u);
+
+            lcd_text_glyph_pixels = (uint16_t)(glyph_width *
+                FONT_LARGE_CELL_HEIGHT);
+            lcd_text_dma_glyph_advance = 1u;
+            for (uint8_t y = 0u; y < FONT_LARGE_CELL_HEIGHT; ++y) {
+                for (uint8_t x = 0u; x < glyph_width; ++x) {
+                    lcd_text_glyph[(uint16_t)y * glyph_width + x] =
+                        font_large_pixel(glyph, x, y) ?
+                            lcd_rate_color : LCD_TEXT_BACKGROUND;
+                }
             }
-        }
 
-        REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u); /* CS low */
-        lcd_command(0x2Au, x_window, sizeof(x_window));
-        lcd_command(0x2Bu, y_window, sizeof(y_window));
-        lcd_command(0x2Cu, 0, 0u); /* RAMWR */
-        lcd_text_row_commands_queued = true;
-        return true;
+            REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
+            lcd_command(0x2Au, x_window, sizeof(x_window));
+            lcd_command(0x2Bu, y_window, sizeof(y_window));
+            lcd_command(0x2Cu, 0, 0u);
+            lcd_text_row_commands_queued = true;
+            return true;
+        }
     }
 
     {
@@ -1099,7 +1103,6 @@ void board_display_next_page(void)
     } else {
         lcd_format_dose(lcd_dose_value_thousandths, lcd_dose_fraction);
     }
-    lcd_background_pending = true;
     lcd_cpm_redraw_pending = true;
 }
 
@@ -1170,7 +1173,8 @@ static uint16_t lcd_battery_percent(uint16_t raw)
     if (raw >= 1670u) {
         return 100u;
     }
-    return (uint16_t)(((uint32_t)(raw - 1295u) * 100u) / 375u);
+    return (uint16_t)(100u -
+        (((uint32_t)(1670u - raw) * 100u) / 375u));
 }
 
 static void lcd_format_percent(uint16_t value, uint8_t offset)
@@ -1187,43 +1191,31 @@ static void lcd_format_percent(uint16_t value, uint8_t offset)
     lcd_adc_glyphs[offset + 3u] = '%';
 }
 
-static void lcd_format_adc_value(uint16_t value, uint8_t offset)
-{
-    if (value > 4095u) {
-        lcd_adc_glyphs[offset + 0u] = '-';
-        lcd_adc_glyphs[offset + 1u] = '-';
-        lcd_adc_glyphs[offset + 2u] = '-';
-        lcd_adc_glyphs[offset + 3u] = '-';
-        return;
-    }
-
-    lcd_adc_glyphs[offset + 0u] = (char)('0' + (value / 1000u));
-    lcd_adc_glyphs[offset + 1u] = (char)('0' + ((value / 100u) % 10u));
-    lcd_adc_glyphs[offset + 2u] = (char)('0' + ((value / 10u) % 10u));
-    lcd_adc_glyphs[offset + 3u] = (char)('0' + (value % 10u));
-}
-
 void board_display_set_adc(uint16_t channel2, uint16_t channel8,
                            uint16_t channel9)
 {
-    const uint16_t values[3] = { channel2, channel8, channel9 };
     bool changed = false;
+    uint16_t battery_percent;
+    uint16_t solar_percent;
 
-    for (uint8_t i = 0u; i < 3u; ++i) {
-        if (lcd_adc_values[i] != values[i]) {
-            lcd_adc_values[i] = values[i];
+    (void)channel8; /* USB presence is not currently shown on this page. */
+    if (channel2 <= 4095u) {
+        battery_percent = lcd_battery_percent(channel2);
+        if (battery_percent != lcd_displayed_battery_percent) {
+            lcd_displayed_battery_percent = battery_percent;
+            lcd_format_percent(battery_percent, 13u);
             changed = true;
         }
     }
-
-    if (changed) {
-        lcd_format_percent(lcd_battery_percent(channel2), 13u);
-        lcd_format_percent((uint16_t)(channel9 / 31u), 7u);
-        lcd_format_adc_value(channel8, 0u);
-        if (lcd_ready) {
-            lcd_cpm_redraw_pending = true;
+    if (channel9 <= 4095u) {
+        solar_percent = (uint16_t)(channel9 / 31u);
+        if (solar_percent != lcd_displayed_solar_percent) {
+            lcd_displayed_solar_percent = solar_percent;
+            lcd_format_percent(solar_percent, 7u);
+            changed = true;
         }
     }
+    if (changed && lcd_ready) lcd_cpm_redraw_pending = true;
 }
 
 static void lcd_text_render_service(void)
@@ -1466,17 +1458,27 @@ void board_adc_init(void)
     REG32(GPIOB_BASE + GPIO_MODER) |= (3u << 0u) | (3u << 2u);
     REG32(GPIOB_BASE + GPIO_PUPDR) &= ~((3u << 0u) | (3u << 2u));
 
+    /* Stock raises PB10 for 5 ms before measuring the analog channels. */
+    REG32(GPIOB_BASE + GPIO_BSRR) = 1u << (16u + 10u);
+    REG32(GPIOB_BASE + GPIO_OTYPER) &= ~(1u << 10u);
+    REG32(GPIOB_BASE + GPIO_PUPDR) &= ~(3u << 20u);
+    REG32(GPIOB_BASE + GPIO_MODER) =
+        (REG32(GPIOB_BASE + GPIO_MODER) & ~(3u << 20u)) | (1u << 20u);
+
     RCC_APB2ENR |= 1u << 9u; /* ADC1 clock */
     (void)RCC_APB2ENR;
     ADC_CR = 0u;
     ADC_CFGR1 = 0u; /* Single conversion, software trigger, 12-bit result. */
-    ADC_CFGR2 = 1u << 30u; /* PCLK/4: 8 MHz ADC clock at 32 MHz PCLK. */
+    ADC_CFGR2 = 1u << 30u; /* Keep the previously working PCLK/4 ADC clock. */
     ADC_SMPR = 7u; /* Longest sample time for high source impedance. */
 
+    REG32(GPIOB_BASE + GPIO_BSRR) = 1u << 10u;
+    adc_wait_ms(5u);
     ADC_CR = 1u << 31u; /* Calibrate before enabling. */
     timeout = 1000000u;
     while ((ADC_CR & (1u << 31u)) != 0u && --timeout != 0u) { }
     if (timeout == 0u) {
+        REG32(GPIOB_BASE + GPIO_BSRR) = 1u << (16u + 10u);
         return;
     }
 
@@ -1485,6 +1487,7 @@ void board_adc_init(void)
     timeout = 1000000u;
     while ((ADC_ISR & 1u) == 0u && --timeout != 0u) { }
     adc_ready = timeout != 0u;
+    REG32(GPIOB_BASE + GPIO_BSRR) = 1u << (16u + 10u);
 }
 
 uint16_t board_adc_read(uint8_t channel)
@@ -1504,6 +1507,33 @@ uint16_t board_adc_read(uint8_t channel)
         return UINT16_MAX;
     }
     return (uint16_t)(ADC_DR & 0x0FFFu);
+}
+
+static void adc_wait_ms(uint32_t duration)
+{
+    uint32_t deadline = board_millis + duration;
+
+    while ((int32_t)(board_millis - deadline) < 0) { }
+}
+
+void board_adc_read_all(uint16_t *channel2, uint16_t *channel8,
+                        uint16_t *channel9)
+{
+    uint16_t values[3] = { UINT16_MAX, UINT16_MAX, UINT16_MAX };
+
+    REG32(GPIOB_BASE + GPIO_BSRR) = 1u << 10u;
+    adc_wait_ms(5u);
+    if (adc_ready) {
+        values[0] = board_adc_read(2u);
+        values[1] = board_adc_read(8u);
+        values[2] = board_adc_read(9u);
+    }
+    REG32(GPIOB_BASE + GPIO_BSRR) = 1u << (16u + 10u);
+    adc_wait_ms(1u);
+
+    *channel2 = values[0];
+    *channel8 = values[1];
+    *channel9 = values[2];
 }
 
 void EXTI4_15_IRQHandler(void)
