@@ -11,10 +11,27 @@ volatile uint32_t board_millis;
 #define RCC_BASE       0x40021000u
 #define RCC_CR         REG32(RCC_BASE + 0x00u)
 #define RCC_CFGR       REG32(RCC_BASE + 0x0Cu)
+#define RCC_AHBENR     REG32(RCC_BASE + 0x30u)
+#define RCC_CCIPR      REG32(RCC_BASE + 0x4Cu)
 #define RCC_IOPENR     REG32(RCC_BASE + 0x2Cu)
 #define RCC_APB1ENR    REG32(RCC_BASE + 0x38u)
 #define RCC_APB2ENR    REG32(RCC_BASE + 0x34u)
 #define SPI2_BASE      0x40003800u
+#define LPTIM1_BASE    0x40007C00u
+#define LPTIM_ISR      REG32(LPTIM1_BASE + 0x00u)
+#define LPTIM_ICR      REG32(LPTIM1_BASE + 0x04u)
+#define LPTIM_CFGR     REG32(LPTIM1_BASE + 0x0Cu)
+#define LPTIM_CR       REG32(LPTIM1_BASE + 0x10u)
+#define LPTIM_CMP      REG32(LPTIM1_BASE + 0x14u)
+#define LPTIM_ARR      REG32(LPTIM1_BASE + 0x18u)
+#define DMA1_BASE      0x40020000u
+#define DMA1_ISR       REG32(DMA1_BASE + 0x00u)
+#define DMA1_IFCR      REG32(DMA1_BASE + 0x04u)
+#define DMA1_CH5_CCR   REG32(DMA1_BASE + 0x58u)
+#define DMA1_CH5_CNDTR REG32(DMA1_BASE + 0x5Cu)
+#define DMA1_CH5_CPAR  REG32(DMA1_BASE + 0x60u)
+#define DMA1_CH5_CMAR  REG32(DMA1_BASE + 0x64u)
+#define DMA1_CSELR     REG32(DMA1_BASE + 0xA8u)
 #define SPI_CR1        0x00u
 #define SPI_CR2        0x04u
 #define SPI_SR         0x08u
@@ -43,6 +60,7 @@ volatile uint32_t board_millis;
 #define TIM_CCR2       0x38u
 
 #define PWM_PERIOD     1000u
+#define BACKLIGHT_PWM_PERIOD 1000u
 #define LONG_PRESS_TICKS 80u
 #define LCD_QUEUE_CAPACITY 192u
 #define LCD_SPI_ENABLED 1u
@@ -62,16 +80,19 @@ typedef struct {
     uint8_t count;
     uint8_t long_reported;
     uint16_t held_ticks;
+    uint8_t repeat_ticks;
 } button_debounce_t;
 
 static button_debounce_t left_button;
 static button_debounce_t right_button;
 static uint8_t rgb_brightness_percent = 100u;
+static uint8_t backlight_brightness_percent = 100u;
+static bool backlight_pwm_running;
+static bool backlight_requested_on;
 static uint8_t rgb_channels;
 static bool lcd_spi_ready = true;
 static bool lcd_spi_error;
 static bool lcd_diag_reported;
-static bool lcd_pin_activity_seen;
 static bool lcd_control_error;
 static bool lcd_started;
 static bool lcd_ready;
@@ -79,14 +100,13 @@ static uint8_t lcd_init_state;
 static uint32_t lcd_init_deadline;
 static bool lcd_fill_start_pending;
 static bool lcd_fill_active;
+static bool lcd_dma_active;
 static bool lcd_fill_center_square;
 /* With the stock init sequence and SPI2 restored, render the full active
  * area so a remaining geometry/offset issue cannot hide a small test mark. */
 static bool lcd_center_square_pending;
-static uint8_t lcd_fill_byte_phase;
 static bool lcd_color_dirty;
 static uint16_t lcd_draw_pixel;
-static uint32_t lcd_draw_position;
 static uint8_t lcd_requested_color;
 typedef struct {
     uint8_t value;
@@ -98,10 +118,11 @@ static uint16_t lcd_queue_tail;
 
 enum {
     LCD_INIT_IDLE = 0u,
+    LCD_INIT_BOARD_ENABLE_DELAY,
     LCD_INIT_RESET_LOW,
     LCD_INIT_RESET_HIGH,
-    LCD_INIT_PANEL_UNLOCK_TX,
-    LCD_INIT_PANEL_UNLOCK_DELAY,
+    LCD_INIT_SWRESET_TX,
+    LCD_INIT_SWRESET_DELAY,
     LCD_INIT_SLPOUT_TX,
     LCD_INIT_SLPOUT_DELAY,
     LCD_INIT_CONFIG_TX,
@@ -110,6 +131,7 @@ enum {
     LCD_INIT_DISPON_DELAY,
     LCD_INIT_DISPON_TX,
     LCD_INIT_FINAL_DELAY,
+    LCD_INIT_POST_INIT_INVOFF_TX,
     LCD_INIT_READY,
     LCD_INIT_FAILED
 };
@@ -125,6 +147,25 @@ static void lcd_check_output_level(uint32_t base, uint32_t pin, bool expected_hi
 static bool deadline_reached(uint32_t deadline)
 {
     return (int32_t)(board_millis - deadline) >= 0;
+}
+
+static bool lptim_wait_flag(uint32_t flag)
+{
+    uint32_t timeout = 100000u;
+    while ((LPTIM_ISR & flag) == 0u && --timeout != 0u) { }
+    return timeout != 0u;
+}
+
+static void backlight_force_gpio_on(void)
+{
+    LPTIM_CR = 0u;
+    backlight_pwm_running = false;
+    /* GPIO high is the observed fully-on level for the backlight. */
+    REG32(GPIOB_BASE + GPIO_BSRR) = 1u << BOARD_LCD_BACKLIGHT_PIN;
+    REG32(GPIOB_BASE + GPIO_MODER) =
+        (REG32(GPIOB_BASE + GPIO_MODER) &
+         ~(3u << (BOARD_LCD_BACKLIGHT_PIN * 2u))) |
+        (1u << (BOARD_LCD_BACKLIGHT_PIN * 2u));
 }
 
 static bool lcd_queue_byte(uint8_t value, bool is_data)
@@ -159,14 +200,13 @@ static void lcd_configure(void)
 {
     lcd_spi_ready = true;
 
-    /* Keep the LCD selected for reset and the complete init command stream.
-     * The stock firmware asserts PA11 before reset/init and releases it only
-     * after the initialization transaction has completed. */
-    REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
+    /* Keep CS inactive until the stock PB7 board-enable settling interval
+     * completes. LCD_Init then selects the panel before resetting it. */
+    REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 11u;
     REG32(GPIOA_BASE + GPIO_MODER) = (REG32(GPIOA_BASE + GPIO_MODER) &
         ~(3u << 22u)) | (1u << 22u);
-    REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
-    lcd_check_output_level(GPIOA_BASE, 11u, false);
+    REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 11u;
+    lcd_check_output_level(GPIOA_BASE, 11u, true);
 
     /* PA8 reset output. */
     REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 8u;
@@ -193,15 +233,18 @@ static void lcd_configure(void)
     /* STM32L0 uses the legacy SPI block: 8-bit frames are DFF=0 in CR1;
      * CR2 has no DS/FRXTH fields. */
     REG32(SPI2_BASE + SPI_CR2) = 0u;
-    /* Master, software NSS high, mode 0. DIV32 gives enough time to sample
-     * the actual SCK/MOSI pad levels while a byte is being shifted. */
+    /* Master, software NSS high, mode 0. DIV2 at the 32 MHz PCLK1 matches
+     * the stock 16 MHz SPI clock. */
     REG32(SPI2_BASE + SPI_CR1) = (1u << 2u) | (1u << 8u) |
-                                  (1u << 9u) | (4u << 3u) | (1u << 6u);
+                                  (1u << 9u) | (1u << 6u);
 
-    REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 8u);
-    lcd_check_output_level(GPIOA_BASE, 8u, false);
-    lcd_init_deadline = board_millis + 5u;
-    lcd_init_state = LCD_INIT_RESET_LOW;
+    /* The stock app drives PB7 high and waits 100 ms before LCD_Init.
+     * Its board-level function is not proven, but this stock state matters. */
+    REG32(GPIOB_BASE + GPIO_BSRR) = 1u << 7u;
+    REG32(GPIOB_BASE + GPIO_MODER) = (REG32(GPIOB_BASE + GPIO_MODER) &
+        ~(3u << 14u)) | (1u << 14u);
+    lcd_init_deadline = board_millis + 100u;
+    lcd_init_state = LCD_INIT_BOARD_ENABLE_DELAY;
 }
 
 static bool lcd_queue_drained(void)
@@ -219,22 +262,10 @@ static bool lcd_spi_send_byte(uint8_t value)
 
     *(volatile uint8_t *)(uintptr_t)(SPI2_BASE + SPI_DR) = value;
     timeout = 100000u;
-    uint32_t previous_pins = REG32(GPIOB_BASE + GPIO_IDR) &
-                             ((1u << 13u) | (1u << 15u));
     while ((REG32(SPI2_BASE + SPI_SR) & 1u) == 0u && --timeout != 0u) {
-        uint32_t pins = REG32(GPIOB_BASE + GPIO_IDR) &
-                        ((1u << 13u) | (1u << 15u));
-        if (pins != previous_pins) {
-            lcd_pin_activity_seen = true;
-        }
-        previous_pins = pins;
     }
     if (timeout == 0u) {
         return false;
-    }
-    if ((REG32(GPIOB_BASE + GPIO_IDR) & ((1u << 13u) | (1u << 15u))) !=
-        previous_pins) {
-        lcd_pin_activity_seen = true;
     }
     (void)*(volatile uint8_t *)(uintptr_t)(SPI2_BASE + SPI_DR);
 
@@ -243,10 +274,64 @@ static bool lcd_spi_send_byte(uint8_t value)
     return timeout != 0u;
 }
 
+static void lcd_spi_fill_dma_start(uint32_t pixel_count)
+{
+    /* DMA1 channel 5 is SPI2_TX. Keep the source fixed to repeat one RGB565
+     * pixel while DMA fills the entire LCD window without CPU pacing gaps. */
+    DMA1_CH5_CCR = 0u;
+    DMA1_IFCR = 0xFu << 16u;
+    DMA1_CSELR = (DMA1_CSELR & ~(0xFu << 16u)) | (2u << 16u);
+    DMA1_CH5_CPAR = SPI2_BASE + SPI_DR;
+    DMA1_CH5_CMAR = (uint32_t)(uintptr_t)&lcd_draw_pixel;
+    DMA1_CH5_CNDTR = pixel_count;
+    DMA1_CH5_CCR = (1u << 4u) | (1u << 8u) | (1u << 10u) | (2u << 12u);
+    REG32(SPI2_BASE + SPI_CR1) &= ~(1u << 6u);
+    REG32(SPI2_BASE + SPI_CR1) |= 1u << 11u; /* DFF: 16-bit frames */
+    REG32(SPI2_BASE + SPI_CR1) |= 1u << 6u;
+    REG32(SPI2_BASE + SPI_CR2) |= 1u << 1u; /* TXDMAEN */
+    DMA1_CH5_CCR |= 1u;
+    lcd_dma_active = true;
+}
+
 static void lcd_spi_pump(void)
 {
 
     if (!lcd_spi_ready) {
+        return;
+    }
+
+    if (lcd_dma_active) {
+        uint32_t status = DMA1_ISR;
+        if ((status & (1u << 19u)) != 0u) {
+            DMA1_CH5_CCR = 0u;
+            REG32(SPI2_BASE + SPI_CR2) &= ~(1u << 1u);
+            lcd_dma_active = false;
+            lcd_spi_error = true;
+            lcd_spi_ready = false;
+            board_rgb_set(1u);
+            return;
+        }
+        if ((status & (1u << 17u)) == 0u) {
+            return;
+        }
+        DMA1_CH5_CCR = 0u;
+        REG32(SPI2_BASE + SPI_CR2) &= ~(1u << 1u);
+        while ((REG32(SPI2_BASE + SPI_SR) & (1u << 7u)) != 0u) { }
+        (void)*(volatile uint16_t *)(uintptr_t)(SPI2_BASE + SPI_DR);
+        (void)REG32(SPI2_BASE + SPI_SR);
+        DMA1_IFCR = 0xFu << 16u;
+        REG32(SPI2_BASE + SPI_CR1) &= ~(1u << 6u);
+        REG32(SPI2_BASE + SPI_CR1) &= ~(1u << 11u);
+        REG32(SPI2_BASE + SPI_CR1) |= 1u << 6u;
+        lcd_dma_active = false;
+        lcd_fill_active = false;
+        lcd_fill_center_square = false;
+        REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 11u;
+        lcd_check_output_level(GPIOA_BASE, 11u, true);
+        if (!lcd_diag_reported) {
+            lcd_diag_reported = true;
+            board_rgb_set(lcd_control_error ? 3u : 2u);
+        }
         return;
     }
 
@@ -271,46 +356,14 @@ static void lcd_spi_pump(void)
     if (lcd_fill_start_pending) {
         lcd_fill_start_pending = false;
         lcd_fill_active = true;
-        lcd_fill_byte_phase = 0u;
     }
 
     if (lcd_fill_active) {
-        uint16_t pixel = lcd_draw_pixel;
-        uint8_t value = lcd_fill_byte_phase == 0u ?
-            (uint8_t)(pixel >> 8u) : (uint8_t)pixel;
         REG32(GPIOB_BASE + GPIO_BSRR) = 1u << 11u; /* PB11 D/C data */
         lcd_check_output_level(GPIOB_BASE, 11u, true);
-        if (!lcd_spi_send_byte(value)) {
-            lcd_spi_error = true;
-            lcd_spi_ready = false;
-            board_rgb_set(1u); /* diagnostic: SPI timeout */
-            return;
-        }
-        if (lcd_fill_byte_phase == 0u) {
-            lcd_fill_byte_phase = 1u;
-        } else {
-            lcd_fill_byte_phase = 0u;
-            ++lcd_draw_position;
-            uint32_t pixel_count = lcd_fill_center_square ?
-                LCD_TEST_SQUARE_SIZE * LCD_TEST_SQUARE_SIZE : LCD_WIDTH * LCD_HEIGHT;
-            if (lcd_draw_position >= pixel_count) {
-                lcd_fill_active = false;
-                lcd_fill_center_square = false;
-                REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 11u; /* CS high */
-                lcd_check_output_level(GPIOA_BASE, 11u, true);
-                if (!lcd_diag_reported) {
-                    lcd_diag_reported = true;
-                    uint8_t color = 1u; /* red = SPI timeout */
-                    if (!lcd_spi_error) {
-                        color = !lcd_pin_activity_seen ? 4u :
-                                (lcd_control_error ? 3u : 2u);
-                    }
-                    board_rgb_set(color);
-                    /* blue = no SPI pin activity; yellow = control mismatch;
-                     * green = SPI activity and control levels match. */
-                }
-            }
-        }
+        uint32_t pixel_count = lcd_fill_center_square ?
+            LCD_TEST_SQUARE_SIZE * LCD_TEST_SQUARE_SIZE : LCD_WIDTH * LCD_HEIGHT;
+        lcd_spi_fill_dma_start(pixel_count);
     }
 }
 
@@ -360,9 +413,74 @@ static void lcd_send_controller_config(void)
 void board_lcd_backlight_set(bool enabled)
 {
     if (enabled) {
-        REG32(GPIOB_BASE + GPIO_BSRR) = 1u << BOARD_LCD_BACKLIGHT_PIN;
+        backlight_requested_on = true;
+        uint32_t compare = ((uint32_t)backlight_brightness_percent *
+                            BACKLIGHT_PWM_PERIOD) / 100u;
+        if (compare >= BACKLIGHT_PWM_PERIOD) {
+            compare = BACKLIGHT_PWM_PERIOD - 1u;
+        }
+
+        /* Preload the GPIO low/off level before connecting PWM output. */
+        REG32(GPIOB_BASE + GPIO_BSRR) =
+            1u << (16u + BOARD_LCD_BACKLIGHT_PIN);
+        REG32(GPIOB_BASE + GPIO_AFRL) =
+            (REG32(GPIOB_BASE + GPIO_AFRL) &
+             ~(0xFu << (BOARD_LCD_BACKLIGHT_PIN * 4u))) |
+            (2u << (BOARD_LCD_BACKLIGHT_PIN * 4u)); /* PB2=LPTIM1_OUT AF2 */
+        REG32(GPIOB_BASE + GPIO_MODER) =
+            (REG32(GPIOB_BASE + GPIO_MODER) &
+             ~(3u << (BOARD_LCD_BACKLIGHT_PIN * 2u))) |
+            (2u << (BOARD_LCD_BACKLIGHT_PIN * 2u));
+
+        if (!backlight_pwm_running) {
+            LPTIM_CR = 0u;
+            LPTIM_CFGR = 1u << 21u; /* APB /1, PWM mode, inverted waveform */
+            LPTIM_CR = 1u;   /* enable peripheral */
+            LPTIM_ICR = (1u << 3u) | (1u << 4u);
+            LPTIM_ARR = BACKLIGHT_PWM_PERIOD - 1u;
+            if (!lptim_wait_flag(1u << 4u)) {
+                backlight_force_gpio_on();
+                return;
+            }
+            LPTIM_ICR = 1u << 4u;
+            LPTIM_CMP = compare;
+            if (!lptim_wait_flag(1u << 3u)) {
+                backlight_force_gpio_on();
+                return;
+            }
+            LPTIM_ICR = 1u << 3u;
+            LPTIM_CR |= 1u << 2u; /* continuous counter start */
+            backlight_pwm_running = true;
+        } else {
+            LPTIM_ICR = 1u << 3u;
+            LPTIM_CMP = compare;
+            if (!lptim_wait_flag(1u << 3u)) {
+                backlight_force_gpio_on();
+                return;
+            }
+            LPTIM_ICR = 1u << 3u;
+        }
     } else {
-        REG32(GPIOB_BASE + GPIO_BSRR) = 1u << (16u + BOARD_LCD_BACKLIGHT_PIN);
+        backlight_requested_on = false;
+        REG32(GPIOB_BASE + GPIO_BSRR) =
+            1u << (16u + BOARD_LCD_BACKLIGHT_PIN);
+        REG32(GPIOB_BASE + GPIO_MODER) =
+            (REG32(GPIOB_BASE + GPIO_MODER) &
+             ~(3u << (BOARD_LCD_BACKLIGHT_PIN * 2u))) |
+            (1u << (BOARD_LCD_BACKLIGHT_PIN * 2u));
+        LPTIM_CR = 0u;
+        backlight_pwm_running = false;
+    }
+}
+
+void board_lcd_backlight_set_brightness(uint8_t percent)
+{
+    if (percent > 100u) {
+        percent = 100u;
+    }
+    backlight_brightness_percent = percent;
+    if (backlight_requested_on) {
+        board_lcd_backlight_set(true);
     }
 }
 
@@ -404,7 +522,6 @@ static void lcd_begin_fill(void)
     lcd_draw_pixel = (uint16_t)((red << 11u) | (green << 5u) | blue);
     lcd_fill_center_square = center_square;
     lcd_center_square_pending = false;
-    lcd_draw_position = 0u;
     REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u); /* CS low */
     lcd_check_output_level(GPIOA_BASE, 11u, false);
     lcd_command(0x2Au, x_window, sizeof(x_window));
@@ -430,6 +547,17 @@ void board_display_service(void)
     }
 
     switch (lcd_init_state) {
+    case LCD_INIT_BOARD_ENABLE_DELAY:
+        if (deadline_reached(lcd_init_deadline)) {
+            /* Stock LCD_Init asserts CS only after the PB7 settle delay. */
+            REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
+            lcd_check_output_level(GPIOA_BASE, 11u, false);
+            REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 8u);
+            lcd_check_output_level(GPIOA_BASE, 8u, false);
+            lcd_init_deadline = board_millis + 5u;
+            lcd_init_state = LCD_INIT_RESET_LOW;
+        }
+        return;
     case LCD_INIT_RESET_LOW:
         if (deadline_reached(lcd_init_deadline)) {
             REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 8u;
@@ -444,19 +572,19 @@ void board_display_service(void)
             lcd_ready = true;
             lcd_init_state = LCD_INIT_READY;
 #else
-            /* Stock panel requires its vendor unlock before leaving sleep. */
-            { const uint8_t unlock = 0x80u; lcd_command(0x0Fu, &unlock, 1u); }
-            lcd_init_state = LCD_INIT_PANEL_UNLOCK_TX;
+            /* Stock sequence starts with SWRESET after the hardware reset. */
+            lcd_command(0x01u, 0, 0u);
+            lcd_init_state = LCD_INIT_SWRESET_TX;
 #endif
         }
         return;
-    case LCD_INIT_PANEL_UNLOCK_TX:
+    case LCD_INIT_SWRESET_TX:
         if (lcd_queue_drained()) {
             lcd_init_deadline = board_millis + 150u;
-            lcd_init_state = LCD_INIT_PANEL_UNLOCK_DELAY;
+            lcd_init_state = LCD_INIT_SWRESET_DELAY;
         }
         return;
-    case LCD_INIT_PANEL_UNLOCK_DELAY:
+    case LCD_INIT_SWRESET_DELAY:
         if (deadline_reached(lcd_init_deadline)) {
             lcd_command(0x11u, 0, 0u); /* SLPOUT */
             lcd_init_state = LCD_INIT_SLPOUT_TX;
@@ -464,7 +592,8 @@ void board_display_service(void)
         return;
     case LCD_INIT_SLPOUT_TX:
         if (lcd_queue_drained()) {
-            lcd_init_deadline = board_millis + 255u;
+            /* Match the stock table's 500 ms sleep-exit delay. */
+            lcd_init_deadline = board_millis + 500u;
             lcd_init_state = LCD_INIT_SLPOUT_DELAY;
         }
         return;
@@ -511,6 +640,17 @@ void board_display_service(void)
     case LCD_INIT_FINAL_DELAY:
         if (deadline_reached(lcd_init_deadline)) {
             REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 11u; /* CS high after init */
+            lcd_check_output_level(GPIOA_BASE, 11u, true);
+            /* Stock main() sends INVOFF as a separate CS transaction. */
+            REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
+            lcd_check_output_level(GPIOA_BASE, 11u, false);
+            lcd_command(0x20u, 0, 0u);
+            lcd_init_state = LCD_INIT_POST_INIT_INVOFF_TX;
+        }
+        break;
+    case LCD_INIT_POST_INIT_INVOFF_TX:
+        if (lcd_queue_drained()) {
+            REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 11u; /* CS high */
             lcd_check_output_level(GPIOA_BASE, 11u, true);
             lcd_ready = true;
             lcd_init_state = LCD_INIT_READY;
@@ -594,22 +734,44 @@ static uint8_t debounce(button_debounce_t *button, bool raw_pressed,
             events |= press_event;
             button->held_ticks = 0u;
             button->long_reported = 0u;
+            button->repeat_ticks = 0u;
         } else {
             if (button->long_reported == 0u) {
                 events |= short_event;
             }
             button->held_ticks = 0u;
             button->long_reported = 0u;
+            button->repeat_ticks = 0u;
         }
     }
 
-    if (button->stable != 0u && button->long_reported == 0u) {
-        if (button->held_ticks < LONG_PRESS_TICKS) {
+    if (button->stable != 0u) {
+        if (button->held_ticks < 0xFFFFu) {
             ++button->held_ticks;
         }
-        if (button->held_ticks >= LONG_PRESS_TICKS) {
+        if (button->held_ticks >= LONG_PRESS_TICKS &&
+            button->long_reported == 0u) {
             button->long_reported = 1u;
+            button->repeat_ticks = 0u;
             events |= long_event;
+        } else if (button->long_reported != 0u) {
+            uint8_t interval_ticks = 10u;
+
+            /* Accelerate geometrically with hold duration: 10, 7, 5, 3,
+             * then 2 samples per repeat (100 ms down to 20 ms). */
+            if (button->held_ticks >= LONG_PRESS_TICKS + 400u) {
+                interval_ticks = 2u;
+            } else if (button->held_ticks >= LONG_PRESS_TICKS + 300u) {
+                interval_ticks = 3u;
+            } else if (button->held_ticks >= LONG_PRESS_TICKS + 200u) {
+                interval_ticks = 5u;
+            } else if (button->held_ticks >= LONG_PRESS_TICKS + 100u) {
+                interval_ticks = 7u;
+            }
+            if (++button->repeat_ticks >= interval_ticks) {
+                button->repeat_ticks = 0u;
+                events |= long_event;
+            }
         }
     }
     return events;
@@ -650,22 +812,36 @@ void board_init(void)
                               (1u << BOARD_RGB_B_PIN);
     volatile uint32_t *gpioa_moder = (volatile uint32_t *)(uintptr_t)(GPIOA_BASE + GPIO_MODER);
 
-    /* Configure one Flash wait state before switching to 16 MHz HSI. */
+    /* Configure one Flash wait state before switching to the 32 MHz PLL. */
     FLASH_ACR = (FLASH_ACR & ~1u) | 1u;
 
-    /* Reset-clock startup: switch to HSI16 and wait until it is ready. */
+    /* Start HSI16 and select it temporarily as SYSCLK before configuring PLL. */
     RCC_CR |= 1u; /* HSI16ON */
     while ((RCC_CR & (1u << 2)) == 0u) { } /* HSI16RDY */
     RCC_CFGR = (RCC_CFGR & ~3u) | 1u;
     while ((RCC_CFGR & (3u << 2)) != (1u << 2)) { }
 
+    /* Match stock: HSI16 x4 /2 = 32 MHz; run AHB/APB at DIV1. */
+    RCC_CR &= ~(1u << 24u); /* PLLON=0 before changing PLL factors */
+    while ((RCC_CR & (1u << 25u)) != 0u) { } /* PLLRDY=0 */
+    RCC_CFGR = (RCC_CFGR & ~((3u << 0u) | (0xFu << 4u) |
+        (7u << 8u) | (7u << 11u) | (1u << 16u) |
+        (0xFu << 18u) | (3u << 22u))) |
+        (1u << 0u) | (1u << 18u) | (1u << 22u);
+    RCC_CR |= 1u << 24u; /* PLLON */
+    while ((RCC_CR & (1u << 25u)) == 0u) { } /* PLLRDY */
+    RCC_CFGR = (RCC_CFGR & ~3u) | 3u; /* SYSCLK=PLL */
+    while ((RCC_CFGR & (3u << 2u)) != (3u << 2u)) { }
+
+    RCC_AHBENR |= 1u; /* DMA1 clock */
     RCC_IOPENR |= 3u; /* GPIOA and GPIOB clocks */
     (void)RCC_IOPENR;
 
     /* Preload the assumed inactive LED level before enabling output mode. */
     REG32(GPIOA_BASE + GPIO_BSRR) = BOARD_RGB_ACTIVE_HIGH ? (led_mask << 16) : led_mask;
 
-    RCC_APB1ENR |= 1u;       /* TIM2 clock */
+    RCC_APB1ENR |= 1u | (1u << 31u); /* TIM2 and LPTIM1 clocks */
+    RCC_CCIPR &= ~(3u << 18u); /* LPTIM1 kernel clock = PCLK1 */
     RCC_APB2ENR |= (1u << 5); /* TIM22 clock */
     (void)RCC_APB2ENR;
     timer_pwm_init(TIM2_BASE, 3u);
@@ -682,9 +858,9 @@ void board_init(void)
     pin_input_with_pull(GPIOB_BASE, BOARD_BUTTON_LEFT_PIN);
     pin_input_with_pull(GPIOA_BASE, BOARD_BUTTON_RIGHT_PIN);
 
-    /* PB2 follows the stock active-mode on / LCD-sleep off sequence.
-     * Its association with LCD backlight remains a hardware hypothesis. */
-    REG32(GPIOB_BASE + GPIO_BSRR) = 1u << (16u + BOARD_LCD_BACKLIGHT_PIN);
+    /* Start with LCD backlight disabled; PB2 switches to LPTIM1 PWM on wake. */
+    REG32(GPIOB_BASE + GPIO_BSRR) =
+        1u << (16u + BOARD_LCD_BACKLIGHT_PIN);
     REG32(GPIOB_BASE + GPIO_MODER) = (REG32(GPIOB_BASE + GPIO_MODER) &
         ~(3u << (BOARD_LCD_BACKLIGHT_PIN * 2u))) |
         (1u << (BOARD_LCD_BACKLIGHT_PIN * 2u));
@@ -700,7 +876,7 @@ void board_init(void)
     right_button.long_reported = right_button.stable;
     left_button.held_ticks = right_button.held_ticks = 0u;
 
-    SYST_RVR = 16000u - 1u; /* 1 ms at HSI16 */
+    SYST_RVR = 32000u - 1u; /* 1 ms at 32 MHz SYSCLK */
     SYST_CVR = 0u;
     SYST_CSR = 7u; /* processor clock, interrupt, enable */
 }

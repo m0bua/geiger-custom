@@ -9,9 +9,8 @@
 #define BOARD_BUTTON_LEFT_PIN       9u  /* PB9; reverse / UI Exit-Off */
 #define BOARD_BUTTON_RIGHT_PIN      4u  /* PA4; forward / enter */
 
-/* Stock HEX drives PB2 high in active paths and low before LCD SLPIN.
- * Treat it as a candidate active-high LCD/backlight enable for bring-up. */
-#define BOARD_LCD_BACKLIGHT_PIN     2u  /* PB2; candidate on/off control */
+/* PB2 is used as the LCD backlight PWM output (LPTIM1_OUT, AF2). */
+#define BOARD_LCD_BACKLIGHT_PIN     2u  /* PB2; LPTIM1_OUT */
 
 /* Hardware test showed the RGB LED is active-low: driving all channels low
  * produces white, so the inactive state must be high. */

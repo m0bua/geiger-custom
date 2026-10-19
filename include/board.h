@@ -22,5 +22,6 @@ void board_display_set_color(uint8_t logical_rgb_mask);
 void board_display_service(void);
 bool board_display_busy(void);
 void board_lcd_backlight_set(bool enabled);
+void board_lcd_backlight_set_brightness(uint8_t percent);
 
 #endif
