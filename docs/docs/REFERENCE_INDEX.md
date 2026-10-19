@@ -1,8 +1,8 @@
 # Індекс довідкових матеріалів
 
 Компонентні документи: [LCD_STOCK_GUIDE](LCD_STOCK_GUIDE.md) описує LCD зі
-стокового HEX, а [LCD_BRINGUP](LCD_BRINGUP.md) — актуальні апаратні результати
-LCD, підсвітки й RGB.
+стокового HEX, [LCD_AND_DISPLAY](LCD_AND_DISPLAY.md) — перевірену реалізацію
+екрана, а [STOCK_RATE_DOSE](STOCK_RATE_DOSE.md) — алгоритм вимірювань у стоку.
 
 ## Вихідні матеріали
 

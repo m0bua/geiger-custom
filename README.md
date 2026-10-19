@@ -1,23 +1,23 @@
 # Geiger-2 firmware bootstrap
 
-STM32L051C8T6 firmware for the Geiger-2. The current prototype verifies the RGB LED, buttons, LCD initialization and fast color fills, and backlight PWM. Project notes and component test history are indexed in [`docs/README.md`](docs/README.md).
+STM32L051C8T6 firmware for the Geiger-2. The current prototype displays rolling dose rate and accumulated dose, reads detector pulses and ADC channels, and drives the LCD through SPI2/DMA. Project status and technical references are indexed in [`docs/README.md`](docs/README.md).
 
 ## Status
 
-Current test image shows twelve large glyphs (`0–9`, `:`, `.`) on a black LCD background. The glyph cells are 23×33 px with 3 px spacing. The RGB LED is forced off. LCD backlight starts off, turns on at a button press at fixed 10% brightness, and turns off after three seconds without button activity. Buttons only wake the backlight; they do not change colors or brightness. LCD uses SPI2 on PB13/PB15, PA8 reset, PB11 D/C, and active-low PA11 CS. See [display bring-up log](docs/docs/LCD_BRINGUP.md). Detector pulse capture, HV control, and external flash writes are not implemented.
+The current LCD prototype has two cyclic pages. The first shows dose rate in µSv/h and CPM; the second shows accumulated dose, switching between nSv and µSv. Both pages share ADC8/ADC9/ADC2 diagnostics in the header. Button presses switch pages and wake the backlight; it starts off and times out after 10 seconds. A detector pulse triggers a brief green LED blink. LCD uses SPI2 on PB13/PB15, PA8 reset, PB11 D/C, and active-low PA11 CS. See [display status](docs/docs/LCD_AND_DISPLAY.md). Physical dose calibration, HV control, and external flash writes remain open.
 
 ## Layout
 
 - `include/` — portable application interfaces and configuration types.
-- `src/` — portable measurement/configuration logic, with no STM32 register access.
-- `src/board_stm32l051.c` and `include/board_config.h` — first-try STM32 board adaptation with candidate GPIOs.
+- `src/` — measurement/configuration logic and the STM32L051 board implementation.
+- `include/board_config.h` — board pin constants and hardware configuration.
 - `board/` — board notes and mapping status.
 - `linker/` and `startup_stm32l051.S` — initial STM32L051C8 startup and memory map.
 
 ## Next steps
 
-1. Establish the detector pulse input and safe interrupt/timer configuration.
-2. Map and verify the HV, battery, solar input, speaker, and remaining board signals.
+1. Verify detector rate against a longer reference measurement and calibrate the dose coefficient.
+2. Map and verify HV control, battery/solar ADC scaling, speaker, and remaining board signals.
 3. Confirm the exact SPI NOR part and geometry before defining any erase or journal operations.
 
 ## Build with PlatformIO
