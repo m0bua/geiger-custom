@@ -59,5 +59,5 @@ Callsite-и `0x0800A92A` і `0x0800A95A` вдалося прив’язати ж
 - Оригінальний HEX: `Port-4.1.17-original.hex`, SHA-256 `89368E9B3D8789D641D0D9756971CEA92EA10902EA8FEFFAC604745A0791D6D0`.
 - SPI NOR: `external-flash-1MiB.bin`, 1048576 B, SHA-256 `2302FC0FC257F9756FCCB4DA5340F7D5AFEAF82BBC1E2F87BC924AA76CA3B2F3`.
 - Журнал унікальних читань: 112 коректних записів у `eeprom-unique-read-log-2KiB.bin`.
-- Повний CSV: `Geiger2-resource-call-index-216-2026-10-06.csv`.
-- Список all-FF діапазонів: `Geiger2-all-FF-resource-ranges-2026-10-06.csv`.
+- Повний CSV: `resource-call-index-216.csv`.
+- Список all-FF діапазонів: `all-FF-resource-ranges.csv`.

@@ -1,10 +1,10 @@
 # Geiger-2 firmware bootstrap
 
-Initial application scaffold for the STM32L051C8T6 target. Requirements and UI are in [`docs/docs/`](docs/docs/); this repository root contains the firmware core.
+STM32L051C8T6 firmware for the Geiger-2. The current prototype verifies the RGB LED, buttons, LCD initialization and fast color fills, and backlight PWM. Project notes and component test history are indexed in [`docs/README.md`](docs/README.md).
 
 ## Status
 
-This is an early test firmware. It switches the RGB LED off at startup and steps through off → red → yellow → green → cyan → blue → purple → white; right advances and left reverses. The LCD controller initializes at startup while its backlight remains off. A button press turns on the backlight; after three seconds without button activity, the RGB LED and backlight turn off. The color selection is retained; the first short press wakes the LED and backlight at that color without advancing, and later short presses change color. Holding right for 800 ms raises both RGB LED and backlight brightness by 1% repeatedly; holding left lowers both. Repeats start at about 10 per second and accelerate to 50 per second over four seconds. RGB brightness starts at 30%; backlight brightness starts at 100%. Confirmed RGB pins are PA0=red, PA1=green, PA6=blue, active-low; buttons are PB9=left and PA4=right, active-low. Current LCD diagnostic uses SPI2 on PB13/PB15, with PA8 reset, PB11 D/C, and active-low PA11 CS. See [LCD bring-up log](docs/docs/LCD_BRINGUP.md). The firmware does not enable the detector HV generator or write to external flash.
+The RGB LED starts off and steps through off → red → yellow → green → cyan → blue → purple → white; right advances and left reverses. The LCD initializes at startup with its backlight off. A button turns on the backlight; after three seconds without button activity, the RGB LED and backlight turn off. The color selection is retained; the first short press wakes the current color without advancing. Holding right for 800 ms raises RGB and backlight brightness by 1% repeatedly; holding left lowers both. Repeats start at about 10 per second and accelerate to 50 per second over four seconds. RGB brightness starts at 30%; backlight brightness starts at 100%. Confirmed RGB pins are PA0=red, PA1=green, PA6=blue, active-low; buttons are PB9=left and PA4=right, active-low. LCD uses SPI2 on PB13/PB15, PA8 reset, PB11 D/C, and active-low PA11 CS. See [display bring-up log](docs/docs/LCD_BRINGUP.md). Detector pulse capture, HV control, and external flash writes are not implemented.
 
 ## Layout
 
@@ -16,8 +16,8 @@ This is an early test firmware. It switches the RGB LED off at startup and steps
 
 ## Next steps
 
-1. Flash and visually verify LCD color order, orientation, and backlight behavior.
-2. Implement detector pulse capture after establishing the input pin and safe interrupt/timer configuration.
+1. Establish the detector pulse input and safe interrupt/timer configuration.
+2. Map and verify the HV, battery, solar input, speaker, and remaining board signals.
 3. Confirm the exact SPI NOR part and geometry before defining any erase or journal operations.
 
 ## Build with PlatformIO

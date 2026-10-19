@@ -1,5 +1,9 @@
 # Індекс довідкових матеріалів
 
+Компонентні документи: [LCD_STOCK_GUIDE](LCD_STOCK_GUIDE.md) описує LCD зі
+стокового HEX, а [LCD_BRINGUP](LCD_BRINGUP.md) — актуальні апаратні результати
+LCD, підсвітки й RGB.
+
 ## Вихідні матеріали
 
 - reference/source-material/Port-4.1.17(3).hex — оригінальна англомовна стокова прошивка, тільки для читання/аналізу.
@@ -10,13 +14,13 @@
 
 ## Звіти про прошивку та пам’ять
 
-- Geiger2-resource-call-audit-2026-10-06.md — метод і межі індексу ресурсних викликів, перевірки SPI та EEPROM-читань.
-- Geiger2-asset-call-index-2026-10-06.md — відомі RGB565 ресурси й фізичні адреси у SPI NOR.
-- Geiger2-resource-call-index-216-2026-10-06.csv — індекс 216 звернень до зовнішніх ресурсів.
-- Geiger2-all-FF-resource-ranges-2026-10-06.csv — блоки, що у перевіреному дампі повністю складаються з FF.
-- port-20261003-memory-map.md — карта внутрішньої Flash і обмеження статичного reachability-аналізу.
-- GEIGER2_FONT_MAP_2026-10-04.md — карта шрифтів експериментальних/модифікованих збірок; не є повною картою стоку.
-- font-renderer-call-inventory-v9.md — call-site інвентаризація певної версії шрифтового рендерера.
+- [resource-call-audit.md](../reference/stock-analysis/resource-call-audit.md) — метод і межі індексу ресурсних викликів, перевірки SPI та EEPROM-читань.
+- [asset-call-index.md](../reference/stock-analysis/asset-call-index.md) — відомі RGB565 ресурси й фізичні адреси у SPI NOR.
+- [resource-call-index-216.csv](../reference/stock-analysis/resource-call-index-216.csv) — індекс 216 звернень до зовнішніх ресурсів.
+- [all-FF-resource-ranges.csv](../reference/stock-analysis/all-FF-resource-ranges.csv) — блоки, що у перевіреному дампі повністю складаються з FF.
+- [port-memory-map.md](../reference/stock-analysis/port-memory-map.md) — карта внутрішньої Flash і обмеження статичного reachability-аналізу.
+- [GEIGER2_FONT_MAP.md](../reference/stock-analysis/GEIGER2_FONT_MAP.md) — карта шрифтів експериментальних/модифікованих збірок; не є повною картою стоку.
+- [font-renderer-call-inventory-v9.md](../reference/stock-analysis/font-renderer-call-inventory-v9.md) — call-site інвентаризація певної версії шрифтового рендерера.
 
 Попередній SPI BIN не знайдений у доступних матеріалах під час складання цього пакета; його розмір і SHA-256 записані в STOCK_FIRMWARE.md за результатом попереднього аудиту. Не робити нових висновків про вільні адреси без самого дампу.
 
