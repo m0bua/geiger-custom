@@ -33,6 +33,8 @@ void board_display_right_short(void);
 bool board_display_rate_long_press(void);
 bool board_display_light_alarm_active(void);
 bool board_display_dose_alarm_active(void);
+bool board_display_sound_alarm_active(void);
+bool board_display_sound_alarm_stop_on_clear(void);
 void board_flashlight_alarm_set(bool active, bool on);
 void board_display_extra_enter(void);
 void board_display_extra_step(bool forward);
@@ -56,6 +58,7 @@ bool board_display_led_flash_enabled(bool screen_on);
 bool board_display_click_sound_enabled(bool screen_on);
 void board_click_sound_start(void);
 void board_click_sound_service(void);
+void board_sound_alarm_set(bool active);
 bool board_display_screen_alarm_active(void);
 void board_display_set_adc(uint16_t channel2, uint16_t channel8,
                            uint16_t channel9);

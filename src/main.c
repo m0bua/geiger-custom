@@ -26,6 +26,8 @@ int main(void)
     bool backlight_on = false;
     bool screen_alarm_active = false;
     bool light_alarm_active = false;
+    bool sound_alarm_active = false;
+    bool sound_alarm_acknowledged = false;
     bool light_alarm_on = false;
     bool event_led_on = false;
     bool startup_led_active = true;
@@ -33,6 +35,7 @@ int main(void)
     bool left_long_handled = false;
     bool right_long_handled = false;
     uint8_t wake_suppressed_buttons = 0u;
+    uint8_t alarm_suppressed_buttons = 0u;
 
     board_init();
     board_adc_init();
@@ -44,6 +47,8 @@ int main(void)
     board_lcd_backlight_set(false);
     board_display_init();
     screen_alarm_active = board_display_screen_alarm_active();
+    sound_alarm_active = board_display_sound_alarm_active();
+    board_sound_alarm_set(sound_alarm_active);
     hv_enabled = board_hv_is_enabled();
 
     next_sample = board_millis;
@@ -70,6 +75,33 @@ int main(void)
                 BOARD_BUTTON_RIGHT_DOWN | BOARD_BUTTON_LEFT |
                 BOARD_BUTTON_RIGHT | BOARD_BUTTON_LEFT_LONG |
                 BOARD_BUTTON_RIGHT_LONG;
+
+            if (sound_alarm_active &&
+                (events & (BOARD_BUTTON_LEFT_DOWN |
+                           BOARD_BUTTON_RIGHT_DOWN)) != 0u) {
+                alarm_suppressed_buttons |= events &
+                    (BOARD_BUTTON_LEFT_DOWN | BOARD_BUTTON_RIGHT_DOWN);
+                sound_alarm_active = false;
+                sound_alarm_acknowledged = true;
+                board_sound_alarm_set(false);
+            }
+
+            if ((alarm_suppressed_buttons & BOARD_BUTTON_LEFT_DOWN) != 0u) {
+                events &= (uint8_t)~(BOARD_BUTTON_LEFT_DOWN | BOARD_BUTTON_LEFT |
+                                    BOARD_BUTTON_LEFT_LONG);
+                if ((events & BOARD_BUTTON_LEFT_UP) != 0u) {
+                    alarm_suppressed_buttons &=
+                        (uint8_t)~BOARD_BUTTON_LEFT_DOWN;
+                }
+            }
+            if ((alarm_suppressed_buttons & BOARD_BUTTON_RIGHT_DOWN) != 0u) {
+                events &= (uint8_t)~(BOARD_BUTTON_RIGHT_DOWN |
+                    BOARD_BUTTON_RIGHT | BOARD_BUTTON_RIGHT_LONG);
+                if ((events & BOARD_BUTTON_RIGHT_UP) != 0u) {
+                    alarm_suppressed_buttons &=
+                        (uint8_t)~BOARD_BUTTON_RIGHT_DOWN;
+                }
+            }
 
             next_sample += 10u;
             if (!backlight_on &&
@@ -197,10 +229,28 @@ int main(void)
                 }
             }
 
+            {
+                const bool previous_alarm_active = sound_alarm_active;
+                const bool threat_active =
+                    board_display_sound_alarm_active();
+                if (!threat_active) {
+                    if (board_display_sound_alarm_stop_on_clear()) {
+                        sound_alarm_active = false;
+                    }
+                    sound_alarm_acknowledged = false;
+                } else if (!sound_alarm_acknowledged) {
+                    sound_alarm_active = true;
+                }
+                if (sound_alarm_active != previous_alarm_active) {
+                    board_sound_alarm_set(sound_alarm_active);
+                }
+            }
+
             if (detected_pulses != event_count) {
                 event_count = detected_pulses;
                 board_display_set_count(detected_pulses);
-                if (board_display_click_sound_enabled(backlight_on)) {
+                if (!sound_alarm_active &&
+                    board_display_click_sound_enabled(backlight_on)) {
                     board_click_sound_start();
                 }
                 if (!startup_led_active &&
