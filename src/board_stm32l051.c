@@ -137,10 +137,8 @@ static volatile bool power_off_wakeup;
 #define LCD_RATE_MAX_VALUE 9999999u
 #define LCD_RATE_MAX_DIGITS 5u
 #define LCD_RATE_MAX_GLYPHS (LCD_RATE_MAX_DIGITS + 1u)
-#define LCD_RATE_PREFIX_WIDTH FONT_LARGE_SPACE_WIDTH
 #define LCD_CPM_MAX_DIGITS 4u
-#define LCD_RATE_FIELD_WIDTH (LCD_RATE_MAX_GLYPHS * FONT_LARGE_CELL_WIDTH + \
-    LCD_RATE_PREFIX_WIDTH)
+#define LCD_RATE_FIELD_WIDTH (LCD_RATE_MAX_GLYPHS * FONT_LARGE_CELL_WIDTH)
 #define LCD_RATE_FIELD_X ((LCD_WIDTH - LCD_RATE_FIELD_WIDTH) / 2u)
 #define LCD_RATE_LABEL_LENGTH 5u
 #define LCD_DOSE_LABEL_LENGTH 5u
@@ -1738,26 +1736,30 @@ static bool lcd_text_prepare_glyph(void)
             const uint8_t digit_slot = (uint8_t)(lcd_text_glyph_index - 3u);
             const bool extended_value =
                 lcd_rate_glyph_count > LCD_RATE_MAX_GLYPHS;
+            const bool shift_one_space = !extended_value &&
+                lcd_rate_glyph_count == 4u;
             const bool is_prefix_space = !extended_value && digit_slot == 0u;
             const uint8_t digit_index = extended_value ? digit_slot :
                 (is_prefix_space ? 0u : (uint8_t)(digit_slot - 1u));
             const uint8_t first_digit = extended_value ? 0u :
-                (uint8_t)(LCD_RATE_MAX_GLYPHS - lcd_rate_glyph_count);
+                (uint8_t)(LCD_RATE_MAX_GLYPHS - lcd_rate_glyph_count -
+                    (shift_one_space ? 1u : 0u));
+            const uint8_t content_end = (uint8_t)(first_digit +
+                lcd_rate_glyph_count);
             uint16_t text_width = 0u;
             uint16_t glyph_x = (uint16_t)(LCD_RATE_FIELD_X +
                 LCD_RATE_FIELD_WIDTH);
             uint8_t glyph_width;
 
-            glyph = is_prefix_space ? ' ' :
-                (digit_index < first_digit ? ' ' :
-                 lcd_rate_glyphs[digit_index - first_digit]);
+            glyph = is_prefix_space || digit_index < first_digit ||
+                (!extended_value && digit_index >= content_end) ? ' ' :
+                lcd_rate_glyphs[digit_index - first_digit];
             for (uint8_t i = 0u; i < lcd_rate_glyph_count; ++i) {
                 text_width = (uint16_t)(text_width +
                     font_large_glyph_width(lcd_rate_glyphs[i]));
             }
-            glyph_x = (uint16_t)(glyph_x - text_width);
             if (extended_value) {
-                glyph_x = (uint16_t)(glyph_x + LCD_RATE_FIELD_X);
+                glyph_x = (uint16_t)((LCD_WIDTH - text_width) / 2u);
                 for (uint8_t i = 0u; i < digit_index; ++i) {
                     glyph_x = (uint16_t)(glyph_x +
                         font_large_glyph_width(lcd_rate_glyphs[i]));
@@ -1766,9 +1768,15 @@ static bool lcd_text_prepare_glyph(void)
                 glyph_x = LCD_RATE_FIELD_X;
             } else if (digit_index < first_digit) {
                 glyph_x = (uint16_t)(LCD_RATE_FIELD_X +
-                    LCD_RATE_PREFIX_WIDTH +
                     digit_index * FONT_LARGE_CELL_WIDTH);
+            } else if (digit_index >= content_end) {
+                glyph_x = (uint16_t)(LCD_RATE_FIELD_X + LCD_RATE_FIELD_WIDTH -
+                    FONT_LARGE_CELL_WIDTH);
             } else {
+                glyph_x = (uint16_t)(glyph_x - text_width);
+                if (shift_one_space) {
+                    glyph_x = (uint16_t)(glyph_x - FONT_LARGE_CELL_WIDTH);
+                }
                 for (uint8_t i = 0u; i < digit_index - first_digit; ++i) {
                     glyph_x = (uint16_t)(glyph_x +
                         font_large_glyph_width(lcd_rate_glyphs[i]));
@@ -3122,8 +3130,12 @@ static void lcd_apply_brightness_settings(void)
 
     if (led_setting == 0u) {
         apply_led = lcd_solar_sample_ready;
-        led_percent = (uint8_t)lcd_displayed_solar_percent;
-        if (led_percent < 5u) led_percent = 5u;
+        if (lcd_displayed_solar_percent >= 30u) {
+            led_percent = 100u;
+        } else {
+            led_percent = (uint8_t)(5u +
+                ((uint32_t)lcd_displayed_solar_percent * 95u) / 30u);
+        }
     } else {
         led_percent = levels[led_setting];
     }
