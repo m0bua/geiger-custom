@@ -5,7 +5,7 @@ VAL
         RAW_VALS
         MEMORY
     SETTINGS
-        DIODE: ON/ALWAYS/OFF
+        LED: ON/ALWAYS/OFF
         CLICKS: OFF/ON/ON-ALWAYS
         LIGHT: OFF/ALARM
         SOUND ALARM: OFF/ON

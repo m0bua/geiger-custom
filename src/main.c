@@ -23,6 +23,7 @@ int main(void)
     bool event_led_on = false;
     bool left_long_handled = false;
     bool right_long_handled = false;
+    uint8_t wake_suppressed_buttons = 0u;
 
     board_init();
     board_adc_init();
@@ -42,7 +43,7 @@ int main(void)
         uint32_t now = board_millis;
 
         if ((uint32_t)(now - next_sample) >= 10u) {
-            const uint8_t events = board_buttons_sample_10ms();
+            uint8_t events = board_buttons_sample_10ms();
             const uint32_t detected_pulses = board_detector_count();
             const uint8_t button_events = BOARD_BUTTON_LEFT_DOWN |
                 BOARD_BUTTON_RIGHT_DOWN | BOARD_BUTTON_LEFT |
@@ -50,10 +51,39 @@ int main(void)
                 BOARD_BUTTON_RIGHT_LONG;
 
             next_sample += 10u;
-            if ((events & button_events) != 0u) {
+            if (!backlight_on &&
+                (events & (BOARD_BUTTON_LEFT_DOWN |
+                           BOARD_BUTTON_RIGHT_DOWN)) != 0u) {
                 board_lcd_backlight_set(true);
                 backlight_on = true;
                 inactivity_deadline = now + 10000u;
+                wake_suppressed_buttons |= events &
+                    (BOARD_BUTTON_LEFT_DOWN | BOARD_BUTTON_RIGHT_DOWN);
+                events &= (uint8_t)~button_events;
+            } else if ((events & button_events) != 0u) {
+                inactivity_deadline = now + 10000u;
+            }
+            if ((events & BOARD_BUTTON_LEFT_UP) != 0u) {
+                if ((wake_suppressed_buttons & BOARD_BUTTON_LEFT_DOWN) != 0u) {
+                    events &= (uint8_t)~(BOARD_BUTTON_LEFT |
+                        BOARD_BUTTON_LEFT_LONG | BOARD_BUTTON_LEFT_DOWN);
+                }
+                wake_suppressed_buttons &= (uint8_t)~BOARD_BUTTON_LEFT_DOWN;
+            }
+            if ((events & BOARD_BUTTON_RIGHT_UP) != 0u) {
+                if ((wake_suppressed_buttons & BOARD_BUTTON_RIGHT_DOWN) != 0u) {
+                    events &= (uint8_t)~(BOARD_BUTTON_RIGHT |
+                        BOARD_BUTTON_RIGHT_LONG | BOARD_BUTTON_RIGHT_DOWN);
+                }
+                wake_suppressed_buttons &= (uint8_t)~BOARD_BUTTON_RIGHT_DOWN;
+            }
+            if ((wake_suppressed_buttons & BOARD_BUTTON_LEFT_DOWN) != 0u) {
+                events &= (uint8_t)~(BOARD_BUTTON_LEFT | BOARD_BUTTON_LEFT_LONG |
+                                     BOARD_BUTTON_LEFT_DOWN);
+            }
+            if ((wake_suppressed_buttons & BOARD_BUTTON_RIGHT_DOWN) != 0u) {
+                events &= (uint8_t)~(BOARD_BUTTON_RIGHT | BOARD_BUTTON_RIGHT_LONG |
+                                     BOARD_BUTTON_RIGHT_DOWN);
             }
             if ((events & BOARD_BUTTON_LEFT_DOWN) != 0u) {
                 left_long_handled = false;

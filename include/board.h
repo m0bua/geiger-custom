@@ -10,6 +10,8 @@
 #define BOARD_BUTTON_RIGHT_LONG (1u << 3)
 #define BOARD_BUTTON_LEFT_DOWN  (1u << 4)
 #define BOARD_BUTTON_RIGHT_DOWN (1u << 5)
+#define BOARD_BUTTON_LEFT_UP    (1u << 6)
+#define BOARD_BUTTON_RIGHT_UP   (1u << 7)
 
 extern volatile uint32_t board_millis;
 
