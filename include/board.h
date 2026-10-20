@@ -25,6 +25,7 @@ uint16_t board_adc_read(uint8_t channel);
 void board_adc_read_all(uint16_t *channel2, uint16_t *channel8,
                         uint16_t *channel9);
 void board_rgb_set(uint8_t logical_rgb_mask);
+void board_rgb_set_color(uint8_t red, uint8_t green, uint8_t blue);
 void board_rgb_set_brightness(uint8_t percent);
 void board_display_init(void);
 void board_display_service(void);
@@ -47,8 +48,9 @@ void board_display_settings_list_exit(void);
 void board_reboot(void);
 void board_power_off(void);
 void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm,
-                            bool window_ready);
+                            uint32_t pulses_since_start, bool window_ready);
 uint8_t board_display_rate_led_mask(void);
+void board_display_set_rate_led(void);
 void board_display_set_dose(uint32_t dose_thousandths,
                             uint32_t dose_fraction,
                             uint32_t measurement_seconds);
@@ -56,6 +58,7 @@ void board_display_set_count(uint32_t count);
 uint32_t board_display_screen_timeout_ms(void);
 bool board_display_led_flash_enabled(bool screen_on);
 bool board_display_click_sound_enabled(bool screen_on);
+bool board_display_search_mode(void);
 void board_click_sound_start(void);
 void board_click_sound_service(void);
 void board_sound_alarm_set(bool active);

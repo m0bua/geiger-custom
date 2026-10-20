@@ -27,7 +27,7 @@ int main(void)
     bool screen_alarm_active = false;
     bool light_alarm_active = false;
     bool sound_alarm_active = false;
-    bool sound_alarm_acknowledged = false;
+    bool alarms_acknowledged = false;
     bool light_alarm_on = false;
     bool event_led_on = false;
     bool startup_led_active = true;
@@ -76,13 +76,14 @@ int main(void)
                 BOARD_BUTTON_RIGHT | BOARD_BUTTON_LEFT_LONG |
                 BOARD_BUTTON_RIGHT_LONG;
 
-            if (sound_alarm_active &&
+            if ((screen_alarm_active || light_alarm_active ||
+                 sound_alarm_active) &&
                 (events & (BOARD_BUTTON_LEFT_DOWN |
                            BOARD_BUTTON_RIGHT_DOWN)) != 0u) {
                 alarm_suppressed_buttons |= events &
                     (BOARD_BUTTON_LEFT_DOWN | BOARD_BUTTON_RIGHT_DOWN);
                 sound_alarm_active = false;
-                sound_alarm_acknowledged = true;
+                alarms_acknowledged = true;
                 board_sound_alarm_set(false);
             }
 
@@ -193,7 +194,7 @@ int main(void)
                     if (hv_enabled) {
                         pulses_since_start = 0u;
                         board_display_set_count(0u);
-                        board_display_set_rate(0u, 0u, false);
+                        board_display_set_rate(0u, 0u, 0u, false);
                     }
                     next_minute_tick = now + 1000u;
                 }
@@ -201,7 +202,8 @@ int main(void)
 
             {
                 const bool alarm_active =
-                    board_display_screen_alarm_active();
+                    board_display_screen_alarm_active() &&
+                    !alarms_acknowledged;
                 if (alarm_active && !screen_alarm_active && !backlight_on) {
                     board_lcd_backlight_set(true);
                     backlight_on = true;
@@ -214,7 +216,8 @@ int main(void)
 
             {
                 const bool alarm_active =
-                    board_display_light_alarm_active();
+                    board_display_light_alarm_active() &&
+                    !alarms_acknowledged;
                 if (alarm_active != light_alarm_active) {
                     light_alarm_active = alarm_active;
                     light_alarm_on = alarm_active;
@@ -233,17 +236,24 @@ int main(void)
                 const bool previous_alarm_active = sound_alarm_active;
                 const bool threat_active =
                     board_display_sound_alarm_active();
-                if (!threat_active) {
+                if (alarms_acknowledged) {
+                    sound_alarm_active = false;
+                } else if (!threat_active) {
                     if (board_display_sound_alarm_stop_on_clear()) {
                         sound_alarm_active = false;
                     }
-                    sound_alarm_acknowledged = false;
-                } else if (!sound_alarm_acknowledged) {
+                } else {
                     sound_alarm_active = true;
                 }
                 if (sound_alarm_active != previous_alarm_active) {
                     board_sound_alarm_set(sound_alarm_active);
                 }
+            }
+
+            if (!board_display_screen_alarm_active() &&
+                !board_display_light_alarm_active() &&
+                !board_display_sound_alarm_active()) {
+                alarms_acknowledged = false;
             }
 
             if (detected_pulses != event_count) {
@@ -255,7 +265,7 @@ int main(void)
                 }
                 if (!startup_led_active &&
                     board_display_led_flash_enabled(backlight_on)) {
-                    board_rgb_set(board_display_rate_led_mask());
+                    board_display_set_rate_led();
                     event_led_on = true;
                     led_blink_deadline = now + 100u;
                 }
@@ -268,6 +278,12 @@ int main(void)
                     screen_timeout_ms = new_timeout_ms;
                     inactivity_deadline = now + screen_timeout_ms;
                 }
+            }
+
+            if (board_display_search_mode() && !backlight_on) {
+                board_lcd_backlight_set(true);
+                backlight_on = true;
+                inactivity_deadline = now + screen_timeout_ms;
             }
 
             while ((int32_t)(now - next_minute_tick) >= 0) {
@@ -295,6 +311,7 @@ int main(void)
                 const uint32_t rate_thousandths = (uint32_t)(
                     ((uint64_t)cpm * 666u + 50u) / 100u);
                 board_display_set_rate(rate_thousandths, cpm,
+                                       pulses_since_start,
                                        pulses_since_start >= 25u);
                 if (dose_measurement_seconds < UINT32_MAX) {
                     ++dose_measurement_seconds;
@@ -309,6 +326,7 @@ int main(void)
             }
 
             if (backlight_on && !screen_alarm_active &&
+                !board_display_search_mode() &&
                 (int32_t)(now - inactivity_deadline) >= 0) {
                 board_lcd_backlight_set(false);
                 backlight_on = false;

@@ -16,6 +16,8 @@ static volatile uint16_t lcd_adc_sun_raw;
 static volatile uint16_t lcd_adc_usb_raw;
 static bool adc_ready;
 static volatile bool power_off_wakeup;
+/* Runtime-only indication mode: INVISIBLE, NORMAL, SEARCH. */
+static uint8_t lcd_indication_mode = 1u;
 
 #define DETECTOR_GPIO_BASE GPIOB_BASE
 #define DETECTOR_PIN       BOARD_DETECTOR_PIN
@@ -142,7 +144,10 @@ static volatile bool power_off_wakeup;
 #define LCD_RATE_FIELD_X ((LCD_WIDTH - LCD_RATE_FIELD_WIDTH) / 2u)
 #define LCD_RATE_LABEL_LENGTH 5u
 #define LCD_DOSE_LABEL_LENGTH 5u
-#define LCD_CPM_TEXT_LENGTH (LCD_CPM_MAX_DIGITS + 4u)
+#define LCD_CPM_TEXT_LENGTH 11u
+#define LCD_WARMUP_TEXT_LENGTH 6u
+#define LCD_WARMUP_BOX_WIDTH 64u
+#define LCD_WARMUP_BOX_HEIGHT (FONT_SMALL_CELL_HEIGHT + 2u)
 #define LCD_ADC_TEXT_LENGTH 18u
 #define LCD_RATE_LABEL_WIDTH (LCD_RATE_LABEL_LENGTH * \
     FONT_SMALL_CELL_WIDTH + (LCD_RATE_LABEL_LENGTH - 1u) * \
@@ -153,6 +158,8 @@ static volatile bool power_off_wakeup;
 #define LCD_COUNTER_YELLOW 0xFFE0u
 #define LCD_COUNTER_RED 0xF800u
 #define LCD_COUNTER_CYAN 0x07FFu
+#define LCD_COUNTER_PURPLE 0x001Fu
+#define LCD_COUNTER_LIGHT_GRAY 0xC618u
 #define LCD_LARGE_GLYPH_PIXELS (FONT_LARGE_CELL_WIDTH * FONT_LARGE_CELL_HEIGHT)
 #define LCD_TOP_ROW_PIXELS (LCD_WIDTH * FONT_SMALL_CELL_HEIGHT)
 #define LCD_TEXT_GLYPH_PIXELS ((LCD_LARGE_GLYPH_PIXELS > \
@@ -192,6 +199,7 @@ static uint8_t backlight_brightness_percent = 100u;
 static bool backlight_pwm_running;
 static bool backlight_requested_on;
 static uint8_t rgb_channels;
+static uint8_t rgb_level[3] = {255u, 255u, 255u};
 static bool lcd_spi_ready = true;
 static bool lcd_spi_error;
 static bool lcd_control_error;
@@ -216,11 +224,11 @@ static uint8_t lcd_text_dma_glyph_advance;
 static uint16_t lcd_text_glyph_pixels;
 static char lcd_rate_glyphs[LCD_RATE_MAX_GLYPHS + 2u] = ".0000";
 static uint8_t lcd_rate_glyph_count = LCD_RATE_MAX_GLYPHS;
-static uint16_t lcd_rate_color = LCD_COUNTER_CYAN;
-static uint8_t lcd_rate_led_mask = 6u;
+static uint16_t lcd_rate_color = LCD_COUNTER_PURPLE;
+static uint8_t lcd_rate_led_mask = 5u;
 static char lcd_rate_label[] = "mSv/h";
 static char lcd_display_unit_prefix = 'm';
-static char lcd_cpm_text[LCD_CPM_TEXT_LENGTH + 1u] = "   0 CPM";
+static char lcd_cpm_text[LCD_CPM_TEXT_LENGTH + 1u] = "   0 CPM   ";
 static char lcd_adc_glyphs[LCD_ADC_TEXT_LENGTH + 1u] =
     "      \x01  0% \x02  0% ";
 static uint16_t lcd_displayed_battery_percent;
@@ -249,6 +257,18 @@ static uint32_t board_rgb_tim2_compare(void)
     if (click_sound_active && compare > 310u) compare = 310u;
     return compare;
 }
+
+static uint32_t board_rgb_channel_compare(uint8_t channel)
+{
+    return (board_rgb_tim2_compare() * rgb_level[channel]) / 255u;
+}
+
+static void board_rgb_apply(void)
+{
+    REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) ? board_rgb_channel_compare(0u) : 0u;
+    REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) ? board_rgb_channel_compare(1u) : 0u;
+    REG32(TIM22_BASE + TIM_CCR1) = (rgb_channels & 4u) ? board_rgb_channel_compare(2u) : 0u;
+}
 static bool flashlight_enabled;
 static bool flashlight_manual_enabled;
 static bool flashlight_alarm_override;
@@ -256,6 +276,9 @@ static bool flashlight_alarm_output;
 static uint32_t lcd_time_displayed_minute = UINT32_MAX;
 static uint32_t lcd_rate_value_thousandths;
 static uint32_t lcd_current_cpm;
+static uint32_t lcd_warmup_pulses;
+static bool lcd_rate_window_ready;
+static bool lcd_warmup_box_visible;
 static uint32_t lcd_count_total;
 static uint8_t lcd_settings_sequence;
 static uint8_t lcd_timer_sequence;
@@ -528,28 +551,48 @@ static void lcd_format_rate(uint32_t rate_thousandths)
 
 static void lcd_format_cpm(uint32_t cpm)
 {
-    char reversed[LCD_CPM_MAX_DIGITS];
-    uint8_t digits = 0u;
-
-    if (cpm > 9999u) {
-        cpm = 9999u;
-    }
-    do {
-        reversed[digits++] = (char)('0' + cpm % 10u);
-        cpm /= 10u;
-    } while (cpm != 0u && digits < sizeof(reversed));
-
-    for (uint8_t i = 0u; i < LCD_CPM_MAX_DIGITS; ++i) {
+    for (uint8_t i = 0u; i < LCD_CPM_TEXT_LENGTH; ++i) {
         lcd_cpm_text[i] = ' ';
     }
-    for (uint8_t i = 0u; i < digits; ++i) {
-        lcd_cpm_text[LCD_CPM_MAX_DIGITS - digits + i] =
-            reversed[digits - i - 1u];
+    if (lcd_settings_value_index[12] == 1u) {
+        uint32_t cps_thousandths = (uint32_t)(
+            ((uint64_t)cpm * 1000u + 30u) / 60u);
+        uint32_t whole = cps_thousandths / 1000u;
+        uint8_t reversed[3];
+        uint8_t digits = 0u;
+        do {
+            reversed[digits++] = (uint8_t)('0' + whole % 10u);
+            whole /= 10u;
+        } while (whole != 0u && digits < sizeof(reversed));
+        for (uint8_t i = 0u; i < digits; ++i) {
+            lcd_cpm_text[3u - digits + i] =
+                (char)reversed[digits - i - 1u];
+        }
+        lcd_cpm_text[3] = '.';
+        lcd_cpm_text[4] = (char)('0' +
+            (cps_thousandths / 100u) % 10u);
+        lcd_cpm_text[5] = (char)('0' +
+            (cps_thousandths / 10u) % 10u);
+        lcd_cpm_text[6] = (char)('0' + cps_thousandths % 10u);
+        lcd_cpm_text[8] = 'C';
+        lcd_cpm_text[9] = 'P';
+        lcd_cpm_text[10] = 'S';
+    } else {
+        char reversed[LCD_CPM_MAX_DIGITS];
+        uint8_t digits = 0u;
+        if (cpm > 9999u) cpm = 9999u;
+        do {
+            reversed[digits++] = (char)('0' + cpm % 10u);
+            cpm /= 10u;
+        } while (cpm != 0u && digits < sizeof(reversed));
+        for (uint8_t i = 0u; i < digits; ++i) {
+            lcd_cpm_text[LCD_CPM_MAX_DIGITS - digits + i] =
+                reversed[digits - i - 1u];
+        }
+        lcd_cpm_text[5] = 'C';
+        lcd_cpm_text[6] = 'P';
+        lcd_cpm_text[7] = 'M';
     }
-    lcd_cpm_text[LCD_CPM_MAX_DIGITS] = ' ';
-    lcd_cpm_text[LCD_CPM_MAX_DIGITS + 1u] = 'C';
-    lcd_cpm_text[LCD_CPM_MAX_DIGITS + 2u] = 'P';
-    lcd_cpm_text[LCD_CPM_MAX_DIGITS + 3u] = 'M';
     lcd_cpm_text[LCD_CPM_TEXT_LENGTH] = '\0';
 }
 
@@ -1002,6 +1045,21 @@ static void lcd_top_row_draw_uptime(void)
                                  LCD_SMALL_TEXT_GAP)),
             LCD_WIDTH, LCD_TEXT_FOREGROUND);
     }
+}
+
+static void lcd_top_row_draw_mode_letter(void)
+{
+    if (lcd_indication_mode == 0u) {
+        lcd_top_row_draw_glyph('I', 60u, LCD_WIDTH, LCD_TEXT_RED);
+    } else if (lcd_indication_mode == 2u) {
+        lcd_top_row_draw_glyph('S', 60u, LCD_WIDTH, LCD_TEXT_GREEN);
+    }
+}
+
+static void lcd_top_row_draw_flashlight_letter(void)
+{
+    if (!flashlight_manual_enabled) return;
+    lcd_top_row_draw_glyph('L', 68u, LCD_WIDTH, LCD_TEXT_YELLOW);
 }
 
 static uint8_t lcd_debug_u32_digits(char *text, uint32_t value)
@@ -1521,11 +1579,15 @@ static bool lcd_text_prepare_glyph(void)
     {
         const uint8_t rate_label_glyph = (uint8_t)(LCD_RATE_MAX_GLYPHS + 4u);
         const uint8_t cpm_glyph = (uint8_t)(LCD_RATE_MAX_GLYPHS + 5u);
+        const bool warmup_active = lcd_screen_page == 0u &&
+            lcd_settings_value_index[15] == 0u && !lcd_rate_window_ready;
         const bool show_cpm_row = lcd_screen_page == 0u &&
-            lcd_settings_value_index[9] != 1u &&
+            lcd_settings_value_index[12] != 2u &&
             lcd_settings_value_index[15] == 0u;
-        const uint8_t last_glyph = show_cpm_row ? cpm_glyph :
-            rate_label_glyph;
+        const bool clear_warmup_box = lcd_screen_page == 0u &&
+            lcd_warmup_box_visible && !warmup_active && !show_cpm_row;
+        const uint8_t last_glyph = (warmup_active || show_cpm_row ||
+            clear_warmup_box) ? cpm_glyph : rate_label_glyph;
         uint8_t x_start;
         uint8_t y_start;
         uint8_t x_window[4];
@@ -1544,6 +1606,8 @@ static bool lcd_text_prepare_glyph(void)
                 lcd_text_glyph[i] = LCD_TEXT_BACKGROUND;
             }
             lcd_top_row_draw_uptime();
+            lcd_top_row_draw_mode_letter();
+            lcd_top_row_draw_flashlight_letter();
             const uint16_t sun_color = lcd_displayed_solar_percent > 79u ?
                 LCD_TEXT_GREEN : (lcd_displayed_solar_percent > 49u ?
                 LCD_TEXT_YELLOW : LCD_TEXT_FOREGROUND);
@@ -1685,7 +1749,8 @@ static bool lcd_text_prepare_glyph(void)
                         column < label_length &&
                         glyph_x < FONT_SMALL_CELL_WIDTH &&
                         font_small_pixel(label[column], glyph_x, y) ?
-                            LCD_TEXT_FOREGROUND : LCD_TEXT_BACKGROUND;
+                            (lcd_screen_page == 0u ? lcd_rate_color :
+                                LCD_TEXT_FOREGROUND) : LCD_TEXT_BACKGROUND;
                 }
             }
 
@@ -1697,31 +1762,100 @@ static bool lcd_text_prepare_glyph(void)
             return true;
         }
 
-        if (lcd_text_glyph_index == cpm_glyph && show_cpm_row) {
-            const uint16_t text_width = LCD_CPM_TEXT_WIDTH;
-            const uint8_t y_start =
+        if (lcd_text_glyph_index == cpm_glyph &&
+            (warmup_active || show_cpm_row || clear_warmup_box)) {
+            const uint8_t text_length = warmup_active ?
+                LCD_WARMUP_TEXT_LENGTH : LCD_CPM_TEXT_LENGTH;
+            const uint16_t text_width = warmup_active ? LCD_CPM_TEXT_WIDTH :
+                (uint16_t)(text_length *
+                (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP) -
+                LCD_SMALL_TEXT_GAP);
+            const uint16_t text_x_start = warmup_active ?
+                (uint16_t)((LCD_WIDTH - text_width) / 2u -
+                    (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP)) :
+                (uint16_t)(2u * (FONT_SMALL_CELL_WIDTH +
+                    LCD_SMALL_TEXT_GAP));
+            const uint8_t text_y_start =
             (uint8_t)(LCD_HEIGHT - FONT_SMALL_CELL_HEIGHT - 4u);
+            const uint8_t y_start = (uint8_t)(text_y_start - 2u);
             uint8_t x_window[4] = {
-                0u, 0u, 0u, (uint8_t)(text_width - 1u)
+                (uint8_t)(text_x_start >> 8u), (uint8_t)text_x_start,
+                (uint8_t)((text_x_start + text_width - 1u) >> 8u),
+                (uint8_t)(text_x_start + text_width - 1u)
             };
             uint8_t y_window[4] = {
                 0u, (uint8_t)(LCD_Y_OFFSET + y_start), 0u,
                 (uint8_t)(LCD_Y_OFFSET + y_start +
-                          FONT_SMALL_CELL_HEIGHT - 1u)
+                          LCD_WARMUP_BOX_HEIGHT - 1u)
             };
 
             lcd_text_glyph_pixels = (uint16_t)(text_width *
-                FONT_SMALL_CELL_HEIGHT);
+                LCD_WARMUP_BOX_HEIGHT);
             lcd_text_dma_glyph_advance = 1u;
             for (uint16_t i = 0u; i < lcd_text_glyph_pixels; ++i) {
                 lcd_text_glyph[i] = LCD_TEXT_BACKGROUND;
             }
-            for (uint8_t column = 0u; column < LCD_CPM_TEXT_LENGTH;
-                 ++column) {
-                lcd_top_row_draw_glyph(lcd_cpm_text[column],
-                    (uint16_t)(column * (FONT_SMALL_CELL_WIDTH +
-                                         LCD_SMALL_TEXT_GAP)), text_width,
-                    LCD_TEXT_FOREGROUND);
+            {
+                char warmup_text[LCD_WARMUP_TEXT_LENGTH + 1u] = {
+                    '0', '0', ' ', 'C', 'N', 'T', '\0'
+                };
+                const uint32_t count = lcd_warmup_pulses > 25u ? 25u :
+                    lcd_warmup_pulses;
+                if (warmup_active) {
+                    const uint16_t box_x = (uint16_t)((text_width -
+                        LCD_WARMUP_BOX_WIDTH) / 2u);
+                    const uint16_t text_glyph_width = (uint16_t)(
+                        LCD_WARMUP_TEXT_LENGTH *
+                        (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP) -
+                        LCD_SMALL_TEXT_GAP);
+                    const uint16_t text_x = (uint16_t)(box_x +
+                        (LCD_WARMUP_BOX_WIDTH - text_glyph_width) / 2u);
+                    const uint16_t fill_width = (uint16_t)(count *
+                        (LCD_WARMUP_BOX_WIDTH - 2u) / 25u);
+                    warmup_text[0] = (char)('0' + count / 10u);
+                    warmup_text[1] = (char)('0' + count % 10u);
+                    for (uint8_t y = 0u; y < LCD_WARMUP_BOX_HEIGHT; ++y) {
+                        for (uint16_t x = 0u; x < LCD_WARMUP_BOX_WIDTH; ++x) {
+                            const bool frame = y == 0u ||
+                                y == LCD_WARMUP_BOX_HEIGHT - 1u ||
+                                x == 0u || x == LCD_WARMUP_BOX_WIDTH - 1u;
+                            const bool filled = !frame && x > 0u &&
+                                x <= fill_width;
+                            lcd_text_glyph[(uint16_t)y * text_width +
+                                box_x + x] = frame ? LCD_COUNTER_LIGHT_GRAY :
+                                (filled ? LCD_COUNTER_PURPLE :
+                                    LCD_TEXT_BACKGROUND);
+                        }
+                    }
+                    for (uint8_t column = 0u;
+                         column < LCD_WARMUP_TEXT_LENGTH; ++column) {
+                        for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
+                            for (uint8_t x = 0u; x < FONT_SMALL_CELL_WIDTH; ++x) {
+                                if (font_small_pixel(warmup_text[column], x, y)) {
+                                    const uint16_t pixel =
+                                        (uint16_t)(y + 1u) * text_width + text_x +
+                                        column * (FONT_SMALL_CELL_WIDTH +
+                                            LCD_SMALL_TEXT_GAP) + x;
+                                    lcd_text_glyph[pixel] =
+                                        LCD_COUNTER_LIGHT_GRAY;
+                                }
+                            }
+                        }
+                    }
+                    lcd_warmup_box_visible = true;
+                } else if (show_cpm_row) {
+                    for (uint8_t column = 0u;
+                         column < LCD_CPM_TEXT_LENGTH; ++column) {
+                        lcd_top_row_draw_glyph(lcd_cpm_text[column],
+                            (uint16_t)(column * (FONT_SMALL_CELL_WIDTH +
+                                LCD_SMALL_TEXT_GAP)), text_width,
+                            LCD_COUNTER_LIGHT_GRAY);
+                    }
+                    lcd_warmup_box_visible = false;
+                } else {
+                    /* RATE ROW 2 is OFF: blank the old progress box. */
+                    lcd_warmup_box_visible = false;
+                }
             }
 
             REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
@@ -1732,10 +1866,18 @@ static bool lcd_text_prepare_glyph(void)
             return true;
         }
 
+        if (lcd_text_glyph_index == cpm_glyph &&
+            !warmup_active && !show_cpm_row) {
+            ++lcd_text_glyph_index;
+            return false;
+        }
+
         {
             const uint8_t digit_slot = (uint8_t)(lcd_text_glyph_index - 3u);
             const bool extended_value =
                 lcd_rate_glyph_count > LCD_RATE_MAX_GLYPHS;
+            const bool trailing_clear_space = !extended_value &&
+                digit_slot == LCD_RATE_MAX_GLYPHS;
             const bool shift_one_space = !extended_value &&
                 lcd_rate_glyph_count == 4u;
             const bool is_prefix_space = !extended_value && digit_slot == 0u;
@@ -1751,14 +1893,18 @@ static bool lcd_text_prepare_glyph(void)
                 LCD_RATE_FIELD_WIDTH);
             uint8_t glyph_width;
 
-            glyph = is_prefix_space || digit_index < first_digit ||
+            glyph = trailing_clear_space || is_prefix_space ||
+                digit_index < first_digit ||
                 (!extended_value && digit_index >= content_end) ? ' ' :
                 lcd_rate_glyphs[digit_index - first_digit];
             for (uint8_t i = 0u; i < lcd_rate_glyph_count; ++i) {
                 text_width = (uint16_t)(text_width +
                     font_large_glyph_width(lcd_rate_glyphs[i]));
             }
-            if (extended_value) {
+            if (trailing_clear_space) {
+                glyph_x = (uint16_t)(LCD_RATE_FIELD_X +
+                    LCD_RATE_FIELD_WIDTH);
+            } else if (extended_value) {
                 glyph_x = (uint16_t)((LCD_WIDTH - text_width) / 2u);
                 for (uint8_t i = 0u; i < digit_index; ++i) {
                     glyph_x = (uint16_t)(glyph_x +
@@ -1783,7 +1929,8 @@ static bool lcd_text_prepare_glyph(void)
                 }
             }
             x_start = (uint8_t)glyph_x;
-            glyph_width = digit_index < first_digit ? FONT_LARGE_CELL_WIDTH :
+            glyph_width = (trailing_clear_space ||
+                digit_index < first_digit) ? FONT_LARGE_CELL_WIDTH :
                 font_large_glyph_width(glyph);
 
             y_start = (uint8_t)((LCD_HEIGHT - FONT_LARGE_CELL_HEIGHT) / 2u);
@@ -1898,15 +2045,10 @@ void board_display_left_short(void)
         board_display_extra_step(false);
         return;
     }
-    lcd_screen_page = lcd_screen_page == 0u ? 1u : 0u;
+    lcd_indication_mode = (uint8_t)((lcd_indication_mode + 1u) % 3u);
     lcd_text_active = false;
     lcd_text_row_commands_queued = false;
     lcd_background_pending = true;
-    if (lcd_screen_page == 0u) {
-        lcd_format_rate(lcd_rate_value_thousandths);
-    } else {
-        lcd_format_dose(lcd_dose_value_thousandths, lcd_dose_fraction);
-    }
     lcd_cpm_redraw_pending = true;
 }
 
@@ -1928,6 +2070,11 @@ void board_display_right_short(void)
     lcd_cpm_redraw_pending = true;
 }
 
+bool board_display_search_mode(void)
+{
+    return lcd_indication_mode == 2u;
+}
+
 bool board_display_rate_long_press(void)
 {
     if (lcd_screen_page != 0u || lcd_settings_list_active) return false;
@@ -1937,6 +2084,9 @@ bool board_display_rate_long_press(void)
         flashlight_manual_enabled;
     REG32(GPIOB_BASE + GPIO_BSRR) = flashlight_enabled ?
         (1u << FLASHLIGHT_PIN) : (1u << (16u + FLASHLIGHT_PIN));
+    lcd_text_active = false;
+    lcd_text_row_commands_queued = false;
+    lcd_cpm_redraw_pending = true;
     return true;
 }
 
@@ -1950,6 +2100,11 @@ void board_flashlight_alarm_set(bool active, bool on)
     flashlight_enabled = desired;
     REG32(GPIOB_BASE + GPIO_BSRR) = flashlight_enabled ?
         (1u << FLASHLIGHT_PIN) : (1u << (16u + FLASHLIGHT_PIN));
+    if (lcd_screen_page < 2u) {
+        lcd_text_active = false;
+        lcd_text_row_commands_queued = false;
+        lcd_cpm_redraw_pending = true;
+    }
 }
 
 void board_display_extra_enter(void)
@@ -2650,6 +2805,10 @@ static void lcd_settings_apply_current(void)
         }
         lcd_cpm_redraw_pending = true;
     }
+    if (lcd_settings_selected == 12u) {
+        lcd_format_cpm(lcd_current_cpm);
+        lcd_cpm_redraw_pending = true;
+    }
     if (lcd_settings_selected == 5u || lcd_settings_selected == 6u) {
         (void)settings_eeprom_save();
         lcd_apply_brightness_settings();
@@ -2704,11 +2863,14 @@ static bool settings_reset_all(void)
 uint32_t board_display_screen_timeout_ms(void)
 {
     static const uint8_t timeout_seconds[] = { 1u, 5u, 10u, 30u, 60u, 90u };
+    if (lcd_indication_mode == 0u) return 1000u;
     return (uint32_t)timeout_seconds[lcd_settings_value_index[7]] * 1000u;
 }
 
 bool board_display_led_flash_enabled(bool screen_on)
 {
+    if (lcd_indication_mode == 0u) return false;
+    if (lcd_indication_mode == 2u) return true;
     const uint8_t mode = lcd_settings_value_index[0];
     if (mode == 1u) return screen_on;
     if (mode == 2u) return true;
@@ -2720,6 +2882,7 @@ bool board_display_led_flash_enabled(bool screen_on)
 
 bool board_display_click_sound_enabled(bool screen_on)
 {
+    if (lcd_indication_mode == 0u) return false;
     const uint8_t mode = lcd_settings_value_index[1];
     if (mode == 1u) return screen_on;
     if (mode == 2u) return true;
@@ -2731,13 +2894,11 @@ bool board_display_click_sound_enabled(bool screen_on)
 
 static void board_click_sound_stop(void)
 {
-    uint32_t compare = ((uint32_t)rgb_brightness_percent * PWM_PERIOD) / 100u;
     REG32(TIM2_BASE + TIM_CCER) &= ~(1u << 12u);
     REG32(TIM2_BASE + TIM_CCR4) = 0u;
     REG32(TIM2_BASE + TIM_PSC) = 0u;
     REG32(TIM2_BASE + TIM_ARR) = PWM_PERIOD - 1u;
-    REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) ? compare : 0u;
-    REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) ? compare : 0u;
+    board_rgb_apply();
     REG32(TIM2_BASE + TIM_EGR) = 1u;
     REG32(GPIOA_BASE + GPIO_MODER) &= ~(3u << 6u);
     pin_input_with_pull(GPIOA_BASE, BOARD_BUTTON_RIGHT_PIN);
@@ -2762,8 +2923,10 @@ void board_click_sound_start(void)
     click_sound_stage = 0u;
     REG32(TIM2_BASE + TIM_PSC) = 22u;
     REG32(TIM2_BASE + TIM_ARR) = 310u;
-    REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) ? compare : 0u;
-    REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) ? compare : 0u;
+    REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) ?
+        (compare * rgb_level[0]) / 255u : 0u;
+    REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) ?
+        (compare * rgb_level[1]) / 255u : 0u;
     REG32(TIM2_BASE + TIM_CCMR2) =
         (REG32(TIM2_BASE + TIM_CCMR2) & ~(0xFFu << 8u)) |
         (6u << 12u) | (1u << 11u); /* CH4 PWM1, preload enabled. */
@@ -2800,8 +2963,10 @@ void board_sound_alarm_set(bool active)
     REG32(GPIOA_BASE + GPIO_MODER) =
         (REG32(GPIOA_BASE + GPIO_MODER) & ~(3u << 6u)) | (2u << 6u);
     REG32(TIM2_BASE + TIM_ARR) = 310u;
-    REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) ? compare : 0u;
-    REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) ? compare : 0u;
+    REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) ?
+        (compare * rgb_level[0]) / 255u : 0u;
+    REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) ?
+        (compare * rgb_level[1]) / 255u : 0u;
     REG32(TIM2_BASE + TIM_CCMR2) =
         (REG32(TIM2_BASE + TIM_CCMR2) & ~(0xFFu << 8u)) |
         (6u << 12u) | (1u << 11u);
@@ -2863,7 +3028,8 @@ void board_click_sound_service(void)
 bool board_display_screen_alarm_active(void)
 {
     const uint8_t mode = lcd_settings_value_index[2];
-    if (lcd_settings_value_index[15] != 0u) return false;
+    if (lcd_indication_mode == 0u || lcd_settings_value_index[15] != 0u)
+        return false;
     if (mode == 0u) return false;
     const bool rate_alarm = mode == 1u ?
         (lcd_rate_color == LCD_COUNTER_YELLOW ||
@@ -2875,7 +3041,8 @@ bool board_display_screen_alarm_active(void)
 bool board_display_light_alarm_active(void)
 {
     const uint8_t mode = lcd_settings_value_index[3];
-    if (lcd_settings_value_index[15] != 0u) return false;
+    if (lcd_indication_mode == 0u || lcd_settings_value_index[15] != 0u)
+        return false;
     if (mode == 0u) return false;
     const bool rate_alarm = mode == 1u ?
         (lcd_rate_color == LCD_COUNTER_YELLOW ||
@@ -2911,7 +3078,8 @@ bool board_display_sound_alarm_active(void)
     const uint8_t mode = lcd_settings_value_index[4];
     bool rate_alarm;
 
-    if (mode == 0u || lcd_settings_value_index[15] != 0u) return false;
+    if (lcd_indication_mode == 0u || mode == 0u ||
+        lcd_settings_value_index[15] != 0u) return false;
     rate_alarm = mode == 1u ?
         (lcd_rate_color == LCD_COUNTER_YELLOW ||
          lcd_rate_color == LCD_COUNTER_RED) :
@@ -2921,7 +3089,7 @@ bool board_display_sound_alarm_active(void)
 
 bool board_display_sound_alarm_stop_on_clear(void)
 {
-    return lcd_settings_value_index[17] == 0u ||
+    return lcd_indication_mode == 0u || lcd_settings_value_index[17] == 0u ||
         lcd_settings_value_index[4] == 0u ||
         lcd_settings_value_index[15] != 0u;
 }
@@ -3041,15 +3209,25 @@ void board_display_set_count(uint32_t count)
 }
 
 void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm,
-                            bool window_ready)
+                            uint32_t pulses_since_start, bool window_ready)
 {
     static uint32_t previous_rate_thousandths = UINT32_MAX;
     static uint32_t previous_cpm = UINT32_MAX;
+    static uint32_t previous_warmup_pulses = UINT32_MAX;
+    static bool previous_window_ready;
     bool changed = false;
     const uint64_t rate_scaled = (uint64_t)cpm * 666u;
-    uint16_t rate_color = LCD_COUNTER_CYAN;
+    uint16_t rate_color = LCD_COUNTER_PURPLE;
 
     lcd_rate_value_thousandths = rate_thousandths;
+    lcd_warmup_pulses = pulses_since_start;
+    lcd_rate_window_ready = window_ready;
+    if (pulses_since_start != previous_warmup_pulses ||
+        window_ready != previous_window_ready) {
+        previous_warmup_pulses = pulses_since_start;
+        previous_window_ready = window_ready;
+        changed = true;
+    }
 
     if (window_ready) {
         rate_color = LCD_COUNTER_GREEN;
@@ -3067,6 +3245,8 @@ void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm,
             lcd_rate_led_mask = 3u;
         } else if (rate_color == LCD_COUNTER_GREEN) {
             lcd_rate_led_mask = 2u;
+        } else if (rate_color == LCD_COUNTER_PURPLE) {
+            lcd_rate_led_mask = 5u;
         } else {
             lcd_rate_led_mask = 6u;
         }
@@ -3077,7 +3257,7 @@ void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm,
     lcd_current_cpm = cpm;
     if (cpm != previous_cpm) {
         previous_cpm = cpm;
-        if (lcd_settings_value_index[9] != 1u) lcd_format_cpm(cpm);
+        lcd_format_cpm(cpm);
         if (lcd_settings_value_index[9] == 1u && lcd_screen_page == 0u) {
             lcd_format_rate(rate_thousandths);
         }
@@ -3098,6 +3278,16 @@ void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm,
 uint8_t board_display_rate_led_mask(void)
 {
     return lcd_rate_led_mask;
+}
+
+void board_display_set_rate_led(void)
+{
+    if (lcd_rate_color == LCD_COUNTER_PURPLE) {
+        /* Use pure blue for the warm-up indication. */
+        board_rgb_set_color(0u, 0u, 255u);
+    } else {
+        board_rgb_set(lcd_rate_led_mask);
+    }
 }
 
 static uint16_t lcd_battery_percent(uint16_t raw)
@@ -3764,10 +3954,7 @@ void board_rgb_set_brightness(uint8_t percent)
         percent = 100u;
     }
     rgb_brightness_percent = percent;
-    uint32_t compare = board_rgb_tim2_compare();
-    REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) != 0u ? compare : 0u;
-    REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) != 0u ? compare : 0u;
-    REG32(TIM22_BASE + TIM_CCR1) = (rgb_channels & 4u) != 0u ? compare : 0u;
+    board_rgb_apply();
 }
 
 void board_init(void)
@@ -3881,11 +4068,20 @@ uint8_t board_buttons_sample_10ms(void)
 
 void board_rgb_set(uint8_t logical_rgb_mask)
 {
-    uint32_t compare = board_rgb_tim2_compare();
     rgb_channels = logical_rgb_mask & 7u;
-    REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) != 0u ? compare : 0u;
-    REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) != 0u ? compare : 0u;
-    REG32(TIM22_BASE + TIM_CCR1) = (rgb_channels & 4u) != 0u ? compare : 0u;
+    rgb_level[0] = (rgb_channels & 1u) ? 255u : 0u;
+    rgb_level[1] = (rgb_channels & 2u) ? 255u : 0u;
+    rgb_level[2] = (rgb_channels & 4u) ? 255u : 0u;
+    board_rgb_apply();
+}
+
+void board_rgb_set_color(uint8_t red, uint8_t green, uint8_t blue)
+{
+    rgb_level[0] = red;
+    rgb_level[1] = green;
+    rgb_level[2] = blue;
+    rgb_channels = (red ? 1u : 0u) | (green ? 2u : 0u) | (blue ? 4u : 0u);
+    board_rgb_apply();
 }
 
 void SysTick_Handler(void)
