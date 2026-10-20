@@ -5,19 +5,20 @@ VAL
         RAW_VALS
         MEMORY
     SETTINGS
-        INDICATION
-            DIODE: ON/ALWAYS/OFF
-            CLICKS: OFF/ON/ON-ALWAYS
-            LIGHT: OFF/ALARM
-            S_ALARM: OFF/ON
-            D_ALARAM: OFF/ON
-        UNITS
-            MAIN: Sv/CNT/R
-            PREFFIX: if(Sv/R): u/m-u-n-p else: CPM/CPS
-        MEMORY:
-            USE-SPI: OFF/ON
-        RESET
-            SETTINGS/DATA/ALL
+        DIODE: ON/ALWAYS/OFF
+        CLICKS: OFF/ON/ON-ALWAYS
+        LIGHT: OFF/ALARM
+        SOUND ALARM: OFF/ON
+        LIGHT ALARAM: OFF/ON
+        LED BRIGHT: 0-100%/AUTO
+        SCREEN BRIGHT: 0-100%/AUTO
+        LEAD ZERO: SHOW/HIDE
+        MAIN: Sv/CNT/R
+        PREFFIX: if(Sv/R): m/u/n/AUTO else: CPM/CPS
+        DOESE PREF: if(Sv/R): m/u/n/AUTO else: CPM/CPS
+        USE-SPI: OFF/ON
+        RESET: SETTINGS/DATA/SPI/ALL
+        POWER OFF
 
 DSOSE
     STATISTICS

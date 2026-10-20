@@ -25,6 +25,10 @@ void board_rgb_set_brightness(uint8_t percent);
 void board_display_init(void);
 void board_display_service(void);
 void board_display_next_page(void);
+void board_display_right_short(void);
+void board_display_extra_enter(void);
+void board_display_extra_step(bool forward);
+void board_display_extra_exit(void);
 void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm,
                             bool window_ready);
 uint8_t board_display_rate_led_mask(void);

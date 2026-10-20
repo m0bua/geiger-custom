@@ -21,6 +21,8 @@ int main(void)
     uint32_t led_blink_deadline = 0u;
     bool backlight_on = false;
     bool event_led_on = false;
+    bool left_long_handled = false;
+    bool right_long_handled = false;
 
     board_init();
     board_adc_init();
@@ -42,7 +44,6 @@ int main(void)
         if ((uint32_t)(now - next_sample) >= 10u) {
             const uint8_t events = board_buttons_sample_10ms();
             const uint32_t detected_pulses = board_detector_count();
-            bool woke_display = false;
             const uint8_t button_events = BOARD_BUTTON_LEFT_DOWN |
                 BOARD_BUTTON_RIGHT_DOWN | BOARD_BUTTON_LEFT |
                 BOARD_BUTTON_RIGHT | BOARD_BUTTON_LEFT_LONG |
@@ -50,14 +51,30 @@ int main(void)
 
             next_sample += 10u;
             if ((events & button_events) != 0u) {
-                woke_display = !backlight_on;
                 board_lcd_backlight_set(true);
                 backlight_on = true;
                 inactivity_deadline = now + 10000u;
             }
-            if (!woke_display &&
-                (events & (BOARD_BUTTON_LEFT_DOWN |
-                           BOARD_BUTTON_RIGHT_DOWN)) != 0u) {
+            if ((events & BOARD_BUTTON_LEFT_DOWN) != 0u) {
+                left_long_handled = false;
+            }
+            if ((events & BOARD_BUTTON_RIGHT_DOWN) != 0u) {
+                right_long_handled = false;
+            }
+            if ((events & BOARD_BUTTON_LEFT_LONG) != 0u &&
+                !left_long_handled) {
+                board_display_extra_exit();
+                left_long_handled = true;
+            }
+            if ((events & BOARD_BUTTON_RIGHT_LONG) != 0u &&
+                !right_long_handled) {
+                board_display_extra_enter();
+                right_long_handled = true;
+            }
+            if ((events & BOARD_BUTTON_RIGHT) != 0u) {
+                board_display_right_short();
+            }
+            if ((events & BOARD_BUTTON_LEFT) != 0u) {
                 board_display_next_page();
             }
 

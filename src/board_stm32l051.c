@@ -7,6 +7,8 @@
 #include <stdint.h>
 
 volatile uint32_t board_millis;
+static volatile uint32_t board_uptime_seconds;
+static volatile uint16_t board_uptime_millisecond_remainder;
 static volatile uint32_t detector_pulse_count;
 static bool adc_ready;
 
@@ -106,6 +108,7 @@ static bool adc_ready;
     LCD_SMALL_TEXT_GAP)
 #define LCD_SMALL_TEXT_ROW_PIXELS (LCD_SMALL_TEXT_ROW_WIDTH * \
     FONT_SMALL_CELL_HEIGHT)
+#define LCD_EXTRA_SCREEN_COUNT 3u
 #define LCD_TEXT_FIRST_X ((LCD_WIDTH - (LCD_TEXT_COLUMNS * \
     FONT_LARGE_CELL_WIDTH + (LCD_TEXT_COLUMNS - 1u) * LCD_TEXT_GAP)) / 2u)
 #define LCD_SMALL_TEXT_FIRST_Y ((LCD_HEIGHT - (LCD_SMALL_TEXT_ROWS * \
@@ -179,6 +182,7 @@ static bool lcd_dma_is_text_row;
 static uint8_t lcd_dma_text_glyph_advance;
 static bool lcd_text_active;
 static bool lcd_cpm_redraw_pending;
+static bool lcd_time_redraw_pending;
 static bool lcd_text_row_commands_queued;
 static uint8_t lcd_text_glyph_index;
 static uint8_t lcd_text_dma_glyph_advance;
@@ -195,6 +199,8 @@ static char lcd_adc_glyphs[LCD_ADC_TEXT_LENGTH + 1u] =
 static uint16_t lcd_displayed_battery_percent;
 static uint16_t lcd_displayed_solar_percent;
 static uint8_t lcd_screen_page;
+static uint8_t lcd_main_return_page;
+static uint32_t lcd_time_displayed_minute = UINT32_MAX;
 static uint32_t lcd_rate_value_thousandths;
 static uint32_t lcd_dose_value_thousandths;
 static uint32_t lcd_dose_fraction;
@@ -804,8 +810,191 @@ static void lcd_top_row_draw_percent(uint8_t offset, char icon,
     }
 }
 
+static void lcd_top_row_draw_uptime(void)
+{
+    const uint32_t total_minutes = board_uptime_seconds / 60u;
+    const char time_text[5] = {
+        (char)('0' + ((total_minutes / 60u) % 24u) / 10u),
+        (char)('0' + ((total_minutes / 60u) % 24u) % 10u),
+        ':',
+        (char)('0' + (total_minutes % 60u) / 10u),
+        (char)('0' + (total_minutes % 60u) % 10u)
+    };
+
+    for (uint8_t i = 0u; i < sizeof(time_text); ++i) {
+        lcd_top_row_draw_glyph(time_text[i],
+            (uint16_t)(4u + i * (FONT_SMALL_CELL_WIDTH +
+                                 LCD_SMALL_TEXT_GAP)),
+            LCD_WIDTH);
+    }
+}
+
 static bool lcd_text_prepare_glyph(void)
 {
+    if (lcd_screen_page == 2u) {
+        const uint8_t step = lcd_text_glyph_index;
+        uint8_t x_window[4];
+        uint8_t y_window[4];
+
+        if (step >= 7u) {
+            lcd_text_active = false;
+            return false;
+        }
+
+        if (step == 0u || step == 6u) {
+            char days_text[16];
+            uint8_t days_length = 0u;
+            uint32_t days = board_uptime_seconds / 86400u;
+
+            if (step == 0u) {
+                static const char header[] = "UPTIME";
+                days_length = 6u;
+                for (uint8_t i = 0u; i < days_length; ++i) {
+                    days_text[i] = header[i];
+                }
+            } else {
+                char reversed[10];
+                uint8_t digit_count = 0u;
+                do {
+                    reversed[digit_count++] = (char)('0' + days % 10u);
+                    days /= 10u;
+                } while (days != 0u && digit_count < sizeof(reversed));
+                while (digit_count != 0u) {
+                    days_text[days_length++] = reversed[--digit_count];
+                }
+                days_text[days_length++] = ' ';
+                days_text[days_length++] = 'D';
+                days_text[days_length++] = 'A';
+                days_text[days_length++] = 'Y';
+                days_text[days_length++] = 'S';
+            }
+
+            lcd_text_glyph_pixels = LCD_TOP_ROW_PIXELS;
+            lcd_text_dma_glyph_advance = 1u;
+            for (uint16_t i = 0u; i < LCD_TOP_ROW_PIXELS; ++i) {
+                lcd_text_glyph[i] = LCD_TEXT_BACKGROUND;
+            }
+            {
+                const uint16_t text_width = (uint16_t)(days_length *
+                    (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP) -
+                    LCD_SMALL_TEXT_GAP);
+                const uint16_t text_x = (uint16_t)((LCD_WIDTH -
+                    text_width) / 2u);
+                const uint8_t y_start = step == 0u ? 3u : 64u;
+
+                for (uint8_t column = 0u; column < days_length; ++column) {
+                    for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
+                        for (uint8_t x = 0u; x < FONT_SMALL_CELL_WIDTH; ++x) {
+                            const uint16_t pixel_x = text_x + column *
+                                (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP) + x;
+                            if (font_small_pixel(days_text[column], x, y)) {
+                                lcd_text_glyph[(uint16_t)y * LCD_WIDTH + pixel_x] =
+                                    LCD_TEXT_FOREGROUND;
+                            }
+                        }
+                    }
+                }
+                x_window[0] = 0u;
+                x_window[1] = 0u;
+                x_window[2] = 0u;
+                x_window[3] = (uint8_t)(LCD_WIDTH - 1u);
+                y_window[0] = 0u;
+                y_window[1] = (uint8_t)(LCD_Y_OFFSET + y_start);
+                y_window[2] = 0u;
+                y_window[3] = (uint8_t)(LCD_Y_OFFSET + y_start +
+                    FONT_SMALL_CELL_HEIGHT - 1u);
+            }
+        } else {
+            const uint32_t total_minutes = board_uptime_seconds / 60u;
+            const uint32_t hour = (total_minutes / 60u) % 24u;
+            const uint32_t minute = total_minutes % 60u;
+            const char glyph = step == 3u ? ':' :
+                (step < 3u ? (char)('0' + (step == 1u ? hour / 10u : hour % 10u)) :
+                 (char)('0' + (step == 4u ? minute / 10u : minute % 10u)));
+            const uint8_t glyph_x = (uint8_t)(20u + (step - 1u) *
+                FONT_LARGE_CELL_WIDTH);
+
+            lcd_text_glyph_pixels = FONT_LARGE_CELL_WIDTH *
+                FONT_LARGE_CELL_HEIGHT;
+            lcd_text_dma_glyph_advance = 1u;
+            for (uint8_t y = 0u; y < FONT_LARGE_CELL_HEIGHT; ++y) {
+                for (uint8_t x = 0u; x < FONT_LARGE_CELL_WIDTH; ++x) {
+                    lcd_text_glyph[(uint16_t)y * FONT_LARGE_CELL_WIDTH + x] =
+                        font_large_pixel(glyph, x, y) ?
+                            LCD_TEXT_FOREGROUND : LCD_TEXT_BACKGROUND;
+                }
+            }
+            x_window[0] = 0u;
+            x_window[1] = glyph_x;
+            x_window[2] = 0u;
+            x_window[3] = (uint8_t)(glyph_x + FONT_LARGE_CELL_WIDTH - 1u);
+            y_window[0] = 0u;
+            y_window[1] = (uint8_t)(LCD_Y_OFFSET + 18u);
+            y_window[2] = 0u;
+            y_window[3] = (uint8_t)(LCD_Y_OFFSET + 18u +
+                FONT_LARGE_CELL_HEIGHT - 1u);
+        }
+
+        REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
+        lcd_command(0x2Au, x_window, sizeof(x_window));
+        lcd_command(0x2Bu, y_window, sizeof(y_window));
+        lcd_command(0x2Cu, 0, 0u);
+        lcd_text_row_commands_queued = true;
+        return true;
+    }
+
+    if (lcd_screen_page >= 3u) {
+        static const char *const labels[2] = {
+            "SETTINGS", "DEBUG"
+        };
+        const uint8_t label_index = (uint8_t)(lcd_screen_page - 3u);
+        const char *text = labels[label_index];
+        const uint8_t length = label_index == 0u ? 8u : 5u;
+        const uint16_t row_width = (uint16_t)(length *
+            FONT_SMALL_CELL_WIDTH + (length - 1u) * LCD_SMALL_TEXT_GAP);
+        const uint8_t x_start = (uint8_t)((LCD_WIDTH - row_width) / 2u);
+        const uint8_t y_start = (uint8_t)((LCD_HEIGHT -
+            FONT_SMALL_CELL_HEIGHT) / 2u);
+        uint8_t x_window[4] = {
+            0u, x_start, 0u, (uint8_t)(x_start + row_width - 1u)
+        };
+        uint8_t y_window[4] = {
+            0u, (uint8_t)(LCD_Y_OFFSET + y_start), 0u,
+            (uint8_t)(LCD_Y_OFFSET + y_start + FONT_SMALL_CELL_HEIGHT - 1u)
+        };
+
+        if (lcd_text_glyph_index != 0u) {
+            lcd_text_active = false;
+            return false;
+        }
+
+        lcd_text_glyph_pixels = (uint16_t)(row_width *
+            FONT_SMALL_CELL_HEIGHT);
+        lcd_text_dma_glyph_advance = 1u;
+        for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
+            for (uint16_t x = 0u; x < row_width; ++x) {
+                const uint8_t column = (uint8_t)(x /
+                    (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
+                const uint8_t glyph_x = (uint8_t)(x %
+                    (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
+                const uint16_t pixel_index = (uint16_t)y * row_width + x;
+
+                lcd_text_glyph[pixel_index] =
+                    column < length &&
+                    glyph_x < FONT_SMALL_CELL_WIDTH &&
+                    font_small_pixel(text[column], glyph_x, y) ?
+                        LCD_TEXT_FOREGROUND : LCD_TEXT_BACKGROUND;
+            }
+        }
+
+        REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
+        lcd_command(0x2Au, x_window, sizeof(x_window));
+        lcd_command(0x2Bu, y_window, sizeof(y_window));
+        lcd_command(0x2Cu, 0, 0u);
+        lcd_text_row_commands_queued = true;
+        return true;
+    }
+
     {
         const uint8_t rate_label_glyph = (uint8_t)(LCD_RATE_MAX_GLYPHS + 4u);
         const uint8_t cpm_glyph = (uint8_t)(LCD_RATE_MAX_GLYPHS + 5u);
@@ -828,7 +1017,8 @@ static bool lcd_text_prepare_glyph(void)
             for (uint16_t i = 0u; i < LCD_TOP_ROW_PIXELS; ++i) {
                 lcd_text_glyph[i] = LCD_TEXT_BACKGROUND;
             }
-            lcd_top_row_draw_percent(7u, FONT_SMALL_GLYPH_SUN, 98u);
+            lcd_top_row_draw_uptime();
+            lcd_top_row_draw_percent(7u, FONT_SMALL_GLYPH_SUN, 106u);
             lcd_top_row_draw_percent(13u, FONT_SMALL_GLYPH_BATTERY, 154u);
 
             x_window[0] = 0u;
@@ -1097,14 +1287,83 @@ static bool lcd_text_prepare_glyph(void)
 
 void board_display_next_page(void)
 {
+    if (lcd_screen_page >= 2u) {
+        lcd_screen_page = (uint8_t)(2u +
+            ((lcd_screen_page - 2u + LCD_EXTRA_SCREEN_COUNT - 1u) %
+             LCD_EXTRA_SCREEN_COUNT));
+    } else {
+        return;
+    }
+    lcd_text_active = false;
+    lcd_text_row_commands_queued = false;
+    lcd_background_pending = true;
+    lcd_cpm_redraw_pending = true;
+}
+
+void board_display_right_short(void)
+{
+    if (lcd_screen_page >= 2u) {
+        board_display_extra_step(true);
+        return;
+    }
     lcd_screen_page = (uint8_t)((lcd_screen_page + 1u) % 2u);
     lcd_text_active = false;
     lcd_text_row_commands_queued = false;
+    lcd_background_pending = true;
     if (lcd_screen_page == 0u) {
         lcd_format_rate(lcd_rate_value_thousandths);
     } else {
         lcd_format_dose(lcd_dose_value_thousandths, lcd_dose_fraction);
     }
+    lcd_cpm_redraw_pending = true;
+}
+
+void board_display_extra_enter(void)
+{
+    if (lcd_screen_page >= 2u) {
+        return;
+    }
+    lcd_main_return_page = lcd_screen_page;
+    lcd_screen_page = 2u;
+    lcd_text_active = false;
+    lcd_text_row_commands_queued = false;
+    lcd_background_pending = true;
+    lcd_cpm_redraw_pending = true;
+}
+
+void board_display_extra_step(bool forward)
+{
+    if (lcd_screen_page < 2u) {
+        return;
+    }
+    if (forward) {
+        lcd_screen_page = (uint8_t)(2u +
+            ((lcd_screen_page - 2u + 1u) % LCD_EXTRA_SCREEN_COUNT));
+    } else {
+        lcd_screen_page = (uint8_t)(2u +
+            ((lcd_screen_page - 2u + LCD_EXTRA_SCREEN_COUNT - 1u) %
+             LCD_EXTRA_SCREEN_COUNT));
+    }
+    lcd_text_active = false;
+    lcd_text_row_commands_queued = false;
+    lcd_background_pending = true;
+    lcd_cpm_redraw_pending = true;
+}
+
+void board_display_extra_exit(void)
+{
+    if (lcd_screen_page < 2u) {
+        return;
+    }
+    lcd_screen_page = lcd_main_return_page;
+    if (lcd_screen_page == 0u) {
+        lcd_format_rate(lcd_rate_value_thousandths);
+    } else {
+        lcd_format_dose(lcd_dose_value_thousandths, lcd_dose_fraction);
+    }
+    lcd_text_active = false;
+    lcd_text_row_commands_queued = false;
+    lcd_background_pending = true;
     lcd_cpm_redraw_pending = true;
 }
 
@@ -1185,14 +1444,18 @@ uint8_t board_display_rate_led_mask(void)
 
 static uint16_t lcd_battery_percent(uint16_t raw)
 {
-    if (raw <= 1295u) {
+    const uint16_t battery_empty_adc = 1300u;
+    const uint16_t battery_full_adc = 2000u;
+
+    if (raw <= battery_empty_adc) {
         return 0u;
     }
-    if (raw >= 1670u) {
+    if (raw >= battery_full_adc) {
         return 100u;
     }
     return (uint16_t)(100u -
-        (((uint32_t)(1670u - raw) * 100u) / 375u));
+        (((uint32_t)(battery_full_adc - raw) * 100u) /
+         (battery_full_adc - battery_empty_adc)));
 }
 
 static void lcd_format_percent(uint16_t value, uint8_t offset)
@@ -1238,7 +1501,8 @@ void board_display_set_adc(uint16_t channel2, uint16_t channel8,
 
 static void lcd_text_render_service(void)
 {
-    if (lcd_dma_active || !lcd_queue_drained()) {
+    if (lcd_background_pending || lcd_fill_start_pending || lcd_fill_active ||
+        lcd_dma_active || !lcd_queue_drained()) {
         return;
     }
     if (!lcd_text_active && lcd_cpm_redraw_pending) {
@@ -1246,6 +1510,12 @@ static void lcd_text_render_service(void)
         lcd_text_glyph_index = 0u;
         lcd_text_row_commands_queued = false;
         lcd_cpm_redraw_pending = false;
+    }
+    if (lcd_screen_page == 2u && lcd_time_redraw_pending) {
+        lcd_text_active = true;
+        lcd_text_glyph_index = 0u;
+        lcd_text_row_commands_queued = false;
+        lcd_time_redraw_pending = false;
     }
     if (!lcd_text_active) {
         return;
@@ -1391,6 +1661,19 @@ void board_display_service(void)
 
     if (!lcd_ready || !lcd_spi_ready) {
         return;
+    }
+    if (lcd_screen_page == 2u) {
+        const uint32_t uptime_minute = board_uptime_seconds / 60u;
+        if (uptime_minute != lcd_time_displayed_minute) {
+            lcd_time_displayed_minute = uptime_minute;
+            lcd_time_redraw_pending = true;
+        }
+    } else if (lcd_screen_page < 2u) {
+        const uint32_t uptime_minute = board_uptime_seconds / 60u;
+        if (uptime_minute != lcd_time_displayed_minute) {
+            lcd_time_displayed_minute = uptime_minute;
+            lcd_cpm_redraw_pending = true;
+        }
     }
     if (lcd_background_pending && lcd_queue_drained() && !lcd_fill_active &&
         !lcd_dma_active) {
@@ -1771,4 +2054,8 @@ void SysTick_Handler(void)
 {
     /* A polling firmware loop derives its 10 ms cadence from this hardware tick. */
     ++board_millis;
+    if (++board_uptime_millisecond_remainder >= 1000u) {
+        board_uptime_millisecond_remainder = 0u;
+        ++board_uptime_seconds;
+    }
 }
