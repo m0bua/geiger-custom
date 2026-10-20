@@ -27,6 +27,10 @@ VAL
         POWER OFF
         REBOOT
 
+Long-click right selects the value for settings with more than 3 options.
+Short left/right changes it; long right saves; long left cancels and returns
+focus to the setting name. Other settings retain their existing interaction.
+
 DSOSE
     STATISTICS
         M-H-D
