@@ -16,6 +16,7 @@ VAL
         MAIN: Sv/CNT/R
         PREFFIX: if(Sv/R): m/u/n/AUTO else: CPM/CPS
         DOESE PREF: if(Sv/R): m/u/n/AUTO else: CPM/CPS
+        RATE SECOND ROW: CPM/CPS/OFF
         USE-SPI: OFF/ON
         RESET: SETTINGS/DATA/SPI/ALL
         POWER OFF

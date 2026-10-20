@@ -147,6 +147,8 @@ static bool adc_ready;
     LCD_TOP_ROW_PIXELS)
 #define LCD_TEXT_FOREGROUND 0xD6BAu
 #define LCD_TEXT_BACKGROUND 0x0000u
+#define LCD_TEXT_GREEN 0x07E0u
+#define LCD_TEXT_YELLOW 0xFFE0u
 
 static void adc_wait_ms(uint32_t duration);
 
@@ -777,21 +779,21 @@ static void lcd_begin_fill(void)
 }
 
 static void lcd_top_row_draw_glyph(char glyph, uint16_t x_start,
-                                  uint16_t row_width)
+                                  uint16_t row_width, uint16_t color)
 {
     for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
         for (uint8_t x = 0u; x < FONT_SMALL_CELL_WIDTH; ++x) {
             const uint16_t pixel_x = (uint16_t)(x_start + x);
             if (pixel_x < row_width && font_small_pixel(glyph, x, y)) {
                 lcd_text_glyph[(uint16_t)y * row_width + pixel_x] =
-                    LCD_TEXT_FOREGROUND;
+                    color;
             }
         }
     }
 }
 
 static void lcd_top_row_draw_percent(uint8_t offset, char icon,
-                                    uint8_t right_edge)
+                                    uint8_t right_edge, uint16_t color)
 {
     uint8_t first = offset;
     uint8_t count;
@@ -806,10 +808,10 @@ static void lcd_top_row_draw_percent(uint8_t offset, char icon,
         (uint16_t)(count - 1u) * LCD_SMALL_TEXT_GAP;
     x = (uint16_t)(right_edge + 1u - width);
 
-    lcd_top_row_draw_glyph(icon, x, LCD_WIDTH);
+    lcd_top_row_draw_glyph(icon, x, LCD_WIDTH, LCD_TEXT_FOREGROUND);
     x = (uint16_t)(x + FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP);
     for (uint8_t i = first; i < offset + 4u; ++i) {
-        lcd_top_row_draw_glyph(lcd_adc_glyphs[i], x, LCD_WIDTH);
+        lcd_top_row_draw_glyph(lcd_adc_glyphs[i], x, LCD_WIDTH, color);
         x = (uint16_t)(x + FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP);
     }
 }
@@ -829,7 +831,7 @@ static void lcd_top_row_draw_uptime(void)
         lcd_top_row_draw_glyph(time_text[i],
             (uint16_t)(4u + i * (FONT_SMALL_CELL_WIDTH +
                                  LCD_SMALL_TEXT_GAP)),
-            LCD_WIDTH);
+            LCD_WIDTH, LCD_TEXT_FOREGROUND);
     }
 }
 
@@ -1139,8 +1141,15 @@ static bool lcd_text_prepare_glyph(void)
                 lcd_text_glyph[i] = LCD_TEXT_BACKGROUND;
             }
             lcd_top_row_draw_uptime();
-            lcd_top_row_draw_percent(7u, FONT_SMALL_GLYPH_SUN, 106u);
-            lcd_top_row_draw_percent(13u, FONT_SMALL_GLYPH_BATTERY, 154u);
+            const uint16_t sun_color = lcd_displayed_solar_percent > 79u ?
+                LCD_TEXT_GREEN : (lcd_displayed_solar_percent > 49u ?
+                LCD_TEXT_YELLOW : LCD_TEXT_FOREGROUND);
+            const uint16_t battery_color = lcd_adc_usb_raw > 1000u ?
+                LCD_TEXT_GREEN : LCD_TEXT_FOREGROUND;
+            lcd_top_row_draw_percent(7u, FONT_SMALL_GLYPH_SUN, 106u,
+                                     sun_color);
+            lcd_top_row_draw_percent(13u, FONT_SMALL_GLYPH_BATTERY, 154u,
+                                     battery_color);
 
             x_window[0] = 0u;
             x_window[1] = 0u;
@@ -1253,7 +1262,8 @@ static bool lcd_text_prepare_glyph(void)
                  ++column) {
                 lcd_top_row_draw_glyph(lcd_cpm_text[column],
                     (uint16_t)(column * (FONT_SMALL_CELL_WIDTH +
-                                         LCD_SMALL_TEXT_GAP)), text_width);
+                                         LCD_SMALL_TEXT_GAP)), text_width,
+                    LCD_TEXT_FOREGROUND);
             }
 
             REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
