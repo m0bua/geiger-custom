@@ -54,6 +54,11 @@ void board_display_set_rate_led(void);
 void board_display_set_dose(uint32_t dose_thousandths,
                             uint32_t dose_fraction,
                             uint32_t measurement_seconds);
+void board_display_set_session_rates(uint32_t average_rate_thousandths,
+                                     uint32_t maximum_rate_thousandths,
+                                     uint32_t average_cpm,
+                                     uint32_t maximum_cpm,
+                                     uint32_t session_count_total);
 void board_display_set_count(uint32_t count);
 uint32_t board_display_screen_timeout_ms(void);
 bool board_display_led_flash_enabled(bool screen_on);

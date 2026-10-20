@@ -13,6 +13,10 @@ int main(void)
     uint32_t previous_minute_sample = 0u;
     uint32_t minute_total = 0u;
     uint32_t pulses_since_start = 0u;
+    uint32_t session_pulses_total = 0u;
+    uint32_t session_elapsed_seconds = 0u;
+    uint32_t session_max_rate_thousandths = 0u;
+    uint32_t session_max_cpm = 0u;
     uint8_t rate_window_seconds = 0u;
     uint32_t dose_thousandths = 0u;
     uint32_t dose_fraction = 0u;
@@ -287,6 +291,9 @@ int main(void)
             }
 
             while ((int32_t)(now - next_minute_tick) >= 0) {
+                if (session_elapsed_seconds < UINT32_MAX) {
+                    ++session_elapsed_seconds;
+                }
                 if (hv_enabled) {
                 const uint32_t second_pulses =
                     detected_pulses - previous_minute_sample;
@@ -296,6 +303,11 @@ int main(void)
                     pulses_since_start = UINT32_MAX;
                 } else {
                     pulses_since_start += second_pulses;
+                }
+                if (UINT32_MAX - session_pulses_total < second_pulses) {
+                    session_pulses_total = UINT32_MAX;
+                } else {
+                    session_pulses_total += second_pulses;
                 }
                 minute_total -= minute_bins[minute_head];
                 minute_bins[minute_head] = second_pulses;
@@ -310,6 +322,10 @@ int main(void)
                 /* Rate = normalized CPM * 0.00666 µSv/h. */
                 const uint32_t rate_thousandths = (uint32_t)(
                     ((uint64_t)cpm * 666u + 50u) / 100u);
+                if (rate_thousandths > session_max_rate_thousandths) {
+                    session_max_rate_thousandths = rate_thousandths;
+                }
+                if (cpm > session_max_cpm) session_max_cpm = cpm;
                 board_display_set_rate(rate_thousandths, cpm,
                                        pulses_since_start,
                                        pulses_since_start >= 25u);
@@ -321,6 +337,23 @@ int main(void)
                 dose_fraction %= 3600u;
                 board_display_set_dose(dose_thousandths, dose_fraction,
                                        dose_measurement_seconds);
+                }
+                if (session_elapsed_seconds != 0u) {
+                    const uint64_t integrated_rate =
+                        (uint64_t)dose_thousandths * 3600u + dose_fraction;
+                    const uint64_t average_rate_wide = integrated_rate /
+                        session_elapsed_seconds;
+                    const uint64_t average_cpm_wide =
+                        ((uint64_t)session_pulses_total * 60u +
+                            session_elapsed_seconds / 2u) /
+                        session_elapsed_seconds;
+                    const uint32_t average_rate = average_rate_wide >
+                        UINT32_MAX ? UINT32_MAX : (uint32_t)average_rate_wide;
+                    const uint32_t average_cpm = average_cpm_wide >
+                        UINT32_MAX ? UINT32_MAX : (uint32_t)average_cpm_wide;
+                    board_display_set_session_rates(average_rate,
+                        session_max_rate_thousandths, average_cpm,
+                        session_max_cpm, session_pulses_total);
                 }
                 next_minute_tick += 1000u;
             }
