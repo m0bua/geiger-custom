@@ -8,6 +8,7 @@ int main(void)
     uint32_t next_sample;
     uint32_t next_adc_sample;
     uint32_t inactivity_deadline;
+    uint32_t screen_timeout_ms;
     uint32_t event_count = 0u;
     uint32_t previous_minute_sample = 0u;
     uint32_t minute_total = 0u;
@@ -15,12 +16,20 @@ int main(void)
     uint8_t rate_window_seconds = 0u;
     uint32_t dose_thousandths = 0u;
     uint32_t dose_fraction = 0u;
+    uint32_t dose_measurement_seconds = 0u;
     uint32_t minute_bins[60] = {0u};
     uint32_t next_minute_tick;
     uint8_t minute_head = 0u;
     uint32_t led_blink_deadline = 0u;
+    uint32_t light_alarm_deadline = 0u;
+    uint32_t startup_led_deadline;
     bool backlight_on = false;
+    bool screen_alarm_active = false;
+    bool light_alarm_active = false;
+    bool light_alarm_on = false;
     bool event_led_on = false;
+    bool startup_led_active = true;
+    bool hv_enabled;
     bool left_long_handled = false;
     bool right_long_handled = false;
     uint8_t wake_suppressed_buttons = 0u;
@@ -29,22 +38,34 @@ int main(void)
     board_adc_init();
     board_rgb_set(0u);
     board_rgb_set_brightness(30u);
+    board_rgb_set(7u);
+    startup_led_deadline = board_millis + 1000u;
     board_lcd_backlight_set_brightness(10u);
     board_lcd_backlight_set(false);
     board_display_init();
+    screen_alarm_active = board_display_screen_alarm_active();
+    hv_enabled = board_hv_is_enabled();
 
     next_sample = board_millis;
     next_adc_sample = board_millis;
     next_minute_tick = board_millis + 1000u;
-    inactivity_deadline = board_millis + 10000u;
+    screen_timeout_ms = board_display_screen_timeout_ms();
+    inactivity_deadline = board_millis + screen_timeout_ms;
 
     for (;;) {
         board_display_service();
+        board_click_sound_service();
         uint32_t now = board_millis;
+
+        if (startup_led_active &&
+            (int32_t)(now - startup_led_deadline) >= 0) {
+            board_rgb_set(0u);
+            startup_led_active = false;
+        }
 
         if ((uint32_t)(now - next_sample) >= 10u) {
             uint8_t events = board_buttons_sample_10ms();
-            const uint32_t detected_pulses = board_detector_count();
+            uint32_t detected_pulses = board_detector_count();
             const uint8_t button_events = BOARD_BUTTON_LEFT_DOWN |
                 BOARD_BUTTON_RIGHT_DOWN | BOARD_BUTTON_LEFT |
                 BOARD_BUTTON_RIGHT | BOARD_BUTTON_LEFT_LONG |
@@ -56,12 +77,12 @@ int main(void)
                            BOARD_BUTTON_RIGHT_DOWN)) != 0u) {
                 board_lcd_backlight_set(true);
                 backlight_on = true;
-                inactivity_deadline = now + 10000u;
+                inactivity_deadline = now + screen_timeout_ms;
                 wake_suppressed_buttons |= events &
                     (BOARD_BUTTON_LEFT_DOWN | BOARD_BUTTON_RIGHT_DOWN);
                 events &= (uint8_t)~button_events;
             } else if ((events & button_events) != 0u) {
-                inactivity_deadline = now + 10000u;
+                inactivity_deadline = now + screen_timeout_ms;
             }
             if ((events & BOARD_BUTTON_LEFT_UP) != 0u) {
                 if ((wake_suppressed_buttons & BOARD_BUTTON_LEFT_DOWN) != 0u) {
@@ -93,29 +114,114 @@ int main(void)
             }
             if ((events & BOARD_BUTTON_LEFT_LONG) != 0u &&
                 !left_long_handled) {
-                board_display_extra_exit();
+                if (board_display_settings_list_active()) {
+                    board_display_settings_list_exit();
+                } else if (!board_display_rate_long_press()) {
+                    board_display_extra_exit();
+                }
                 left_long_handled = true;
             }
             if ((events & BOARD_BUTTON_RIGHT_LONG) != 0u &&
                 !right_long_handled) {
-                board_display_extra_enter();
+                if (board_display_settings_list_active()) {
+                    board_display_settings_change();
+                } else {
+                    board_display_settings_list_activate();
+                    board_display_extra_enter();
+                }
                 right_long_handled = true;
             }
             if ((events & BOARD_BUTTON_RIGHT) != 0u) {
-                board_display_right_short();
+                if (board_display_settings_list_active()) {
+                    board_display_settings_move(true);
+                } else {
+                    board_display_right_short();
+                }
             }
             if ((events & BOARD_BUTTON_LEFT) != 0u) {
-                board_display_next_page();
+                if (board_display_settings_list_active()) {
+                    board_display_settings_move(false);
+                } else {
+                    board_display_next_page();
+                }
+            }
+
+            {
+                const bool new_hv_enabled = board_hv_is_enabled();
+                if (new_hv_enabled != hv_enabled) {
+                    hv_enabled = new_hv_enabled;
+                    detected_pulses = board_detector_count();
+                    event_count = detected_pulses;
+                    previous_minute_sample = detected_pulses;
+                    minute_total = 0u;
+                    rate_window_seconds = 0u;
+                    for (uint8_t i = 0u; i < 60u; ++i) {
+                        minute_bins[i] = 0u;
+                    }
+                    if (hv_enabled) {
+                        pulses_since_start = 0u;
+                        board_display_set_count(0u);
+                        board_display_set_rate(0u, 0u, false);
+                    }
+                    next_minute_tick = now + 1000u;
+                }
+            }
+
+            {
+                const bool alarm_active =
+                    board_display_screen_alarm_active();
+                if (alarm_active && !screen_alarm_active && !backlight_on) {
+                    board_lcd_backlight_set(true);
+                    backlight_on = true;
+                    inactivity_deadline = now + screen_timeout_ms;
+                } else if (!alarm_active && screen_alarm_active) {
+                    inactivity_deadline = now + screen_timeout_ms;
+                }
+                screen_alarm_active = alarm_active;
+            }
+
+            {
+                const bool alarm_active =
+                    board_display_light_alarm_active();
+                if (alarm_active != light_alarm_active) {
+                    light_alarm_active = alarm_active;
+                    light_alarm_on = alarm_active;
+                    if (alarm_active) light_alarm_deadline = now + 100u;
+                    board_flashlight_alarm_set(alarm_active, light_alarm_on);
+                } else if (alarm_active &&
+                           (int32_t)(now - light_alarm_deadline) >= 0) {
+                    light_alarm_on = !light_alarm_on;
+                    light_alarm_deadline = now +
+                        (light_alarm_on ? 100u : 400u);
+                    board_flashlight_alarm_set(true, light_alarm_on);
+                }
             }
 
             if (detected_pulses != event_count) {
                 event_count = detected_pulses;
-                board_rgb_set(board_display_rate_led_mask());
-                event_led_on = true;
-                led_blink_deadline = now + 100u;
+                board_display_set_count(detected_pulses);
+                if (board_display_click_sound_enabled(backlight_on)) {
+                    board_click_sound_start();
+                }
+                if (!startup_led_active &&
+                    board_display_led_flash_enabled(backlight_on)) {
+                    board_rgb_set(board_display_rate_led_mask());
+                    event_led_on = true;
+                    led_blink_deadline = now + 100u;
+                }
+            }
+
+            {
+                const uint32_t new_timeout_ms =
+                    board_display_screen_timeout_ms();
+                if (new_timeout_ms != screen_timeout_ms) {
+                    screen_timeout_ms = new_timeout_ms;
+                    inactivity_deadline = now + screen_timeout_ms;
+                }
             }
 
             while ((int32_t)(now - next_minute_tick) >= 0) {
+                if (hv_enabled) {
                 const uint32_t second_pulses =
                     detected_pulses - previous_minute_sample;
 
@@ -140,14 +246,20 @@ int main(void)
                     ((uint64_t)cpm * 666u + 50u) / 100u);
                 board_display_set_rate(rate_thousandths, cpm,
                                        pulses_since_start >= 25u);
+                if (dose_measurement_seconds < UINT32_MAX) {
+                    ++dose_measurement_seconds;
+                }
                 dose_fraction += rate_thousandths;
                 dose_thousandths += dose_fraction / 3600u;
                 dose_fraction %= 3600u;
-                board_display_set_dose(dose_thousandths, dose_fraction);
+                board_display_set_dose(dose_thousandths, dose_fraction,
+                                       dose_measurement_seconds);
+                }
                 next_minute_tick += 1000u;
             }
 
-            if (backlight_on && (int32_t)(now - inactivity_deadline) >= 0) {
+            if (backlight_on && !screen_alarm_active &&
+                (int32_t)(now - inactivity_deadline) >= 0) {
                 board_lcd_backlight_set(false);
                 backlight_on = false;
             }

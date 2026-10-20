@@ -18,6 +18,8 @@ extern volatile uint32_t board_millis;
 void board_init(void);
 uint8_t board_buttons_sample_10ms(void);
 uint32_t board_detector_count(void);
+void board_hv_set_enabled(bool enabled);
+bool board_hv_is_enabled(void);
 void board_adc_init(void);
 uint16_t board_adc_read(uint8_t channel);
 void board_adc_read_all(uint16_t *channel2, uint16_t *channel8,
@@ -28,14 +30,33 @@ void board_display_init(void);
 void board_display_service(void);
 void board_display_next_page(void);
 void board_display_right_short(void);
+bool board_display_rate_long_press(void);
+bool board_display_light_alarm_active(void);
+bool board_display_dose_alarm_active(void);
+void board_flashlight_alarm_set(bool active, bool on);
 void board_display_extra_enter(void);
 void board_display_extra_step(bool forward);
 void board_display_extra_exit(void);
+bool board_display_settings_list_active(void);
+void board_display_settings_list_activate(void);
+void board_display_settings_move(bool forward);
+void board_display_settings_change(void);
+void board_display_settings_list_exit(void);
+void board_reboot(void);
+void board_power_off(void);
 void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm,
                             bool window_ready);
 uint8_t board_display_rate_led_mask(void);
 void board_display_set_dose(uint32_t dose_thousandths,
-                            uint32_t dose_fraction);
+                            uint32_t dose_fraction,
+                            uint32_t measurement_seconds);
+void board_display_set_count(uint32_t count);
+uint32_t board_display_screen_timeout_ms(void);
+bool board_display_led_flash_enabled(bool screen_on);
+bool board_display_click_sound_enabled(bool screen_on);
+void board_click_sound_start(void);
+void board_click_sound_service(void);
+bool board_display_screen_alarm_active(void);
 void board_display_set_adc(uint16_t channel2, uint16_t channel8,
                            uint16_t channel9);
 bool board_display_busy(void);

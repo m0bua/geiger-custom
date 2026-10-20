@@ -10,14 +10,17 @@ volatile uint32_t board_millis;
 static volatile uint32_t board_uptime_seconds;
 static volatile uint16_t board_uptime_millisecond_remainder;
 static volatile uint32_t detector_pulse_count;
+static volatile bool board_hv_enabled = true;
 static volatile uint16_t lcd_adc_battery_raw;
 static volatile uint16_t lcd_adc_sun_raw;
 static volatile uint16_t lcd_adc_usb_raw;
 static bool adc_ready;
+static volatile bool power_off_wakeup;
 
 #define DETECTOR_GPIO_BASE GPIOB_BASE
 #define DETECTOR_PIN       BOARD_DETECTOR_PIN
 #define DETECTOR_EXTI_MASK (1u << DETECTOR_PIN)
+#define FLASHLIGHT_PIN     8u
 
 #define REG32(address) (*(volatile uint32_t *)(uintptr_t)(address))
 
@@ -58,6 +61,13 @@ static bool adc_ready;
 #define SPI_SR         0x08u
 #define SPI_DR         0x0Cu
 #define FLASH_ACR      REG32(0x40022000u)
+#define FLASH_PECR     REG32(0x40022004u)
+#define FLASH_PEKEYR   REG32(0x4002200Cu)
+#define FLASH_SR       REG32(0x40022018u)
+#define DATA_EEPROM_BASE 0x08080000u
+#define FLASH_PECR_PELOCK (1u << 0)
+#define FLASH_PECR_DATA   (1u << 4)
+#define FLASH_SR_BSY      (1u << 0)
 
 #define GPIOA_BASE     0x50000000u
 #define GPIOB_BASE     0x50000400u
@@ -76,17 +86,22 @@ static bool adc_ready;
 #define EXTI_FTSR      REG32(EXTI_BASE + 0x0Cu)
 #define EXTI_PR        REG32(EXTI_BASE + 0x14u)
 #define NVIC_ISER      REG32(0xE000E100u)
+#define SCB_SCR        REG32(0xE000ED10u)
+#define SCB_AIRCR      REG32(0xE000ED0Cu)
 
 #define TIM2_BASE      0x40000000u
 #define TIM22_BASE     0x40011400u
 #define TIM_CR1        0x00u
 #define TIM_EGR        0x14u
 #define TIM_CCMR1      0x18u
+#define TIM_CCMR2      0x1Cu
 #define TIM_CCER       0x20u
+#define TIM_CNT        0x24u
 #define TIM_PSC        0x28u
 #define TIM_ARR        0x2Cu
 #define TIM_CCR1       0x34u
 #define TIM_CCR2       0x38u
+#define TIM_CCR4       0x40u
 
 #define PWM_PERIOD     1000u
 #define BACKLIGHT_PWM_PERIOD 1000u
@@ -149,8 +164,15 @@ static bool adc_ready;
 #define LCD_TEXT_BACKGROUND 0x0000u
 #define LCD_TEXT_GREEN 0x07E0u
 #define LCD_TEXT_YELLOW 0xFFE0u
+#define LCD_TEXT_RED 0xF800u
+#define LCD_SETTINGS_SELECTED_COLOR 0x07EEu
+#define LCD_SETTINGS_ACTION_COLOR 0x7BE0u
+#define LCD_SETTINGS_WARNING_COLOR 0x7800u
 
 static void adc_wait_ms(uint32_t duration);
+static void lcd_apply_brightness_settings(void);
+static bool button_pressed(uint32_t base, uint32_t pin);
+static void pin_input_with_pull(uint32_t base, uint32_t pin);
 
 #define SYST_CSR       REG32(0xE000E010u)
 #define SYST_RVR       REG32(0xE000E014u)
@@ -189,11 +211,12 @@ static bool lcd_text_active;
 static bool lcd_cpm_redraw_pending;
 static bool lcd_time_redraw_pending;
 static bool lcd_debug_redraw_pending;
+static bool lcd_settings_redraw_pending;
 static bool lcd_text_row_commands_queued;
 static uint8_t lcd_text_glyph_index;
 static uint8_t lcd_text_dma_glyph_advance;
 static uint16_t lcd_text_glyph_pixels;
-static char lcd_rate_glyphs[LCD_RATE_MAX_GLYPHS + 1u] = ".0000";
+static char lcd_rate_glyphs[LCD_RATE_MAX_GLYPHS + 2u] = ".0000";
 static uint8_t lcd_rate_glyph_count = LCD_RATE_MAX_GLYPHS;
 static uint16_t lcd_rate_color = LCD_COUNTER_CYAN;
 static uint8_t lcd_rate_led_mask = 6u;
@@ -204,12 +227,43 @@ static char lcd_adc_glyphs[LCD_ADC_TEXT_LENGTH + 1u] =
     "      \x01  0% \x02  0% ";
 static uint16_t lcd_displayed_battery_percent;
 static uint16_t lcd_displayed_solar_percent;
+static bool lcd_solar_sample_ready;
 static uint8_t lcd_screen_page;
 static uint8_t lcd_main_return_page;
+static bool lcd_settings_list_active;
+static uint8_t lcd_settings_selected;
+static uint8_t lcd_settings_value_index[20] = {
+    [0] = 2u, [7] = 2u, [10] = 1u, [11] = 1u
+};
+static bool click_sound_active;
+static uint8_t click_sound_profile;
+static uint8_t click_sound_stage;
+static uint32_t click_sound_deadline;
+
+static uint32_t board_rgb_tim2_compare(void)
+{
+    const uint32_t period = click_sound_active ? 311u : PWM_PERIOD;
+    uint32_t compare = ((uint32_t)rgb_brightness_percent * period) / 100u;
+    if (click_sound_active && compare > 310u) compare = 310u;
+    return compare;
+}
+static bool flashlight_enabled;
+static bool flashlight_manual_enabled;
+static bool flashlight_alarm_override;
+static bool flashlight_alarm_output;
 static uint32_t lcd_time_displayed_minute = UINT32_MAX;
 static uint32_t lcd_rate_value_thousandths;
+static uint32_t lcd_current_cpm;
+static uint32_t lcd_count_total;
+static uint8_t lcd_settings_sequence;
+static uint8_t lcd_timer_sequence;
+static uint8_t lcd_alarm_sequence;
+static uint8_t lcd_light_alarm_sequence;
+static uint8_t lcd_dose_alarm_sequence;
+static uint8_t lcd_hv_sequence;
 static uint32_t lcd_dose_value_thousandths;
 static uint32_t lcd_dose_fraction;
+static uint32_t lcd_dose_measurement_seconds;
 static uint16_t lcd_text_glyph[LCD_TEXT_GLYPH_PIXELS];
 static uint16_t lcd_draw_pixel;
 typedef struct {
@@ -253,7 +307,8 @@ static bool deadline_reached(uint32_t deadline)
     return (int32_t)(board_millis - deadline) >= 0;
 }
 
-static void lcd_format_scaled_sv(uint64_t value_picosv_x18)
+static void lcd_format_scaled_sv(uint64_t value_picosv_x18,
+                                 uint8_t prefix_setting)
 {
     /* Scales are multiplied by 18 to retain the dose accumulator's
      * 1/18-pSv remainder without floating-point arithmetic. */
@@ -263,21 +318,31 @@ static void lcd_format_scaled_sv(uint64_t value_picosv_x18)
     static const char unit_prefixes[] = { 'm', (char)0xB5u, 'n', 'p' };
     uint8_t unit = 3u;
     uint8_t fallback_unit = 3u;
+    const uint8_t selected_prefix = lcd_settings_value_index[prefix_setting];
+
+    /* The stock firmware's R display is its conventional x100 scaling of Sv. */
+    if (lcd_settings_value_index[9] == 2u) {
+        value_picosv_x18 *= 100u;
+    }
     bool has_fallback = false;
 
-    for (uint8_t i = 0u; i < 4u; ++i) {
-        const uint64_t whole = value_picosv_x18 / unit_scales[i];
-        if (whole >= 10u && whole < 1000u) {
-            unit = i;
-            has_fallback = false;
-            break;
-        }
-        if (whole != 0u && !has_fallback) {
-            fallback_unit = i;
-            has_fallback = true;
+    if (selected_prefix < 3u) {
+        unit = selected_prefix;
+    } else {
+        for (uint8_t i = 0u; i < 4u; ++i) {
+            const uint64_t whole = value_picosv_x18 / unit_scales[i];
+            if (whole >= 10u && whole < 1000u) {
+                unit = i;
+                has_fallback = false;
+                break;
+            }
+            if (whole != 0u && !has_fallback) {
+                fallback_unit = i;
+                has_fallback = true;
+            }
         }
     }
-    if (has_fallback) {
+    if (selected_prefix == 3u && has_fallback) {
         /* A value from 1 to 9.999 has no adjacent SI prefix that yields
          * 10..999, so retain that unit and pad to two integer places. */
         const uint64_t whole = value_picosv_x18 / unit_scales[unit];
@@ -290,8 +355,8 @@ static void lcd_format_scaled_sv(uint64_t value_picosv_x18)
         const uint64_t scale = unit_scales[unit];
         const uint64_t whole = value_picosv_x18 / scale;
         uint8_t integer_digits = 1u;
-        uint8_t integer_places;
         uint8_t decimals;
+        uint8_t decimal_limit;
         uint64_t value = whole;
         uint64_t factor = 1u;
         uint64_t scaled;
@@ -304,18 +369,47 @@ static void lcd_format_scaled_sv(uint64_t value_picosv_x18)
             value /= 10u;
             ++integer_digits;
         }
-        integer_places = integer_digits < 2u ? 2u : integer_digits;
-        decimals = integer_places < 5u ?
-            (uint8_t)(5u - integer_places) : 0u;
+        decimal_limit = unit == 0u ? 5u :
+            (unit == 1u ?
+                (lcd_settings_value_index[9] == 2u ? 1u : 3u) :
+                (unit == 2u ? 0u : 5u));
+        decimals = whole == 0u ? 5u :
+            (integer_digits < 5u ? (uint8_t)(5u - integer_digits) : 0u);
+        if (decimals > decimal_limit) decimals = decimal_limit;
         for (uint8_t i = 0u; i < decimals; ++i) {
             factor *= 10u;
         }
         scaled = (value_picosv_x18 * factor + scale / 2u) / scale;
         integer_part = scaled / factor;
 
+        /* If rounding moves the value into a higher integer order, reduce
+         * decimal places to keep the same order-dependent precision. */
+        for (;;) {
+            uint8_t rounded_digits = 1u;
+            uint8_t adjusted_decimals;
+            value = integer_part;
+            while (value >= 10u) {
+                value /= 10u;
+                ++rounded_digits;
+            }
+            adjusted_decimals = integer_part == 0u ? 5u :
+                (rounded_digits < 5u ?
+                    (uint8_t)(5u - rounded_digits) : 0u);
+            if (adjusted_decimals > decimal_limit) {
+                adjusted_decimals = decimal_limit;
+            }
+            if (adjusted_decimals >= decimals) break;
+            decimals = adjusted_decimals;
+            factor = 1u;
+            for (uint8_t i = 0u; i < decimals; ++i) factor *= 10u;
+            scaled = (value_picosv_x18 * factor + scale / 2u) / scale;
+            integer_part = scaled / factor;
+        }
+
         /* Rounding can cross 1000. Move to the next coarser unit so the
          * displayed value keeps at most three places before the separator. */
-        if (integer_part >= 1000u && unit != 0u) {
+        if (integer_part >= 1000u && unit != 0u &&
+            (selected_prefix == 3u || integer_part > 99999u)) {
             --unit;
             continue;
         }
@@ -323,42 +417,111 @@ static void lcd_format_scaled_sv(uint64_t value_picosv_x18)
         fraction = scaled % factor;
         value = integer_part;
         integer_digits = 0u;
-        do {
-            reversed[integer_digits++] = (char)('0' + value % 10u);
-            value /= 10u;
-        } while (value != 0u && integer_digits < sizeof(reversed));
+        if (value == 0u) {
+            reversed[integer_digits++] = '0';
+        } else {
+            do {
+                reversed[integer_digits++] = (char)('0' + value % 10u);
+                value /= 10u;
+            } while (value != 0u && integer_digits < sizeof(reversed));
+        }
 
         lcd_rate_glyph_count = 0u;
-        if (integer_digits < 2u) {
-            lcd_rate_glyphs[lcd_rate_glyph_count++] = '0';
-        }
-        while (integer_digits != 0u) {
-            lcd_rate_glyphs[lcd_rate_glyph_count++] =
-                reversed[--integer_digits];
-        }
-        lcd_rate_glyphs[lcd_rate_glyph_count++] = '.';
-        divisor = decimals == 0u ? 1u : factor / 10u;
-        for (uint8_t i = 0u; i < decimals; ++i) {
-            lcd_rate_glyphs[lcd_rate_glyph_count++] =
-                (char)('0' + ((fraction / divisor) % 10u));
-            if (divisor > 1u) {
-                divisor /= 10u;
+        if (integer_part != 0u || decimals == 0u ||
+            lcd_settings_value_index[8] == 0u) {
+            while (integer_digits != 0u) {
+                lcd_rate_glyphs[lcd_rate_glyph_count++] =
+                    reversed[--integer_digits];
             }
+        }
+        if (decimals != 0u) {
+            lcd_rate_glyphs[lcd_rate_glyph_count++] = '.';
+            divisor = factor / 10u;
+            for (uint8_t i = 0u; i < decimals; ++i) {
+                lcd_rate_glyphs[lcd_rate_glyph_count++] =
+                    (char)('0' + ((fraction / divisor) % 10u));
+                if (divisor > 1u) {
+                    divisor /= 10u;
+                }
+            }
+        }
+        if (lcd_rate_glyph_count == 0u) {
+            lcd_rate_glyphs[lcd_rate_glyph_count++] = '0';
         }
         lcd_rate_glyphs[lcd_rate_glyph_count] = '\0';
         lcd_display_unit_prefix = unit_prefixes[unit];
         lcd_rate_label[0] = lcd_display_unit_prefix;
+        if (lcd_settings_value_index[9] == 2u) {
+            lcd_rate_label[1] = 'R';
+            lcd_rate_label[2] = '/';
+            lcd_rate_label[3] = 'h';
+            lcd_rate_label[4] = ' ';
+        } else {
+            lcd_rate_label[1] = 'S';
+            lcd_rate_label[2] = 'v';
+            lcd_rate_label[3] = '/';
+            lcd_rate_label[4] = 'h';
+        }
         return;
+    }
+}
+
+static void lcd_format_count_value(uint32_t value, const char *label)
+{
+    char reversed[6];
+    uint8_t digits = 0u;
+
+    if (value > 999999u) value = 999999u;
+    do {
+        reversed[digits++] = (char)('0' + value % 10u);
+        value /= 10u;
+    } while (value != 0u && digits < sizeof(reversed));
+    lcd_rate_glyph_count = 0u;
+    while (digits != 0u) {
+        lcd_rate_glyphs[lcd_rate_glyph_count++] = reversed[--digits];
+    }
+    lcd_rate_glyphs[lcd_rate_glyph_count] = '\0';
+    for (uint8_t i = 0u; i < LCD_RATE_LABEL_LENGTH; ++i) {
+        lcd_rate_label[i] = label[i];
+    }
+}
+
+static void lcd_format_count_rate(uint32_t cpm)
+{
+    if (lcd_settings_value_index[10] == 0u) {
+        lcd_format_count_value(cpm, "CPM  ");
+    } else {
+        const uint32_t thousandths_cps = (uint32_t)(
+            ((uint64_t)cpm * 1000u + 30u) / 60u);
+        const uint32_t whole = thousandths_cps / 1000u;
+        const uint32_t fraction = thousandths_cps % 1000u;
+
+        lcd_format_count_value(whole, "CPS  ");
+        if (whole == 0u && lcd_settings_value_index[8] != 0u) {
+            lcd_rate_glyph_count = 0u;
+        }
+        lcd_rate_glyphs[lcd_rate_glyph_count++] = '.';
+        lcd_rate_glyphs[lcd_rate_glyph_count++] =
+            (char)('0' + (fraction / 100u));
+        lcd_rate_glyphs[lcd_rate_glyph_count++] =
+            (char)('0' + ((fraction / 10u) % 10u));
+        lcd_rate_glyphs[lcd_rate_glyph_count++] =
+            (char)('0' + (fraction % 10u));
+        lcd_rate_glyphs[lcd_rate_glyph_count] = '\0';
     }
 }
 
 static void lcd_format_rate(uint32_t rate_thousandths)
 {
+    if (lcd_settings_value_index[9] == 1u) {
+        lcd_format_count_rate(lcd_current_cpm);
+        return;
+    }
     if (rate_thousandths > LCD_RATE_MAX_VALUE) {
         rate_thousandths = LCD_RATE_MAX_VALUE;
     }
     /* Input is in 0.001 µSv/h (nSv/h), in units of 1/18 pSv. */
-    lcd_format_scaled_sv((uint64_t)rate_thousandths * 18000u);
+    lcd_format_scaled_sv((uint64_t)rate_thousandths * 18000u, 10u);
 }
 
 static void lcd_format_cpm(uint32_t cpm)
@@ -391,12 +554,16 @@ static void lcd_format_cpm(uint32_t cpm)
 static void lcd_format_dose(uint32_t dose_thousandths,
                             uint32_t dose_fraction)
 {
+    if (lcd_settings_value_index[9] == 1u) {
+        lcd_format_count_value(lcd_count_total, "CNT  ");
+        return;
+    }
     /* The whole part is in nSv; the remainder is in 1/3600 nSv.
      * One accumulator step is 5/18 pSv; keep that fraction exactly. */
     const uint64_t value_picosv_x18 =
         (uint64_t)dose_thousandths * 18000u +
         (uint64_t)dose_fraction * 5u;
-    lcd_format_scaled_sv(value_picosv_x18);
+    lcd_format_scaled_sv(value_picosv_x18, 11u);
 }
 
 static bool lptim_wait_flag(uint32_t flag)
@@ -908,6 +1075,144 @@ static uint8_t lcd_debug_make_line(uint8_t row, char *line)
     return 20u;
 }
 
+#define LCD_SETTINGS_COUNT 20u
+#define LCD_SETTINGS_VISIBLE_ROWS 6u
+#define LCD_SETTINGS_POWER_OFF_ITEM 17u
+#define LCD_SETTINGS_REBOOT_ITEM 18u
+
+static const char *const lcd_settings_labels[LCD_SETTINGS_COUNT] = {
+    "LED", "CLICKS", "SCREEN ALARM", "LIGHT ALARM", "SOUND ALARM", "LED BRIGHT",
+    "SCREEN BRIGHT", "SCREEN TIMER", "LEAD ZERO", "UNIT", "RATE PREFIX",
+    "DOSE PREF", "RATE ROW 2", "USE-SPI", "RESET", "HV", "DOSE ALARM",
+    "POWER OFF", "REBOOT", "CLICK TONE"
+};
+
+static const char *const lcd_settings_values[LCD_SETTINGS_COUNT][11] = {
+    { "OFF", "ON", "ALWAYS", "YELLOW", "RED" },
+    { "OFF", "ON", "ALWAYS", "YELLOW", "RED" },
+    { "OFF", "YELLOW", "RED" },
+    { "OFF", "YELLOW", "RED" },
+    { "OFF", "ON" },
+    { "AUTO", "1%", "3%", "5%", "10%", "25%", "50%", "80%", "100%" },
+    { "AUTO", "1%", "3%", "5%", "10%", "25%", "50%", "80%", "100%" },
+    { "1", "5", "10", "30", "60", "90" },
+    { "SHOW", "HIDE" },
+    { "SV", "CNT", "R" },
+    { "m", "\xB5", "n", "AUTO", "CPM", "CPS" },
+    { "m", "\xB5", "n", "AUTO", "CPM", "CPS" },
+    { "CPM", "CPS", "OFF" },
+    { "OFF", "ON" },
+    { "" },
+    { "ON", "OFF" },
+    { "OFF", "AUTO-Y", "AUTO-R", "5", "7", "10", "30", "50",
+      "100", "500", "1000" },
+    { "" },
+    { "" },
+    { "STOCK", "CLASSIC", "MODERN" }
+};
+
+static const uint8_t lcd_settings_value_counts[LCD_SETTINGS_COUNT] = {
+    5u, 5u, 3u, 3u, 2u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 3u, 2u, 1u, 2u,
+    11u, 1u, 1u, 3u
+};
+
+static uint8_t lcd_settings_value_count(uint8_t item)
+{
+    if (item == 5u || item == 6u) return 9u;
+    if (item == 16u) return 11u;
+    if (item == 10u || item == 11u) {
+        return lcd_settings_value_index[9] == 1u ? 2u : 4u;
+    }
+    return lcd_settings_value_counts[item];
+}
+
+static const char *lcd_settings_value_text(uint8_t item)
+{
+    if ((item == 10u || item == 11u) &&
+        lcd_settings_value_index[9] == 1u) {
+        return lcd_settings_values[item][lcd_settings_value_index[item] + 4u];
+    }
+    return lcd_settings_values[item][lcd_settings_value_index[item]];
+}
+
+static uint8_t lcd_settings_visible_count(void)
+{
+    return (uint8_t)(LCD_SETTINGS_COUNT -
+        (lcd_settings_value_index[9] == 1u ? 1u : 0u));
+}
+
+static uint8_t lcd_settings_visible_to_item(uint8_t visible_index)
+{
+    static const uint8_t item_order[LCD_SETTINGS_COUNT] = {
+        0u, 1u, 2u, 3u, 4u, 16u, 5u, 6u, 7u, 19u,
+        8u, 9u, 10u, 11u, 12u, 15u, 13u, 14u, 17u, 18u
+    };
+    uint8_t visible = 0u;
+
+    for (uint8_t i = 0u; i < LCD_SETTINGS_COUNT; ++i) {
+        const uint8_t item = item_order[i];
+        if (lcd_settings_value_index[9] == 1u && item == 11u) continue;
+        if (visible == visible_index) return item;
+        ++visible;
+    }
+    return LCD_SETTINGS_COUNT;
+}
+
+static uint8_t lcd_settings_item_to_visible(uint8_t item)
+{
+    const uint8_t visible_count = lcd_settings_visible_count();
+
+    for (uint8_t i = 0u; i < visible_count; ++i) {
+        if (lcd_settings_visible_to_item(i) == item) return i;
+    }
+    return 0u;
+}
+
+static uint8_t lcd_settings_first_visible_item(void)
+{
+    const uint8_t selected_visible =
+        lcd_settings_item_to_visible(lcd_settings_selected);
+    uint8_t first = selected_visible > 2u ?
+        (uint8_t)(selected_visible - 2u) : 0u;
+    const uint8_t visible_count = lcd_settings_visible_count();
+    const uint8_t last_first = visible_count > LCD_SETTINGS_VISIBLE_ROWS ?
+        (uint8_t)(visible_count - LCD_SETTINGS_VISIBLE_ROWS) : 0u;
+
+    return first > last_first ? last_first : first;
+}
+
+static uint8_t lcd_settings_make_line(uint8_t visible_row, char *line)
+{
+    const uint8_t first = lcd_settings_first_visible_item();
+    const uint8_t item = lcd_settings_visible_to_item(
+        (uint8_t)(first + visible_row));
+    const char *label;
+    const char *value;
+    uint8_t label_length = 0u;
+    uint8_t value_length = 0u;
+    uint8_t value_start;
+
+    for (uint8_t i = 0u; i < 20u; ++i) line[i] = ' ';
+    if (item >= LCD_SETTINGS_COUNT) return 20u;
+    line[0] = lcd_settings_list_active &&
+        item == lcd_settings_selected ? '>' : ' ';
+    label = lcd_settings_labels[item];
+    value = lcd_settings_value_text(item);
+    while (label[label_length] != '\0' && label_length < 13u) ++label_length;
+    while (value[value_length] != '\0' && value_length < 9u) ++value_length;
+    for (uint8_t i = 0u; i < label_length && i + 1u < 20u; ++i) {
+        line[i + 1u] = label[i];
+    }
+    value_start = value_length < 20u ? (uint8_t)(20u - value_length) : 0u;
+    if (value_start <= label_length + 1u) {
+        value_start = (uint8_t)(label_length + 2u);
+    }
+    for (uint8_t i = 0u; i < value_length && value_start + i < 20u; ++i) {
+        line[value_start + i] = value[i];
+    }
+    return 20u;
+}
+
 static bool lcd_text_prepare_glyph(void)
 {
     if (lcd_screen_page == 2u) {
@@ -1023,6 +1328,62 @@ static bool lcd_text_prepare_glyph(void)
     }
 
     if (lcd_screen_page >= 3u) {
+        if (lcd_screen_page == 3u) {
+            char line[20];
+            uint8_t x_window[4] = { 0u, 0u, 0u, 158u };
+            uint8_t y_window[4];
+
+            if (lcd_text_glyph_index >= LCD_SETTINGS_VISIBLE_ROWS) {
+                lcd_text_active = false;
+                return false;
+            }
+            (void)lcd_settings_make_line(lcd_text_glyph_index, line);
+            y_window[0] = 0u;
+            y_window[1] = (uint8_t)(LCD_Y_OFFSET + 3u +
+                lcd_text_glyph_index * 12u);
+            y_window[2] = 0u;
+            y_window[3] = (uint8_t)(y_window[1] +
+                FONT_SMALL_CELL_HEIGHT - 1u);
+            lcd_text_glyph_pixels = (uint16_t)(159u *
+                FONT_SMALL_CELL_HEIGHT);
+            lcd_text_dma_glyph_advance = 1u;
+            {
+                const uint8_t item = lcd_settings_visible_to_item(
+                    (uint8_t)(lcd_settings_first_visible_item() +
+                        lcd_text_glyph_index));
+                const bool selected_row = lcd_settings_list_active &&
+                    item == lcd_settings_selected;
+                const bool action_item = item == LCD_SETTINGS_POWER_OFF_ITEM ||
+                    item == LCD_SETTINGS_REBOOT_ITEM;
+                const bool warning_item = item == 13u || item == 14u;
+                const uint16_t text_color = warning_item ?
+                    (selected_row ? LCD_TEXT_RED :
+                     LCD_SETTINGS_WARNING_COLOR) :
+                    (action_item ?
+                        (selected_row ? LCD_TEXT_YELLOW :
+                         LCD_SETTINGS_ACTION_COLOR) :
+                        (selected_row ? LCD_SETTINGS_SELECTED_COLOR :
+                         LCD_TEXT_FOREGROUND));
+
+            for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
+                for (uint16_t x = 0u; x < 159u; ++x) {
+                    const uint8_t column = (uint8_t)(x / 8u);
+                    const uint8_t glyph_x = (uint8_t)(x % 8u);
+                    const bool lit = column < 20u &&
+                        glyph_x < FONT_SMALL_CELL_WIDTH &&
+                        font_small_pixel(line[column], glyph_x, y);
+                    lcd_text_glyph[(uint16_t)y * 159u + x] = lit ?
+                        text_color : LCD_TEXT_BACKGROUND;
+                }
+            }
+            }
+            REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
+            lcd_command(0x2Au, x_window, sizeof(x_window));
+            lcd_command(0x2Bu, y_window, sizeof(y_window));
+            lcd_command(0x2Cu, 0, 0u);
+            lcd_text_row_commands_queued = true;
+            return true;
+        }
         if (lcd_screen_page == 4u) {
             char text[24];
             const uint8_t length = lcd_debug_make_line(
@@ -1121,7 +1482,10 @@ static bool lcd_text_prepare_glyph(void)
     {
         const uint8_t rate_label_glyph = (uint8_t)(LCD_RATE_MAX_GLYPHS + 4u);
         const uint8_t cpm_glyph = (uint8_t)(LCD_RATE_MAX_GLYPHS + 5u);
-        const uint8_t last_glyph = lcd_screen_page == 0u ? cpm_glyph :
+        const bool show_cpm_row = lcd_screen_page == 0u &&
+            lcd_settings_value_index[9] != 1u &&
+            lcd_settings_value_index[15] == 0u;
+        const uint8_t last_glyph = show_cpm_row ? cpm_glyph :
             rate_label_glyph;
         uint8_t x_start;
         uint8_t y_start;
@@ -1176,6 +1540,52 @@ static bool lcd_text_prepare_glyph(void)
             return false;
         }
 
+        if (lcd_screen_page == 0u && lcd_settings_value_index[15] == 1u &&
+            lcd_text_glyph_index == 3u) {
+            static const char disabled_text[] = "DISABLED";
+            const uint8_t text_length = sizeof(disabled_text) - 1u;
+            const uint16_t text_width = (uint16_t)(text_length *
+                FONT_SMALL_CELL_WIDTH + (text_length - 1u) *
+                LCD_SMALL_TEXT_GAP);
+            const uint8_t text_x = (uint8_t)((LCD_WIDTH - text_width) / 2u);
+            const uint8_t text_y = (uint8_t)((LCD_HEIGHT -
+                FONT_SMALL_CELL_HEIGHT) / 2u);
+
+            x_window[0] = 0u;
+            x_window[1] = text_x;
+            x_window[2] = 0u;
+            x_window[3] = (uint8_t)(text_x + text_width - 1u);
+            y_window[0] = 0u;
+            y_window[1] = (uint8_t)(LCD_Y_OFFSET + text_y);
+            y_window[2] = 0u;
+            y_window[3] = (uint8_t)(y_window[1] +
+                FONT_SMALL_CELL_HEIGHT - 1u);
+            lcd_text_glyph_pixels = (uint16_t)(text_width *
+                FONT_SMALL_CELL_HEIGHT);
+            lcd_text_dma_glyph_advance =
+                (uint8_t)(rate_label_glyph - lcd_text_glyph_index);
+            for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
+                for (uint16_t x = 0u; x < text_width; ++x) {
+                    const uint8_t column = (uint8_t)(x /
+                        (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
+                    const uint8_t glyph_x = (uint8_t)(x %
+                        (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
+                    const uint16_t pixel =
+                        (uint16_t)y * text_width + x;
+                    lcd_text_glyph[pixel] = column < text_length &&
+                        glyph_x < FONT_SMALL_CELL_WIDTH &&
+                        font_small_pixel(disabled_text[column], glyph_x, y) ?
+                            LCD_COUNTER_RED : LCD_TEXT_BACKGROUND;
+                }
+            }
+            REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
+            lcd_command(0x2Au, x_window, sizeof(x_window));
+            lcd_command(0x2Bu, y_window, sizeof(y_window));
+            lcd_command(0x2Cu, 0, 0u);
+            lcd_text_row_commands_queued = true;
+            return true;
+        }
+
         if (lcd_text_glyph_index == rate_label_glyph) {
             const char *label = lcd_rate_label;
             char dose_label[LCD_DOSE_LABEL_LENGTH + 1u] = {
@@ -1187,9 +1597,18 @@ static bool lcd_text_prepare_glyph(void)
                 LCD_SMALL_TEXT_GAP);
 
             if (lcd_screen_page != 0u) {
-                dose_label[0] = lcd_display_unit_prefix;
-                dose_label[1] = 'S';
-                dose_label[2] = 'v';
+                if (lcd_settings_value_index[9] == 1u) {
+                    dose_label[0] = 'C';
+                    dose_label[1] = 'N';
+                    dose_label[2] = 'T';
+                } else if (lcd_settings_value_index[9] == 2u) {
+                    dose_label[0] = lcd_display_unit_prefix;
+                    dose_label[1] = 'R';
+                } else {
+                    dose_label[0] = lcd_display_unit_prefix;
+                    dose_label[1] = 'S';
+                    dose_label[2] = 'v';
+                }
                 /* Two trailing space glyphs overwrite the old /h pixels. */
                 label = dose_label;
             }
@@ -1239,7 +1658,7 @@ static bool lcd_text_prepare_glyph(void)
             return true;
         }
 
-        if (lcd_text_glyph_index == cpm_glyph && lcd_screen_page == 0u) {
+        if (lcd_text_glyph_index == cpm_glyph && show_cpm_row) {
             const uint16_t text_width = LCD_CPM_TEXT_WIDTH;
             const uint8_t y_start =
             (uint8_t)(LCD_HEIGHT - FONT_SMALL_CELL_HEIGHT - 4u);
@@ -1276,11 +1695,13 @@ static bool lcd_text_prepare_glyph(void)
 
         {
             const uint8_t digit_slot = (uint8_t)(lcd_text_glyph_index - 3u);
-            const bool is_prefix_space = digit_slot == 0u;
-            const uint8_t digit_index = is_prefix_space ? 0u :
-                (uint8_t)(digit_slot - 1u);
-            const uint8_t first_digit = (uint8_t)(LCD_RATE_MAX_GLYPHS -
-                lcd_rate_glyph_count);
+            const bool extended_value =
+                lcd_rate_glyph_count > LCD_RATE_MAX_GLYPHS;
+            const bool is_prefix_space = !extended_value && digit_slot == 0u;
+            const uint8_t digit_index = extended_value ? digit_slot :
+                (is_prefix_space ? 0u : (uint8_t)(digit_slot - 1u));
+            const uint8_t first_digit = extended_value ? 0u :
+                (uint8_t)(LCD_RATE_MAX_GLYPHS - lcd_rate_glyph_count);
             uint16_t text_width = 0u;
             uint16_t glyph_x = (uint16_t)(LCD_RATE_FIELD_X +
                 LCD_RATE_FIELD_WIDTH);
@@ -1294,7 +1715,13 @@ static bool lcd_text_prepare_glyph(void)
                     font_large_glyph_width(lcd_rate_glyphs[i]));
             }
             glyph_x = (uint16_t)(glyph_x - text_width);
-            if (is_prefix_space) {
+            if (extended_value) {
+                glyph_x = (uint16_t)(glyph_x + LCD_RATE_FIELD_X);
+                for (uint8_t i = 0u; i < digit_index; ++i) {
+                    glyph_x = (uint16_t)(glyph_x +
+                        font_large_glyph_width(lcd_rate_glyphs[i]));
+                }
+            } else if (is_prefix_space) {
                 glyph_x = LCD_RATE_FIELD_X;
             } else if (digit_index < first_digit) {
                 glyph_x = (uint16_t)(LCD_RATE_FIELD_X +
@@ -1449,6 +1876,30 @@ void board_display_right_short(void)
     lcd_cpm_redraw_pending = true;
 }
 
+bool board_display_rate_long_press(void)
+{
+    if (lcd_screen_page != 0u || lcd_settings_list_active) return false;
+
+    flashlight_manual_enabled = !flashlight_manual_enabled;
+    flashlight_enabled = flashlight_alarm_override ? flashlight_alarm_output :
+        flashlight_manual_enabled;
+    REG32(GPIOB_BASE + GPIO_BSRR) = flashlight_enabled ?
+        (1u << FLASHLIGHT_PIN) : (1u << (16u + FLASHLIGHT_PIN));
+    return true;
+}
+
+void board_flashlight_alarm_set(bool active, bool on)
+{
+    const bool desired = active ? on : flashlight_manual_enabled;
+
+    flashlight_alarm_override = active;
+    flashlight_alarm_output = on;
+    if (flashlight_enabled == desired) return;
+    flashlight_enabled = desired;
+    REG32(GPIOB_BASE + GPIO_BSRR) = flashlight_enabled ?
+        (1u << FLASHLIGHT_PIN) : (1u << (16u + FLASHLIGHT_PIN));
+}
+
 void board_display_extra_enter(void)
 {
     if (lcd_screen_page >= 2u) {
@@ -1456,6 +1907,7 @@ void board_display_extra_enter(void)
     }
     lcd_main_return_page = lcd_screen_page;
     lcd_screen_page = 2u;
+    lcd_settings_list_active = false;
     lcd_text_active = false;
     lcd_text_row_commands_queued = false;
     lcd_background_pending = true;
@@ -1475,6 +1927,10 @@ void board_display_extra_step(bool forward)
             ((lcd_screen_page - 2u + LCD_EXTRA_SCREEN_COUNT - 1u) %
              LCD_EXTRA_SCREEN_COUNT));
     }
+    lcd_settings_list_active = false;
+    if (lcd_screen_page == 3u) {
+        lcd_settings_selected = 0u;
+    }
     lcd_text_active = false;
     lcd_text_row_commands_queued = false;
     lcd_background_pending = true;
@@ -1487,6 +1943,7 @@ void board_display_extra_exit(void)
         return;
     }
     lcd_screen_page = lcd_main_return_page;
+    lcd_settings_list_active = false;
     if (lcd_screen_page == 0u) {
         lcd_format_rate(lcd_rate_value_thousandths);
     } else {
@@ -1498,14 +1955,837 @@ void board_display_extra_exit(void)
     lcd_cpm_redraw_pending = true;
 }
 
+static void board_display_settings_redraw(void);
+
+#define SETTINGS_EEPROM_LEGACY_SLOT_SIZE 5u
+#define SETTINGS_EEPROM_V2_BASE 16u
+#define SETTINGS_EEPROM_V2_SLOT_SIZE 7u
+#define SETTINGS_EEPROM_V3_BASE 32u
+#define SETTINGS_EEPROM_V3_SLOT_SIZE 9u
+#define SETTINGS_TIMER_EEPROM_BASE 64u
+#define SETTINGS_TIMER_EEPROM_SLOT_SIZE 4u
+#define SETTINGS_ALARM_EEPROM_BASE 80u
+#define SETTINGS_ALARM_EEPROM_SLOT_SIZE 5u
+#define SETTINGS_HV_EEPROM_BASE 96u
+#define SETTINGS_HV_EEPROM_SLOT_SIZE 4u
+#define SETTINGS_LIGHT_ALARM_EEPROM_BASE 104u
+#define SETTINGS_LIGHT_ALARM_EEPROM_SLOT_SIZE 4u
+#define SETTINGS_DOSE_ALARM_EEPROM_BASE 112u
+#define SETTINGS_DOSE_ALARM_EEPROM_SLOT_SIZE 4u
+#define SETTINGS_EEPROM_MAGIC 0xA7u
+#define SETTINGS_EEPROM_V2_MAGIC 0xA8u
+#define SETTINGS_EEPROM_V3_MAGIC 0xA9u
+#define SETTINGS_TIMER_EEPROM_MAGIC 0xB1u
+#define SETTINGS_ALARM_EEPROM_MAGIC 0xB2u
+#define SETTINGS_ALARM_V2_EEPROM_MAGIC 0xB7u
+#define SETTINGS_HV_EEPROM_MAGIC 0xB3u
+#define SETTINGS_LIGHT_ALARM_EEPROM_MAGIC 0xB4u
+#define SETTINGS_DOSE_ALARM_EEPROM_MAGIC 0xB5u
+
+static uint8_t settings_record_crc(uint8_t sequence, uint8_t lead_zero,
+                                   uint8_t unit, uint8_t rate_prefix,
+                                   uint8_t dose_prefix)
+{
+    return (uint8_t)(0x5Du ^ sequence ^ lead_zero ^ unit ^
+        (rate_prefix * 17u) ^ (dose_prefix * 31u));
+}
+
+static bool settings_v2_record_read(uint8_t slot, uint8_t *sequence,
+                                    uint8_t *lead_zero, uint8_t *unit,
+                                    uint8_t *rate_prefix, uint8_t *dose_prefix)
+{
+    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + SETTINGS_EEPROM_V2_BASE +
+        slot * SETTINGS_EEPROM_V2_SLOT_SIZE);
+    const uint8_t magic = record[0];
+    *sequence = record[1];
+    *lead_zero = record[2];
+    *unit = record[3];
+    *rate_prefix = record[4];
+    *dose_prefix = record[5];
+    return magic == SETTINGS_EEPROM_V2_MAGIC && *lead_zero < 2u &&
+        *unit < 3u && *rate_prefix < (*unit == 1u ? 2u : 4u) &&
+        *dose_prefix < (*unit == 1u ? 2u : 4u) &&
+        record[6] == settings_record_crc(*sequence, *lead_zero, *unit,
+            *rate_prefix, *dose_prefix);
+}
+
+static uint8_t settings_v3_crc(uint8_t sequence, uint8_t lead_zero,
+                               uint8_t unit, uint8_t rate_prefix,
+                               uint8_t dose_prefix, uint8_t led_brightness,
+                               uint8_t screen_brightness)
+{
+    return (uint8_t)(settings_record_crc(sequence, lead_zero, unit,
+        rate_prefix, dose_prefix) ^ (led_brightness * 13u) ^
+        (screen_brightness * 23u));
+}
+
+static bool settings_v3_record_read(uint8_t slot, uint8_t *sequence,
+                                    uint8_t *lead_zero, uint8_t *unit,
+                                    uint8_t *rate_prefix, uint8_t *dose_prefix,
+                                    uint8_t *led_brightness,
+                                    uint8_t *screen_brightness)
+{
+    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + SETTINGS_EEPROM_V3_BASE +
+        slot * SETTINGS_EEPROM_V3_SLOT_SIZE);
+    *sequence = record[1];
+    *lead_zero = record[2];
+    *unit = record[3];
+    *rate_prefix = record[4];
+    *dose_prefix = record[5];
+    *led_brightness = record[6];
+    *screen_brightness = record[7];
+    return record[0] == SETTINGS_EEPROM_V3_MAGIC && *lead_zero < 2u &&
+        *unit < 3u && *rate_prefix < (*unit == 1u ? 2u : 4u) &&
+        *dose_prefix < (*unit == 1u ? 2u : 4u) &&
+        *led_brightness < 9u && *screen_brightness < 9u &&
+        record[8] == settings_v3_crc(*sequence, *lead_zero, *unit,
+            *rate_prefix, *dose_prefix, *led_brightness, *screen_brightness);
+}
+
+static bool settings_legacy_record_read(uint8_t slot, uint8_t *sequence,
+                                        uint8_t *lead_zero, uint8_t *unit)
+{
+    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + slot * SETTINGS_EEPROM_LEGACY_SLOT_SIZE);
+    *sequence = record[1];
+    *lead_zero = record[2];
+    *unit = record[3];
+    return record[0] == SETTINGS_EEPROM_MAGIC && *lead_zero < 2u &&
+        *unit < 3u && record[4] == (uint8_t)(0x5Du ^ *sequence ^
+            *lead_zero ^ *unit);
+}
+
+static bool settings_eeprom_write_byte(uint8_t offset, uint8_t value)
+{
+    volatile uint8_t *address = (volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + offset);
+    uint32_t timeout = 1000000u;
+
+    while ((FLASH_SR & FLASH_SR_BSY) != 0u && --timeout != 0u) { }
+    if (timeout == 0u) return false;
+    if ((FLASH_PECR & FLASH_PECR_PELOCK) != 0u) {
+        FLASH_PEKEYR = 0x89ABCDEFu;
+        FLASH_PEKEYR = 0x02030405u;
+    }
+    if ((FLASH_PECR & FLASH_PECR_PELOCK) != 0u) return false;
+    FLASH_PECR = FLASH_PECR_DATA;
+    *address = value;
+    timeout = 1000000u;
+    while ((FLASH_SR & FLASH_SR_BSY) != 0u && --timeout != 0u) { }
+    FLASH_PECR |= FLASH_PECR_PELOCK;
+    return timeout != 0u && *address == value;
+}
+
+#define SETTINGS_CLICKS_EEPROM_BASE 120u
+#define SETTINGS_CLICKS_MAGIC 0xB6u
+#define SETTINGS_CLICK_TONE_EEPROM_BASE 124u
+#define SETTINGS_CLICK_TONE_MAGIC 0xB8u
+
+static void settings_clicks_load(void)
+{
+    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + SETTINGS_CLICKS_EEPROM_BASE);
+    if (record[0] == SETTINGS_CLICKS_MAGIC && record[1] < 5u &&
+        record[2] == (uint8_t)(0x6Du ^ record[1])) {
+        lcd_settings_value_index[1] = record[1];
+    }
+}
+
+static void settings_clicks_save(void)
+{
+    const uint8_t value = lcd_settings_value_index[1];
+    if (!settings_eeprom_write_byte(SETTINGS_CLICKS_EEPROM_BASE, 0u) ||
+        !settings_eeprom_write_byte(SETTINGS_CLICKS_EEPROM_BASE + 1u, value) ||
+        !settings_eeprom_write_byte(SETTINGS_CLICKS_EEPROM_BASE + 2u,
+            (uint8_t)(0x6Du ^ value))) return;
+    (void)settings_eeprom_write_byte(SETTINGS_CLICKS_EEPROM_BASE,
+        SETTINGS_CLICKS_MAGIC);
+}
+
+static void settings_click_tone_load(void)
+{
+    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + SETTINGS_CLICK_TONE_EEPROM_BASE);
+    if (record[0] == SETTINGS_CLICK_TONE_MAGIC && record[1] < 3u &&
+        record[2] == (uint8_t)(0x73u ^ record[1])) {
+        /* Stored value 1 was MODERN; 2 is CLASSIC. Keep its meaning after
+         * swapping their positions in the menu. */
+        lcd_settings_value_index[19] = record[1] == 1u ? 2u :
+            (record[1] == 2u ? 1u : 0u);
+    }
+}
+
+static void settings_click_tone_save(void)
+{
+    const uint8_t selected = lcd_settings_value_index[19];
+    const uint8_t value = selected == 1u ? 2u :
+        (selected == 2u ? 1u : 0u);
+    if (!settings_eeprom_write_byte(SETTINGS_CLICK_TONE_EEPROM_BASE, 0u) ||
+        !settings_eeprom_write_byte(SETTINGS_CLICK_TONE_EEPROM_BASE + 1u,
+            value) ||
+        !settings_eeprom_write_byte(SETTINGS_CLICK_TONE_EEPROM_BASE + 2u,
+            (uint8_t)(0x73u ^ value))) return;
+    (void)settings_eeprom_write_byte(SETTINGS_CLICK_TONE_EEPROM_BASE,
+        SETTINGS_CLICK_TONE_MAGIC);
+}
+
+static bool settings_timer_record_read(uint8_t slot, uint8_t *sequence,
+                                       uint8_t *timer_index)
+{
+    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + SETTINGS_TIMER_EEPROM_BASE +
+        slot * SETTINGS_TIMER_EEPROM_SLOT_SIZE);
+    *sequence = record[1];
+    *timer_index = record[2];
+    return record[0] == SETTINGS_TIMER_EEPROM_MAGIC && *timer_index < 6u &&
+        record[3] == (uint8_t)(0x6Bu ^ *sequence ^ (*timer_index * 29u));
+}
+
+static void settings_timer_load(void)
+{
+    uint8_t seq0, timer0, seq1, timer1;
+    const bool valid0 = settings_timer_record_read(0u, &seq0, &timer0);
+    const bool valid1 = settings_timer_record_read(1u, &seq1, &timer1);
+
+    if (valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0)) {
+        lcd_timer_sequence = seq1;
+        lcd_settings_value_index[7] = timer1;
+    } else if (valid0) {
+        lcd_timer_sequence = seq0;
+        lcd_settings_value_index[7] = timer0;
+    }
+}
+
+static bool settings_timer_save(void)
+{
+    uint8_t seq0, timer0, seq1, timer1;
+    const bool valid0 = settings_timer_record_read(0u, &seq0, &timer0);
+    const bool valid1 = settings_timer_record_read(1u, &seq1, &timer1);
+    const uint8_t current_slot = valid1 &&
+        (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
+    const uint8_t target_slot = (valid0 || valid1) ?
+        (uint8_t)(current_slot ^ 1u) : 0u;
+    const uint8_t sequence = (uint8_t)(lcd_timer_sequence + 1u);
+    const uint8_t timer_index = lcd_settings_value_index[7];
+    const uint8_t base = (uint8_t)(SETTINGS_TIMER_EEPROM_BASE +
+        target_slot * SETTINGS_TIMER_EEPROM_SLOT_SIZE);
+
+    if (!settings_eeprom_write_byte(base, 0u) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 1u), sequence) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 2u), timer_index) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 3u),
+            (uint8_t)(0x6Bu ^ sequence ^ (timer_index * 29u))) ||
+        !settings_eeprom_write_byte(base, SETTINGS_TIMER_EEPROM_MAGIC)) {
+        return false;
+    }
+    lcd_timer_sequence = sequence;
+    return true;
+}
+
+static bool settings_alarm_record_read(uint8_t slot, uint8_t *sequence,
+                                       uint8_t *led_mode,
+                                       uint8_t *screen_alarm)
+{
+    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + SETTINGS_ALARM_EEPROM_BASE +
+        slot * SETTINGS_ALARM_EEPROM_SLOT_SIZE);
+    *sequence = record[1];
+    *led_mode = record[2];
+    *screen_alarm = record[3];
+    if (*screen_alarm >= 3u || record[4] != (uint8_t)(0x39u ^ *sequence ^
+        (*led_mode * 17u) ^ (*screen_alarm * 29u))) return false;
+    if (record[0] == SETTINGS_ALARM_V2_EEPROM_MAGIC) return *led_mode < 5u;
+    if (record[0] == SETTINGS_ALARM_EEPROM_MAGIC && *led_mode < 3u) {
+        /* Migrate old order ALWAYS/ON/OFF to OFF/ON/ALWAYS. */
+        *led_mode = *led_mode == 0u ? 2u :
+            (*led_mode == 2u ? 0u : 1u);
+        return true;
+    }
+    return false;
+}
+
+static void settings_alarm_load(void)
+{
+    uint8_t seq0, led0, alarm0, seq1, led1, alarm1;
+    const bool valid0 = settings_alarm_record_read(0u, &seq0, &led0, &alarm0);
+    const bool valid1 = settings_alarm_record_read(1u, &seq1, &led1, &alarm1);
+
+    if (valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0)) {
+        lcd_alarm_sequence = seq1;
+        lcd_settings_value_index[0] = led1;
+        lcd_settings_value_index[2] = alarm1;
+    } else if (valid0) {
+        lcd_alarm_sequence = seq0;
+        lcd_settings_value_index[0] = led0;
+        lcd_settings_value_index[2] = alarm0;
+    }
+}
+
+static bool settings_alarm_save(void)
+{
+    uint8_t seq0, led0, alarm0, seq1, led1, alarm1;
+    const bool valid0 = settings_alarm_record_read(0u, &seq0, &led0, &alarm0);
+    const bool valid1 = settings_alarm_record_read(1u, &seq1, &led1, &alarm1);
+    const uint8_t current_slot = valid1 &&
+        (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
+    const uint8_t target_slot = (valid0 || valid1) ?
+        (uint8_t)(current_slot ^ 1u) : 0u;
+    const uint8_t sequence = (uint8_t)(lcd_alarm_sequence + 1u);
+    const uint8_t led_mode = lcd_settings_value_index[0];
+    const uint8_t screen_alarm = lcd_settings_value_index[2];
+    const uint8_t base = (uint8_t)(SETTINGS_ALARM_EEPROM_BASE +
+        target_slot * SETTINGS_ALARM_EEPROM_SLOT_SIZE);
+
+    if (!settings_eeprom_write_byte(base, 0u) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 1u), sequence) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 2u), led_mode) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 3u), screen_alarm) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 4u),
+            (uint8_t)(0x39u ^ sequence ^ (led_mode * 17u) ^
+                (screen_alarm * 29u))) ||
+        !settings_eeprom_write_byte(base, SETTINGS_ALARM_V2_EEPROM_MAGIC)) {
+        return false;
+    }
+    lcd_alarm_sequence = sequence;
+    return true;
+}
+
+static bool settings_hv_record_read(uint8_t slot, uint8_t *sequence,
+                                    uint8_t *hv_mode)
+{
+    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + SETTINGS_HV_EEPROM_BASE +
+        slot * SETTINGS_HV_EEPROM_SLOT_SIZE);
+    *sequence = record[1];
+    *hv_mode = record[2];
+    return record[0] == SETTINGS_HV_EEPROM_MAGIC && *hv_mode < 2u &&
+        record[3] == (uint8_t)(0xC7u ^ *sequence ^ (*hv_mode * 53u));
+}
+
+static void settings_hv_load(void)
+{
+    uint8_t seq0, hv0, seq1, hv1;
+    const bool valid0 = settings_hv_record_read(0u, &seq0, &hv0);
+    const bool valid1 = settings_hv_record_read(1u, &seq1, &hv1);
+
+    if (valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0)) {
+        lcd_hv_sequence = seq1;
+        lcd_settings_value_index[15] = hv1;
+    } else if (valid0) {
+        lcd_hv_sequence = seq0;
+        lcd_settings_value_index[15] = hv0;
+    }
+}
+
+static bool settings_hv_save(void)
+{
+    uint8_t seq0, hv0, seq1, hv1;
+    const bool valid0 = settings_hv_record_read(0u, &seq0, &hv0);
+    const bool valid1 = settings_hv_record_read(1u, &seq1, &hv1);
+    const uint8_t current_slot = valid1 &&
+        (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
+    const uint8_t target_slot = (valid0 || valid1) ?
+        (uint8_t)(current_slot ^ 1u) : 0u;
+    const uint8_t sequence = (uint8_t)(lcd_hv_sequence + 1u);
+    const uint8_t hv_mode = lcd_settings_value_index[15];
+    const uint8_t base = (uint8_t)(SETTINGS_HV_EEPROM_BASE +
+        target_slot * SETTINGS_HV_EEPROM_SLOT_SIZE);
+
+    if (!settings_eeprom_write_byte(base, 0u) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 1u), sequence) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 2u), hv_mode) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 3u),
+            (uint8_t)(0xC7u ^ sequence ^ (hv_mode * 53u))) ||
+        !settings_eeprom_write_byte(base, SETTINGS_HV_EEPROM_MAGIC)) {
+        return false;
+    }
+    lcd_hv_sequence = sequence;
+    return true;
+}
+
+static bool settings_light_alarm_record_read(uint8_t slot,
+                                             uint8_t *sequence,
+                                             uint8_t *mode)
+{
+    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + SETTINGS_LIGHT_ALARM_EEPROM_BASE +
+        slot * SETTINGS_LIGHT_ALARM_EEPROM_SLOT_SIZE);
+    *sequence = record[1];
+    *mode = record[2];
+    return record[0] == SETTINGS_LIGHT_ALARM_EEPROM_MAGIC && *mode < 3u &&
+        record[3] == (uint8_t)(0x5Du ^ *sequence ^ (*mode * 37u));
+}
+
+static void settings_light_alarm_load(void)
+{
+    uint8_t seq0, mode0, seq1, mode1;
+    const bool valid0 = settings_light_alarm_record_read(0u, &seq0, &mode0);
+    const bool valid1 = settings_light_alarm_record_read(1u, &seq1, &mode1);
+
+    if (valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0)) {
+        lcd_light_alarm_sequence = seq1;
+        lcd_settings_value_index[3] = mode1;
+    } else if (valid0) {
+        lcd_light_alarm_sequence = seq0;
+        lcd_settings_value_index[3] = mode0;
+    }
+}
+
+static bool settings_light_alarm_save(void)
+{
+    uint8_t seq0, mode0, seq1, mode1;
+    const bool valid0 = settings_light_alarm_record_read(0u, &seq0, &mode0);
+    const bool valid1 = settings_light_alarm_record_read(1u, &seq1, &mode1);
+    const uint8_t current_slot = valid1 &&
+        (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
+    const uint8_t target_slot = (valid0 || valid1) ?
+        (uint8_t)(current_slot ^ 1u) : 0u;
+    const uint8_t sequence = (uint8_t)(lcd_light_alarm_sequence + 1u);
+    const uint8_t mode = lcd_settings_value_index[3];
+    const uint8_t base = (uint8_t)(SETTINGS_LIGHT_ALARM_EEPROM_BASE +
+        target_slot * SETTINGS_LIGHT_ALARM_EEPROM_SLOT_SIZE);
+
+    if (!settings_eeprom_write_byte(base, 0u) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 1u), sequence) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 2u), mode) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 3u),
+            (uint8_t)(0x5Du ^ sequence ^ (mode * 37u))) ||
+        !settings_eeprom_write_byte(base, SETTINGS_LIGHT_ALARM_EEPROM_MAGIC)) {
+        return false;
+    }
+    lcd_light_alarm_sequence = sequence;
+    return true;
+}
+
+static bool settings_dose_alarm_record_read(uint8_t slot,
+                                            uint8_t *sequence,
+                                            uint8_t *mode)
+{
+    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + SETTINGS_DOSE_ALARM_EEPROM_BASE +
+        slot * SETTINGS_DOSE_ALARM_EEPROM_SLOT_SIZE);
+    *sequence = record[1];
+    *mode = record[2];
+    return record[0] == SETTINGS_DOSE_ALARM_EEPROM_MAGIC && *mode < 11u &&
+        record[3] == (uint8_t)(0xA3u ^ *sequence ^ (*mode * 23u));
+}
+
+static void settings_dose_alarm_load(void)
+{
+    uint8_t seq0, mode0, seq1, mode1;
+    const bool valid0 = settings_dose_alarm_record_read(0u, &seq0, &mode0);
+    const bool valid1 = settings_dose_alarm_record_read(1u, &seq1, &mode1);
+
+    if (valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0)) {
+        lcd_dose_alarm_sequence = seq1;
+        lcd_settings_value_index[16] = mode1;
+    } else if (valid0) {
+        lcd_dose_alarm_sequence = seq0;
+        lcd_settings_value_index[16] = mode0;
+    }
+}
+
+static bool settings_dose_alarm_save(void)
+{
+    uint8_t seq0, mode0, seq1, mode1;
+    const bool valid0 = settings_dose_alarm_record_read(0u, &seq0, &mode0);
+    const bool valid1 = settings_dose_alarm_record_read(1u, &seq1, &mode1);
+    const uint8_t current_slot = valid1 &&
+        (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
+    const uint8_t target_slot = (valid0 || valid1) ?
+        (uint8_t)(current_slot ^ 1u) : 0u;
+    const uint8_t sequence = (uint8_t)(lcd_dose_alarm_sequence + 1u);
+    const uint8_t mode = lcd_settings_value_index[16];
+    const uint8_t base = (uint8_t)(SETTINGS_DOSE_ALARM_EEPROM_BASE +
+        target_slot * SETTINGS_DOSE_ALARM_EEPROM_SLOT_SIZE);
+
+    if (!settings_eeprom_write_byte(base, 0u) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 1u), sequence) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 2u), mode) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 3u),
+            (uint8_t)(0xA3u ^ sequence ^ (mode * 23u))) ||
+        !settings_eeprom_write_byte(base, SETTINGS_DOSE_ALARM_EEPROM_MAGIC)) {
+        return false;
+    }
+    lcd_dose_alarm_sequence = sequence;
+    return true;
+}
+
+static void settings_eeprom_load(void)
+{
+    uint8_t seq0, lead0, unit0, rate0, dose0, led0, screen0;
+    uint8_t seq1, lead1, unit1, rate1, dose1, led1, screen1;
+    bool valid0 = settings_v3_record_read(0u, &seq0, &lead0, &unit0,
+        &rate0, &dose0, &led0, &screen0);
+    bool valid1 = settings_v3_record_read(1u, &seq1, &lead1, &unit1,
+        &rate1, &dose1, &led1, &screen1);
+    uint8_t slot;
+
+    if (valid0 || valid1) {
+        slot = valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
+        if (slot == 0u) {
+            lcd_settings_sequence = seq0;
+            lcd_settings_value_index[8] = lead0;
+            lcd_settings_value_index[9] = unit0;
+            lcd_settings_value_index[10] = rate0;
+            lcd_settings_value_index[11] = dose0;
+            lcd_settings_value_index[5] = led0;
+            lcd_settings_value_index[6] = screen0;
+        } else {
+            lcd_settings_sequence = seq1;
+            lcd_settings_value_index[8] = lead1;
+            lcd_settings_value_index[9] = unit1;
+            lcd_settings_value_index[10] = rate1;
+            lcd_settings_value_index[11] = dose1;
+            lcd_settings_value_index[5] = led1;
+            lcd_settings_value_index[6] = screen1;
+        }
+        return;
+    }
+    valid0 = settings_v2_record_read(0u, &seq0, &lead0, &unit0,
+                                     &rate0, &dose0);
+    valid1 = settings_v2_record_read(1u, &seq1, &lead1, &unit1,
+                                     &rate1, &dose1);
+    if (valid0 || valid1) {
+        slot = valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
+        if (slot == 0u) {
+            lcd_settings_sequence = seq0;
+            lcd_settings_value_index[8] = lead0;
+            lcd_settings_value_index[9] = unit0;
+            lcd_settings_value_index[10] = rate0;
+            lcd_settings_value_index[11] = dose0;
+        } else {
+            lcd_settings_sequence = seq1;
+            lcd_settings_value_index[8] = lead1;
+            lcd_settings_value_index[9] = unit1;
+            lcd_settings_value_index[10] = rate1;
+            lcd_settings_value_index[11] = dose1;
+        }
+        return;
+    }
+    /* Migrate values written by the original two-option settings record. */
+    if (settings_legacy_record_read(0u, &seq0, &lead0, &unit0) ||
+        settings_legacy_record_read(1u, &seq1, &lead1, &unit1)) {
+        if (settings_legacy_record_read(1u, &seq1, &lead1, &unit1) &&
+            (!settings_legacy_record_read(0u, &seq0, &lead0, &unit0) ||
+             (int8_t)(seq1 - seq0) > 0)) {
+            lcd_settings_sequence = seq1;
+            lcd_settings_value_index[8] = lead1;
+            lcd_settings_value_index[9] = unit1;
+        } else {
+            lcd_settings_sequence = seq0;
+            lcd_settings_value_index[8] = lead0;
+            lcd_settings_value_index[9] = unit0;
+        }
+        lcd_settings_value_index[10] =
+            lcd_settings_value_index[9] == 1u ? 0u : 1u;
+        lcd_settings_value_index[11] = lcd_settings_value_index[10];
+    }
+}
+
+static bool settings_eeprom_save(void)
+{
+    uint8_t seq0, lead0, unit0, rate0, dose0, led0, screen0;
+    uint8_t seq1, lead1, unit1, rate1, dose1, led1, screen1;
+    const bool valid0 = settings_v3_record_read(0u, &seq0, &lead0, &unit0,
+        &rate0, &dose0, &led0, &screen0);
+    const bool valid1 = settings_v3_record_read(1u, &seq1, &lead1, &unit1,
+        &rate1, &dose1, &led1, &screen1);
+    const uint8_t current_slot = valid1 &&
+        (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
+    const uint8_t target_slot =
+        (valid0 || valid1) ? (uint8_t)(current_slot ^ 1u) : 0u;
+    const uint8_t sequence = (uint8_t)(lcd_settings_sequence + 1u);
+    const uint8_t lead_zero = lcd_settings_value_index[8];
+    const uint8_t unit = lcd_settings_value_index[9];
+    const uint8_t rate_prefix = lcd_settings_value_index[10];
+    const uint8_t dose_prefix = lcd_settings_value_index[11];
+    const uint8_t led_brightness = lcd_settings_value_index[5];
+    const uint8_t screen_brightness = lcd_settings_value_index[6];
+    const uint8_t base = (uint8_t)(SETTINGS_EEPROM_V3_BASE +
+        target_slot * SETTINGS_EEPROM_V3_SLOT_SIZE);
+
+    if (!settings_eeprom_write_byte(base, 0u) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 1u), sequence) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 2u), lead_zero) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 3u), unit) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 4u), rate_prefix) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 5u), dose_prefix) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 6u),
+            led_brightness) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 7u), screen_brightness) ||
+        !settings_eeprom_write_byte((uint8_t)(base + 8u),
+            settings_v3_crc(sequence, lead_zero, unit, rate_prefix,
+                dose_prefix, led_brightness, screen_brightness)) ||
+        !settings_eeprom_write_byte(base, SETTINGS_EEPROM_V3_MAGIC)) {
+        return false;
+    }
+    lcd_settings_sequence = sequence;
+    return true;
+}
+
+bool board_display_settings_list_active(void)
+{
+    return lcd_screen_page == 3u && lcd_settings_list_active;
+}
+
+uint32_t board_display_screen_timeout_ms(void)
+{
+    static const uint8_t timeout_seconds[] = { 1u, 5u, 10u, 30u, 60u, 90u };
+    return (uint32_t)timeout_seconds[lcd_settings_value_index[7]] * 1000u;
+}
+
+bool board_display_led_flash_enabled(bool screen_on)
+{
+    const uint8_t mode = lcd_settings_value_index[0];
+    if (mode == 1u) return screen_on;
+    if (mode == 2u) return true;
+    if (mode == 3u) return lcd_rate_color == LCD_COUNTER_YELLOW ||
+        lcd_rate_color == LCD_COUNTER_RED;
+    if (mode == 4u) return lcd_rate_color == LCD_COUNTER_RED;
+    return false;
+}
+
+bool board_display_click_sound_enabled(bool screen_on)
+{
+    const uint8_t mode = lcd_settings_value_index[1];
+    if (mode == 1u) return screen_on;
+    if (mode == 2u) return true;
+    if (mode == 3u) return lcd_rate_color == LCD_COUNTER_YELLOW ||
+        lcd_rate_color == LCD_COUNTER_RED;
+    if (mode == 4u) return lcd_rate_color == LCD_COUNTER_RED;
+    return false;
+}
+
+static void board_click_sound_stop(void)
+{
+    uint32_t compare = ((uint32_t)rgb_brightness_percent * PWM_PERIOD) / 100u;
+    REG32(TIM2_BASE + TIM_CCER) &= ~(1u << 12u);
+    REG32(TIM2_BASE + TIM_CCR4) = 0u;
+    REG32(TIM2_BASE + TIM_PSC) = 0u;
+    REG32(TIM2_BASE + TIM_ARR) = PWM_PERIOD - 1u;
+    REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) ? compare : 0u;
+    REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) ? compare : 0u;
+    REG32(TIM2_BASE + TIM_EGR) = 1u;
+    REG32(GPIOA_BASE + GPIO_MODER) &= ~(3u << 6u);
+    pin_input_with_pull(GPIOA_BASE, BOARD_BUTTON_RIGHT_PIN);
+    click_sound_active = false;
+    click_sound_stage = 0u;
+}
+
+void board_click_sound_start(void)
+{
+    uint32_t compare = ((uint32_t)rgb_brightness_percent * 311u) / 100u;
+    if (compare > 310u) compare = 310u;
+    REG32(GPIOA_BASE + GPIO_PUPDR) &= ~(3u << 6u);
+    REG32(GPIOA_BASE + GPIO_OTYPER) &= ~(1u << 3u);
+    REG32(GPIOA_BASE + GPIO_OSPEEDR) &= ~(3u << 6u);
+    REG32(GPIOA_BASE + GPIO_AFRL) =
+        (REG32(GPIOA_BASE + GPIO_AFRL) & ~(0xFu << 12u)) | (2u << 12u);
+    REG32(GPIOA_BASE + GPIO_MODER) =
+        (REG32(GPIOA_BASE + GPIO_MODER) & ~(3u << 6u)) | (2u << 6u);
+
+    click_sound_profile = lcd_settings_value_index[19];
+    click_sound_stage = 0u;
+    REG32(TIM2_BASE + TIM_PSC) = 22u;
+    REG32(TIM2_BASE + TIM_ARR) = 310u;
+    REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) ? compare : 0u;
+    REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) ? compare : 0u;
+    REG32(TIM2_BASE + TIM_CCMR2) =
+        (REG32(TIM2_BASE + TIM_CCMR2) & ~(0xFFu << 8u)) |
+        (6u << 12u) | (1u << 11u); /* CH4 PWM1, preload enabled. */
+    REG32(TIM2_BASE + TIM_CCR4) = 50u;
+    REG32(TIM2_BASE + TIM_EGR) = 1u;
+    REG32(TIM2_BASE + TIM_CNT) = 0u;
+    REG32(TIM2_BASE + TIM_CCER) |= 1u << 12u;
+    click_sound_deadline = board_millis +
+        (click_sound_profile == 2u ? 4u :
+            (click_sound_profile == 1u ? 2u : 38u));
+    click_sound_active = true;
+}
+
+void board_click_sound_service(void)
+{
+    if (click_sound_active &&
+        (int32_t)(board_millis - click_sound_deadline) >= 0) {
+        if (click_sound_profile != 2u || click_sound_stage >= 2u) {
+            board_click_sound_stop();
+        } else if (click_sound_stage == 0u) {
+            REG32(TIM2_BASE + TIM_CCR4) = 0u;
+            REG32(TIM2_BASE + TIM_EGR) = 1u;
+            click_sound_stage = 1u;
+            click_sound_deadline += 2u;
+        } else {
+            REG32(TIM2_BASE + TIM_PSC) = 31u;
+            REG32(TIM2_BASE + TIM_CCR4) = 50u;
+            REG32(TIM2_BASE + TIM_EGR) = 1u;
+            click_sound_stage = 2u;
+            click_sound_deadline += 8u;
+        }
+    }
+}
+
+bool board_display_screen_alarm_active(void)
+{
+    const uint8_t mode = lcd_settings_value_index[2];
+    if (lcd_settings_value_index[15] != 0u) return false;
+    if (mode == 0u) return false;
+    const bool rate_alarm = mode == 1u ?
+        (lcd_rate_color == LCD_COUNTER_YELLOW ||
+         lcd_rate_color == LCD_COUNTER_RED) :
+        (mode == 2u && lcd_rate_color == LCD_COUNTER_RED);
+    return rate_alarm || board_display_dose_alarm_active();
+}
+
+bool board_display_light_alarm_active(void)
+{
+    const uint8_t mode = lcd_settings_value_index[3];
+    if (lcd_settings_value_index[15] != 0u) return false;
+    if (mode == 0u) return false;
+    const bool rate_alarm = mode == 1u ?
+        (lcd_rate_color == LCD_COUNTER_YELLOW ||
+         lcd_rate_color == LCD_COUNTER_RED) :
+        (mode == 2u && lcd_rate_color == LCD_COUNTER_RED);
+    return rate_alarm || board_display_dose_alarm_active();
+}
+
+bool board_display_dose_alarm_active(void)
+{
+    static const uint16_t fixed_threshold_micro_sv[] = {
+        0u, 0u, 0u, 5u, 7u, 10u, 30u, 50u, 100u, 500u, 1000u
+    };
+    const uint8_t mode = lcd_settings_value_index[16];
+    const uint64_t actual_nsv_x3600 =
+        (uint64_t)lcd_dose_value_thousandths * 3600u + lcd_dose_fraction;
+    uint64_t threshold_nsv_x3600;
+
+    if (mode == 0u) return false;
+    if (mode == 1u || mode == 2u) {
+        if (lcd_dose_measurement_seconds == 0u) return false;
+        threshold_nsv_x3600 = (uint64_t)(mode == 1u ? 400u : 900u) *
+            lcd_dose_measurement_seconds;
+    } else {
+        threshold_nsv_x3600 =
+            (uint64_t)fixed_threshold_micro_sv[mode] * 1000u * 3600u;
+    }
+    return actual_nsv_x3600 >= threshold_nsv_x3600;
+}
+
+void board_display_settings_list_activate(void)
+{
+    if (lcd_screen_page != 3u || lcd_settings_list_active) return;
+    lcd_settings_selected = 0u;
+    lcd_settings_list_active = true;
+    board_display_settings_redraw();
+}
+
+static void board_display_settings_redraw(void)
+{
+    lcd_settings_redraw_pending = true;
+}
+
+void board_display_settings_move(bool forward)
+{
+    if (!board_display_settings_list_active()) return;
+    {
+        const uint8_t visible_count = lcd_settings_visible_count();
+        uint8_t visible = lcd_settings_item_to_visible(lcd_settings_selected);
+        visible = forward ? (uint8_t)((visible + 1u) % visible_count) :
+            (uint8_t)((visible + visible_count - 1u) % visible_count);
+        lcd_settings_selected = lcd_settings_visible_to_item(visible);
+    }
+    board_display_settings_redraw();
+}
+
+void board_display_settings_change(void)
+{
+    if (!board_display_settings_list_active()) return;
+    if (lcd_settings_selected == LCD_SETTINGS_POWER_OFF_ITEM) {
+        board_power_off();
+        return;
+    }
+    if (lcd_settings_selected == LCD_SETTINGS_REBOOT_ITEM) {
+        board_reboot();
+        return;
+    }
+    if (lcd_settings_value_count(lcd_settings_selected) > 1u) {
+        lcd_settings_value_index[lcd_settings_selected] = (uint8_t)(
+            (lcd_settings_value_index[lcd_settings_selected] + 1u) %
+            lcd_settings_value_count(lcd_settings_selected));
+        if (lcd_settings_selected == 9u) {
+            const uint8_t prefix_default =
+                lcd_settings_value_index[9] == 1u ? 0u : 1u;
+            lcd_settings_value_index[10] = prefix_default;
+            lcd_settings_value_index[11] = prefix_default;
+        }
+        if (lcd_settings_selected >= 8u && lcd_settings_selected <= 11u) {
+            (void)settings_eeprom_save();
+            if (lcd_screen_page == 0u) {
+                lcd_format_rate(lcd_rate_value_thousandths);
+            } else if (lcd_screen_page == 1u) {
+                lcd_format_dose(lcd_dose_value_thousandths, lcd_dose_fraction);
+            }
+            lcd_cpm_redraw_pending = true;
+        }
+        if (lcd_settings_selected == 5u || lcd_settings_selected == 6u) {
+            (void)settings_eeprom_save();
+            lcd_apply_brightness_settings();
+        }
+        if (lcd_settings_selected == 7u) {
+            (void)settings_timer_save();
+        }
+        if (lcd_settings_selected == 1u) {
+            settings_clicks_save();
+        }
+        if (lcd_settings_selected == 19u) {
+            settings_click_tone_save();
+        }
+        if (lcd_settings_selected == 0u || lcd_settings_selected == 2u) {
+            (void)settings_alarm_save();
+        }
+        if (lcd_settings_selected == 3u) {
+            (void)settings_light_alarm_save();
+        }
+        if (lcd_settings_selected == 16u) {
+            (void)settings_dose_alarm_save();
+        }
+        if (lcd_settings_selected == 15u) {
+            board_hv_set_enabled(lcd_settings_value_index[15] == 0u);
+            (void)settings_hv_save();
+            if (lcd_settings_value_index[15] == 0u) {
+                lcd_rate_value_thousandths = 0u;
+                lcd_current_cpm = 0u;
+                lcd_format_rate(0u);
+                lcd_format_cpm(0u);
+            }
+            lcd_text_active = false;
+            lcd_text_row_commands_queued = false;
+            lcd_background_pending = true;
+            lcd_cpm_redraw_pending = true;
+        }
+        board_display_settings_redraw();
+    }
+}
+
+void board_display_settings_list_exit(void)
+{
+    if (!board_display_settings_list_active()) return;
+    lcd_settings_list_active = false;
+    board_display_settings_redraw();
+}
+
 void board_display_set_dose(uint32_t dose_thousandths,
-                            uint32_t dose_fraction)
+                            uint32_t dose_fraction,
+                            uint32_t measurement_seconds)
 {
     static uint32_t previous_dose_thousandths = UINT32_MAX;
     static uint32_t previous_dose_fraction = UINT32_MAX;
 
     lcd_dose_value_thousandths = dose_thousandths;
     lcd_dose_fraction = dose_fraction;
+    lcd_dose_measurement_seconds = measurement_seconds;
     if (dose_thousandths != previous_dose_thousandths ||
         dose_fraction != previous_dose_fraction) {
         previous_dose_thousandths = dose_thousandths;
@@ -1514,6 +2794,16 @@ void board_display_set_dose(uint32_t dose_thousandths,
             lcd_format_dose(dose_thousandths, dose_fraction);
             lcd_cpm_redraw_pending = true;
         }
+    }
+}
+
+void board_display_set_count(uint32_t count)
+{
+    if (lcd_count_total == count) return;
+    lcd_count_total = count;
+    if (lcd_settings_value_index[9] == 1u && lcd_screen_page == 1u) {
+        lcd_format_dose(lcd_dose_value_thousandths, lcd_dose_fraction);
+        lcd_cpm_redraw_pending = true;
     }
 }
 
@@ -1551,9 +2841,13 @@ void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm,
     }
 
     /* The stock UI retains CPM at zero and rate below 0.01 uSv/h. */
-    if (cpm != 0u && cpm != previous_cpm) {
+    lcd_current_cpm = cpm;
+    if (cpm != previous_cpm) {
         previous_cpm = cpm;
-        lcd_format_cpm(cpm);
+        if (lcd_settings_value_index[9] != 1u) lcd_format_cpm(cpm);
+        if (lcd_settings_value_index[9] == 1u && lcd_screen_page == 0u) {
+            lcd_format_rate(rate_thousandths);
+        }
         changed = true;
     }
     if (cpm != 0u && rate_thousandths != previous_rate_thousandths) {
@@ -1587,6 +2881,40 @@ static uint16_t lcd_battery_percent(uint16_t raw)
     return (uint16_t)(100u -
         (((uint32_t)(battery_full_adc - raw) * 100u) /
          (battery_full_adc - battery_empty_adc)));
+}
+
+static void lcd_apply_brightness_settings(void)
+{
+    static const uint8_t levels[] = {
+        0u, 1u, 3u, 5u, 10u, 25u, 50u, 80u, 100u
+    };
+    const uint8_t led_setting = lcd_settings_value_index[5];
+    const uint8_t screen_setting = lcd_settings_value_index[6];
+    uint8_t led_percent;
+    uint8_t screen_percent;
+    bool apply_led = true;
+    bool apply_screen = true;
+
+    if (led_setting == 0u) {
+        apply_led = lcd_solar_sample_ready;
+        led_percent = (uint8_t)lcd_displayed_solar_percent;
+        if (led_percent < 5u) led_percent = 5u;
+    } else {
+        led_percent = levels[led_setting];
+    }
+    if (screen_setting == 0u) {
+        apply_screen = lcd_solar_sample_ready;
+        screen_percent = (uint8_t)lcd_displayed_solar_percent;
+        if (screen_percent < 1u) screen_percent = 1u;
+    } else {
+        screen_percent = levels[screen_setting];
+    }
+    if (apply_led && rgb_brightness_percent != led_percent) {
+        board_rgb_set_brightness(led_percent);
+    }
+    if (apply_screen && backlight_brightness_percent != screen_percent) {
+        board_lcd_backlight_set_brightness(screen_percent);
+    }
 }
 
 static void lcd_format_percent(uint16_t value, uint8_t offset)
@@ -1627,11 +2955,14 @@ void board_display_set_adc(uint16_t channel2, uint16_t channel8,
     }
     if (channel9 <= 4095u) {
         solar_percent = (uint16_t)(channel9 / 31u);
+        if (solar_percent > 100u) solar_percent = 100u;
+        lcd_solar_sample_ready = true;
         if (solar_percent != lcd_displayed_solar_percent) {
             lcd_displayed_solar_percent = solar_percent;
             lcd_format_percent(solar_percent, 7u);
             changed = true;
         }
+        lcd_apply_brightness_settings();
     }
     if (changed && lcd_ready) {
         lcd_cpm_redraw_pending = true;
@@ -1650,6 +2981,13 @@ static void lcd_text_render_service(void)
         lcd_text_glyph_index = 0u;
         lcd_text_row_commands_queued = false;
         lcd_cpm_redraw_pending = false;
+    }
+    if (!lcd_text_active && lcd_screen_page == 3u &&
+        lcd_settings_redraw_pending) {
+        lcd_text_active = true;
+        lcd_text_glyph_index = 0u;
+        lcd_text_row_commands_queued = false;
+        lcd_settings_redraw_pending = false;
     }
     if (lcd_screen_page == 2u && lcd_time_redraw_pending) {
         lcd_text_active = true;
@@ -1854,6 +3192,27 @@ void board_display_init(void)
     if (LCD_SPI_ENABLED == 0u || lcd_started) {
         return;
     }
+    lcd_screen_page = 0u;
+    lcd_main_return_page = 0u;
+    lcd_settings_list_active = false;
+    lcd_text_active = false;
+    lcd_text_row_commands_queued = false;
+    lcd_background_pending = true;
+    settings_eeprom_load();
+    settings_clicks_load();
+    settings_click_tone_load();
+    settings_timer_load();
+    settings_alarm_load();
+    settings_hv_load();
+    settings_light_alarm_load();
+    settings_dose_alarm_load();
+    board_hv_set_enabled(lcd_settings_value_index[15] == 0u);
+    lcd_apply_brightness_settings();
+    /* Replace static startup labels with the loaded unit/prefix choices
+     * before the LCD's initial background fill and first text render. */
+    lcd_format_rate(lcd_rate_value_thousandths);
+    lcd_format_dose(lcd_dose_value_thousandths, lcd_dose_fraction);
+    lcd_cpm_redraw_pending = true;
     lcd_started = true;
     lcd_configure();
 }
@@ -1899,6 +3258,28 @@ static void detector_input_init(void)
 uint32_t board_detector_count(void)
 {
     return detector_pulse_count;
+}
+
+void board_hv_set_enabled(bool enabled)
+{
+    if (enabled) {
+        REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 5u;
+        if (!board_hv_enabled) {
+            detector_pulse_count = 0u;
+        }
+        EXTI_PR = DETECTOR_EXTI_MASK;
+        board_hv_enabled = true;
+    } else {
+        board_hv_enabled = false;
+        REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 5u);
+        detector_pulse_count = 0u;
+        EXTI_PR = DETECTOR_EXTI_MASK;
+    }
+}
+
+bool board_hv_is_enabled(void)
+{
+    return board_hv_enabled;
 }
 
 void board_adc_init(void)
@@ -1992,12 +3373,65 @@ void board_adc_read_all(uint16_t *channel2, uint16_t *channel8,
 
 void EXTI4_15_IRQHandler(void)
 {
-    if ((EXTI_PR & DETECTOR_EXTI_MASK) != 0u) {
+    const uint32_t pending = EXTI_PR;
+
+    if ((pending & DETECTOR_EXTI_MASK) != 0u) {
         EXTI_PR = DETECTOR_EXTI_MASK;
-        if (detector_pulse_count < 999999u) {
+        if (board_hv_enabled && detector_pulse_count < 999999u) {
             ++detector_pulse_count;
         }
     }
+    if ((pending & (1u << BOARD_BUTTON_LEFT_PIN)) != 0u) {
+        EXTI_PR = 1u << BOARD_BUTTON_LEFT_PIN;
+        power_off_wakeup = true;
+    }
+}
+
+void board_reboot(void)
+{
+    __asm volatile ("dsb");
+    SCB_AIRCR = 0x05FA0004u;
+    __asm volatile ("dsb\n\tisb");
+    for (;;) {
+        __asm volatile ("wfi");
+    }
+}
+
+void board_power_off(void)
+{
+    volatile uint32_t *exticr3 =
+        (volatile uint32_t *)(uintptr_t)(SYSCFG_BASE + 0x10u);
+    const uint32_t button_mask = 1u << BOARD_BUTTON_LEFT_PIN;
+    const uint32_t exti_port_shift =
+        (BOARD_BUTTON_LEFT_PIN - 8u) * 4u;
+
+    board_lcd_backlight_set(false);
+    board_rgb_set(0u);
+    while (button_pressed(GPIOB_BASE, BOARD_BUTTON_LEFT_PIN)) {
+        /* Ignore a button press already held when power-off was requested. */
+    }
+
+    REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 5u); /* PA5 low */
+    EXTI_IMR &= ~DETECTOR_EXTI_MASK;
+    RCC_APB2ENR |= 1u; /* SYSCFG clock */
+    (void)RCC_APB2ENR;
+    *exticr3 = (*exticr3 & ~(0xFu << exti_port_shift)) |
+        (1u << exti_port_shift); /* PB9 -> EXTI9 */
+    EXTI_RTSR &= ~button_mask;
+    EXTI_FTSR |= button_mask;
+    EXTI_PR = button_mask;
+    EXTI_IMR |= button_mask;
+    NVIC_ISER = 1u << 7u; /* EXTI4_15_IRQn */
+    power_off_wakeup = false;
+    SYST_CSR = 0u;
+    SCB_SCR |= 1u << 2u; /* SLEEPDEEP */
+
+    while (!power_off_wakeup) {
+        __asm volatile ("dsb\n\twfi\n\tisb");
+    }
+
+    SCB_SCR &= ~(1u << 2u);
+    board_reboot();
 }
 
 static bool button_pressed(uint32_t base, uint32_t pin)
@@ -2087,12 +3521,11 @@ static void timer_pwm_init(uint32_t base, uint8_t channels)
 
 void board_rgb_set_brightness(uint8_t percent)
 {
-    uint32_t compare;
     if (percent > 100u) {
         percent = 100u;
     }
     rgb_brightness_percent = percent;
-    compare = ((uint32_t)percent * PWM_PERIOD) / 100u;
+    uint32_t compare = board_rgb_tim2_compare();
     REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) != 0u ? compare : 0u;
     REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) != 0u ? compare : 0u;
     REG32(TIM22_BASE + TIM_CCR1) = (rgb_channels & 4u) != 0u ? compare : 0u;
@@ -2130,9 +3563,21 @@ void board_init(void)
     RCC_IOPENR |= 3u; /* GPIOA and GPIOB clocks */
     (void)RCC_IOPENR;
 
+    /* PB8 controls the flashlight; preload OFF before enabling output mode. */
+    REG32(GPIOB_BASE + GPIO_BSRR) = 1u << (16u + FLASHLIGHT_PIN);
+    REG32(GPIOB_BASE + GPIO_OTYPER) &= ~(1u << FLASHLIGHT_PIN);
+    REG32(GPIOB_BASE + GPIO_OSPEEDR) &= ~(3u << (FLASHLIGHT_PIN * 2u));
+    REG32(GPIOB_BASE + GPIO_PUPDR) &= ~(3u << (FLASHLIGHT_PIN * 2u));
+    REG32(GPIOB_BASE + GPIO_MODER) =
+        (REG32(GPIOB_BASE + GPIO_MODER) &
+         ~(3u << (FLASHLIGHT_PIN * 2u))) |
+        (1u << (FLASHLIGHT_PIN * 2u));
+    flashlight_enabled = false;
+
     /* Stock enables the detector/power stage by driving PA5 high while active.
      * Keep the evidence-based stock state so the tube can produce pulses. */
     REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 5u;
+    board_hv_enabled = true;
     *gpioa_moder = (*gpioa_moder & ~(3u << 10u)) | (1u << 10u);
 
     /* Preload the assumed inactive LED level before enabling output mode. */
@@ -2197,7 +3642,7 @@ uint8_t board_buttons_sample_10ms(void)
 
 void board_rgb_set(uint8_t logical_rgb_mask)
 {
-    uint32_t compare = ((uint32_t)rgb_brightness_percent * PWM_PERIOD) / 100u;
+    uint32_t compare = board_rgb_tim2_compare();
     rgb_channels = logical_rgb_mask & 7u;
     REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) != 0u ? compare : 0u;
     REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) != 0u ? compare : 0u;
