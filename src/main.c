@@ -142,7 +142,7 @@ int main(void)
                 if (board_display_settings_list_active()) {
                     board_display_settings_move(false);
                 } else {
-                    board_display_next_page();
+                    board_display_left_short();
                 }
             }
 

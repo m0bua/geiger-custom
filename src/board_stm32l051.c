@@ -1843,18 +1843,21 @@ static bool lcd_text_prepare_glyph(void)
     return true;
 }
 
-void board_display_next_page(void)
+void board_display_left_short(void)
 {
     if (lcd_screen_page >= 2u) {
-        lcd_screen_page = (uint8_t)(2u +
-            ((lcd_screen_page - 2u + LCD_EXTRA_SCREEN_COUNT - 1u) %
-             LCD_EXTRA_SCREEN_COUNT));
-    } else {
+        board_display_extra_step(false);
         return;
     }
+    lcd_screen_page = lcd_screen_page == 0u ? 1u : 0u;
     lcd_text_active = false;
     lcd_text_row_commands_queued = false;
     lcd_background_pending = true;
+    if (lcd_screen_page == 0u) {
+        lcd_format_rate(lcd_rate_value_thousandths);
+    } else {
+        lcd_format_dose(lcd_dose_value_thousandths, lcd_dose_fraction);
+    }
     lcd_cpm_redraw_pending = true;
 }
 

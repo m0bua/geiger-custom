@@ -28,7 +28,7 @@ void board_rgb_set(uint8_t logical_rgb_mask);
 void board_rgb_set_brightness(uint8_t percent);
 void board_display_init(void);
 void board_display_service(void);
-void board_display_next_page(void);
+void board_display_left_short(void);
 void board_display_right_short(void);
 bool board_display_rate_long_press(void);
 bool board_display_light_alarm_active(void);
