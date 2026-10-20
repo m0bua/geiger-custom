@@ -54,6 +54,9 @@ int main(void)
     sound_alarm_active = board_display_sound_alarm_active();
     board_sound_alarm_set(sound_alarm_active);
     hv_enabled = board_hv_is_enabled();
+    /* Ignore startup transients accumulated while RTC/display were coming up. */
+    event_count = board_detector_count();
+    previous_minute_sample = event_count;
 
     next_sample = board_millis;
     next_adc_sample = board_millis;
@@ -162,8 +165,9 @@ int main(void)
                 !right_long_handled) {
                 if (board_display_settings_list_active()) {
                     board_display_settings_change();
-                } else {
+                } else if (board_display_extra_active()) {
                     board_display_settings_list_activate();
+                } else {
                     board_display_extra_enter();
                 }
                 right_long_handled = true;

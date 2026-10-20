@@ -34,6 +34,16 @@ static uint8_t lcd_indication_mode = 1u;
 #define RCC_IOPENR     REG32(RCC_BASE + 0x2Cu)
 #define RCC_APB1ENR    REG32(RCC_BASE + 0x38u)
 #define RCC_APB2ENR    REG32(RCC_BASE + 0x34u)
+#define RCC_CSR        REG32(RCC_BASE + 0x24u)
+#define PWR_CR         REG32(0x40007000u)
+#define RTC_BASE       0x40002800u
+#define RTC_TR         REG32(RTC_BASE + 0x00u)
+#define RTC_DR         REG32(RTC_BASE + 0x04u)
+#define RTC_ISR        REG32(RTC_BASE + 0x0Cu)
+#define RTC_PRER       REG32(RTC_BASE + 0x10u)
+#define RTC_WPR        REG32(RTC_BASE + 0x24u)
+#define RTC_BKP0R      REG32(RTC_BASE + 0x50u)
+#define RTC_BKP1R      REG32(RTC_BASE + 0x54u)
 #define ADC_BASE       0x40012400u
 #define ADC_ISR        REG32(ADC_BASE + 0x00u)
 #define ADC_CR         REG32(ADC_BASE + 0x08u)
@@ -241,6 +251,15 @@ static bool lcd_settings_list_active;
 static uint8_t lcd_settings_selected;
 static bool lcd_settings_editing;
 static uint8_t lcd_settings_edit_value;
+static bool rtc_ready;
+static bool rtc_time_valid;
+static uint8_t rtc_init_error;
+static bool lcd_time_save_failed;
+static bool lcd_time_save_succeeded;
+static uint8_t lcd_time_save_error;
+static uint32_t lcd_time_save_status_deadline;
+static uint16_t lcd_time_edit_value;
+static uint16_t lcd_time_edit_original;
 static uint8_t lcd_settings_value_index[21] = {
     [0] = 2u, [7] = 2u, [10] = 1u, [11] = 1u
 };
@@ -337,6 +356,243 @@ static void lcd_check_output_level(uint32_t base, uint32_t pin, bool expected_hi
 static bool deadline_reached(uint32_t deadline)
 {
     return (int32_t)(board_millis - deadline) >= 0;
+}
+
+typedef struct {
+    uint16_t year;
+    uint8_t month;
+    uint8_t day;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+} rtc_calendar_t;
+
+static rtc_calendar_t lcd_time_draft;
+static bool lcd_time_draft_ready;
+
+#define RTC_CONFIG_MAGIC 0x47523255u /* v2: correct RTCEN/RTCRST setup */
+#define RTC_TIME_VALID_MAGIC 0x54494D45u
+#define RTC_ISR_KEEP_FLAGS_CLEAR_RSF 0x00017F5Fu
+
+static uint8_t rtc_to_bcd(uint8_t value)
+{
+    return (uint8_t)(((value / 10u) << 4u) | (value % 10u));
+}
+
+static void board_rtc_init(void);
+
+static uint8_t rtc_from_bcd(uint32_t value)
+{
+    return (uint8_t)(((value >> 4u) & 0x0Fu) * 10u + (value & 0x0Fu));
+}
+
+static uint8_t rtc_days_in_month(uint16_t year, uint8_t month)
+{
+    static const uint8_t month_days[12] = {
+        31u, 28u, 31u, 30u, 31u, 30u,
+        31u, 31u, 30u, 31u, 30u, 31u
+    };
+    if (month == 0u || month > 12u) return 31u;
+    if (month == 2u && (year % 4u) == 0u) return 29u;
+    return month_days[month - 1u];
+}
+
+static bool rtc_wait_flag(volatile uint32_t *reg, uint32_t mask,
+                          bool set)
+{
+    /* Bound oscillator startup wait so a missing crystal cannot stall boot. */
+    uint32_t timeout = 2000000u;
+    while (((*reg & mask) != 0u) != set && --timeout != 0u) { }
+    return timeout != 0u;
+}
+
+static bool rtc_exit_init_and_sync(void)
+{
+    /* Clear INIT and RSF while writing 1s to unrelated write-0-clear flags. */
+    RTC_ISR = RTC_ISR_KEEP_FLAGS_CLEAR_RSF & ~(1u << 7u);
+    return rtc_wait_flag((volatile uint32_t *)(uintptr_t)(RTC_BASE + 0x0Cu),
+                         1u << 5u, true);
+}
+
+static void rtc_seed_from_build(rtc_calendar_t *calendar)
+{
+    static const char *const months[] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    };
+    const char *date = __DATE__;
+    const char *time = __TIME__;
+
+    calendar->year = (uint16_t)((date[7] - '0') * 1000u +
+        (date[8] - '0') * 100u + (date[9] - '0') * 10u + date[10] - '0');
+    calendar->month = 1u;
+    for (uint8_t i = 0u; i < 12u; ++i) {
+        if (date[0] == months[i][0] && date[1] == months[i][1] &&
+            date[2] == months[i][2]) {
+            calendar->month = (uint8_t)(i + 1u);
+            break;
+        }
+    }
+    calendar->day = (uint8_t)((date[4] == ' ' ? 0u :
+        (uint8_t)(date[4] - '0') * 10u) + (uint8_t)(date[5] - '0'));
+    calendar->hour = (uint8_t)((time[0] - '0') * 10u + time[1] - '0');
+    calendar->minute = (uint8_t)((time[3] - '0') * 10u + time[4] - '0');
+    calendar->second = (uint8_t)((time[6] - '0') * 10u + time[7] - '0');
+}
+
+static bool rtc_read_calendar(rtc_calendar_t *calendar)
+{
+    uint32_t time_a;
+    uint32_t time_b;
+    uint32_t date;
+    uint8_t attempts = 4u;
+
+    if (!rtc_ready) return false;
+    do {
+        time_a = RTC_TR;
+        date = RTC_DR;
+        time_b = RTC_TR;
+    } while (time_a != time_b && --attempts != 0u);
+    if (time_a != time_b) return false;
+    calendar->hour = rtc_from_bcd((time_a >> 16u) & 0x3Fu);
+    calendar->minute = rtc_from_bcd((time_a >> 8u) & 0x7Fu);
+    calendar->second = rtc_from_bcd(time_a & 0x7Fu);
+    calendar->year = (uint16_t)(2000u +
+        rtc_from_bcd((date >> 16u) & 0xFFu));
+    calendar->month = rtc_from_bcd((date >> 8u) & 0x1Fu);
+    calendar->day = rtc_from_bcd(date & 0x3Fu);
+    return calendar->month >= 1u && calendar->month <= 12u &&
+        calendar->day >= 1u &&
+        calendar->day <= rtc_days_in_month(calendar->year, calendar->month) &&
+        calendar->hour < 24u && calendar->minute < 60u &&
+        calendar->second < 60u;
+}
+
+static void rtc_get_time_edit_base(rtc_calendar_t *calendar)
+{
+    /* A first-time/invalid RTC edit starts from this firmware build timestamp. */
+    if (!rtc_read_calendar(calendar)) {
+        rtc_seed_from_build(calendar);
+    }
+}
+
+static bool rtc_write_calendar(const rtc_calendar_t *calendar,
+                               bool mark_time_valid)
+{
+    uint32_t timeout = 20000000u;
+    lcd_time_save_error = 0u;
+    if (!rtc_ready) {
+        /* Retry a startup that may have raced RTC oscillator stabilization. */
+        board_rtc_init();
+        if (!rtc_ready) {
+            lcd_time_save_error = rtc_init_error != 0u ?
+                (uint8_t)(rtc_init_error + 4u) : 1u;
+            return false;
+        }
+    }
+    if (calendar->year < 2000u || calendar->year > 2099u ||
+        calendar->month < 1u || calendar->month > 12u ||
+        calendar->day < 1u ||
+        calendar->day > rtc_days_in_month(calendar->year, calendar->month) ||
+        calendar->hour > 23u || calendar->minute > 59u ||
+        calendar->second > 59u) return false;
+
+    RCC_APB1ENR |= 1u << 28u;
+    PWR_CR |= 1u << 8u; /* Reassert backup-domain write access. */
+    RTC_WPR = 0xCAu;
+    RTC_WPR = 0x53u;
+    RTC_ISR |= 1u << 7u; /* INIT */
+    while ((RTC_ISR & (1u << 6u)) == 0u && --timeout != 0u) { }
+    if (timeout == 0u) {
+        lcd_time_save_error = 2u;
+        RTC_WPR = 0xFFu;
+        return false;
+    }
+    RTC_TR = ((uint32_t)rtc_to_bcd(calendar->hour) << 16u) |
+        ((uint32_t)rtc_to_bcd(calendar->minute) << 8u) |
+        rtc_to_bcd(calendar->second);
+    RTC_DR = ((uint32_t)rtc_to_bcd((uint8_t)(calendar->year % 100u)) << 16u) |
+        ((uint32_t)rtc_to_bcd(calendar->month) << 8u) |
+        rtc_to_bcd(calendar->day) | (1u << 13u);
+    if (!rtc_exit_init_and_sync()) {
+        lcd_time_save_error = 3u;
+        RTC_WPR = 0xFFu;
+        return false;
+    }
+    RTC_WPR = 0xFFu;
+    if (mark_time_valid) {
+        RTC_BKP1R = RTC_TIME_VALID_MAGIC;
+        rtc_time_valid = true;
+    }
+    return true;
+}
+
+static void board_rtc_init(void)
+{
+    rtc_calendar_t seed;
+    uint32_t timeout;
+    uint32_t source;
+
+    rtc_ready = false;
+    rtc_init_error = 0u;
+    RCC_APB1ENR |= 1u << 28u; /* PWR interface clock */
+    PWR_CR |= 1u << 8u;       /* allow backup-domain writes */
+    if (RTC_BKP0R == RTC_CONFIG_MAGIC) {
+        rtc_ready = true;
+        rtc_time_valid = RTC_BKP1R == RTC_TIME_VALID_MAGIC;
+        return;
+    }
+
+    /* First setup only: prefer an accurate 32.768 kHz crystal, then use LSI. */
+    RCC_CSR |= 1u << 8u; /* LSEON */
+    if (rtc_wait_flag((volatile uint32_t *)(uintptr_t)(RCC_BASE + 0x24u),
+                      1u << 9u, true)) {
+        source = 1u;
+    } else {
+        RCC_CSR |= 1u; /* LSION */
+        if (!rtc_wait_flag((volatile uint32_t *)(uintptr_t)(RCC_BASE + 0x24u),
+                           1u << 1u, true)) {
+            rtc_init_error = 1u;
+            return;
+        }
+        source = 2u;
+    }
+
+    RCC_CSR |= 1u << 19u; /* RTCRST: reset RTC/backup domain on first setup */
+    RCC_CSR &= ~(1u << 19u);
+    RCC_CSR = (RCC_CSR & ~((3u << 16u) | (1u << 18u))) |
+        (source << 16u) | (1u << 18u); /* RTCSEL + RTCEN */
+
+    RTC_WPR = 0xCAu;
+    RTC_WPR = 0x53u;
+    RTC_ISR |= 1u << 7u;
+    timeout = 1000000u;
+    while ((RTC_ISR & (1u << 6u)) == 0u && --timeout != 0u) { }
+    if (timeout == 0u) {
+        rtc_init_error = 2u;
+        RTC_WPR = 0xFFu;
+        return;
+    }
+    /* LSE: 128 x 256; LSI nominal ~37 kHz: 128 x 289. */
+    RTC_PRER = (127u << 16u) | (source == 1u ? 255u : 288u);
+    rtc_seed_from_build(&seed);
+    RTC_TR = ((uint32_t)rtc_to_bcd(seed.hour) << 16u) |
+        ((uint32_t)rtc_to_bcd(seed.minute) << 8u) |
+        rtc_to_bcd(seed.second);
+    RTC_DR = ((uint32_t)rtc_to_bcd((uint8_t)(seed.year % 100u)) << 16u) |
+        ((uint32_t)rtc_to_bcd(seed.month) << 8u) |
+        rtc_to_bcd(seed.day) | (1u << 13u);
+    if (!rtc_exit_init_and_sync()) {
+        rtc_init_error = 3u;
+        RTC_WPR = 0xFFu;
+        return;
+    }
+    RTC_WPR = 0xFFu;
+    RTC_BKP1R = 0u;
+    RTC_BKP0R = RTC_CONFIG_MAGIC;
+    rtc_ready = true;
+    rtc_time_valid = false;
+    rtc_init_error = 0u;
 }
 
 static void lcd_format_scaled_sv(uint64_t value_picosv_x18,
@@ -1147,12 +1403,18 @@ static void lcd_top_row_draw_percent(uint8_t offset, char icon,
 static void lcd_top_row_draw_uptime(void)
 {
     const uint32_t total_minutes = board_uptime_seconds / 60u;
+    rtc_calendar_t calendar;
+    const bool show_rtc = rtc_time_valid && rtc_read_calendar(&calendar);
+    const uint8_t hour = show_rtc ? calendar.hour :
+        (uint8_t)((total_minutes / 60u) % 24u);
+    const uint8_t minute = show_rtc ? calendar.minute :
+        (uint8_t)(total_minutes % 60u);
     const char time_text[5] = {
-        (char)('0' + ((total_minutes / 60u) % 24u) / 10u),
-        (char)('0' + ((total_minutes / 60u) % 24u) % 10u),
+        (char)('0' + hour / 10u),
+        (char)('0' + hour % 10u),
         ':',
-        (char)('0' + (total_minutes % 60u) / 10u),
-        (char)('0' + (total_minutes % 60u) % 10u)
+        (char)('0' + minute / 10u),
+        (char)('0' + minute % 10u)
     };
 
     for (uint8_t i = 0u; i < sizeof(time_text); ++i) {
@@ -1224,8 +1486,26 @@ static uint8_t lcd_debug_make_line(uint8_t row, char *line)
         value[value_length++] = (char)('0' + minutes % 10u);
         lcd_debug_put_right(line, 20u, value, value_length);
     } else if (row == 1u) {
-        line[0] = '-'; line[1] = '-';
-        line[18] = '-'; line[19] = '-';
+        line[0] = rtc_init_error == 1u ? 'O' :
+            rtc_init_error == 2u ? 'I' : rtc_init_error == 3u ? 'S' : '-';
+        line[1] = rtc_init_error == 1u ? 'S' :
+            rtc_init_error == 2u ? 'N' : rtc_init_error == 3u ? 'Y' : '-';
+        line[2] = rtc_init_error == 1u ? 'C' :
+            rtc_init_error == 2u ? 'T' : rtc_init_error == 3u ? 'C' : '-';
+        line[4] = 'L';
+        line[5] = (RCC_CSR & 1u) != 0u ? '1' : '0';
+        line[6] = 'R';
+        line[7] = (RCC_CSR & (1u << 1u)) != 0u ? '1' : '0';
+        line[9] = 'A';
+        line[10] = (REG32(GPIOA_BASE + 0x14u) & (1u << 5u)) != 0u ?
+            '1' : '0';
+        line[11] = 'B';
+        line[12] = (REG32(GPIOB_BASE + GPIO_IDR) & DETECTOR_EXTI_MASK) != 0u ?
+            '1' : '0';
+        line[14] = 'M';
+        line[15] = (EXTI_IMR & DETECTOR_EXTI_MASK) != 0u ? '1' : '0';
+        line[16] = 'F';
+        line[17] = (EXTI_FTSR & DETECTOR_EXTI_MASK) != 0u ? '1' : '0';
     } else if (row == 2u) {
         static const char label[] = "CNT ";
         for (uint8_t i = 0u; i < sizeof(label) - 1u; ++i) line[i] = label[i];
@@ -1411,6 +1691,121 @@ static bool lcd_text_prepare_glyph(void)
         const uint8_t step = lcd_text_glyph_index;
         uint8_t x_window[4];
         uint8_t y_window[4];
+        rtc_calendar_t calendar;
+        const bool show_calendar = rtc_time_valid &&
+            rtc_read_calendar(&calendar);
+
+        if (lcd_settings_list_active) {
+            static const char *const time_menu_items[] = {
+                "YEAR", "MONTH", "DAY", "HOUR", "MINUTE", "SAVE"
+            };
+            char line[20];
+            uint16_t field_value;
+            uint8_t value_start;
+            uint8_t value_length;
+
+            if (step >= 6u) {
+                lcd_text_active = false;
+                return false;
+            }
+            if (!lcd_time_draft_ready) {
+                rtc_get_time_edit_base(&lcd_time_draft);
+                lcd_time_draft_ready = true;
+            }
+            for (uint8_t i = 0u; i < sizeof(line); ++i) line[i] = ' ';
+            line[0] = step != 5u && step == lcd_settings_selected &&
+                !lcd_settings_editing ? '>' : ' ';
+            for (uint8_t i = 0u; time_menu_items[step][i] != '\0' &&
+                 i < 13u; ++i) {
+                line[i + 1u] = time_menu_items[step][i];
+            }
+            switch (step) {
+            case 0u: field_value = lcd_time_draft.year; value_length = 4u; break;
+            case 1u: field_value = lcd_time_draft.month; value_length = 2u; break;
+            case 2u: field_value = lcd_time_draft.day; value_length = 2u; break;
+            case 3u: field_value = lcd_time_draft.hour; value_length = 2u; break;
+            case 4u: field_value = lcd_time_draft.minute; value_length = 2u; break;
+            default: field_value = 0u; value_length = 0u; break;
+            }
+            if (lcd_settings_editing && step == lcd_settings_selected) {
+                field_value = lcd_time_edit_value;
+            }
+            value_start = (uint8_t)(20u - value_length);
+            if (step != 5u) {
+                line[value_start - 1u] = lcd_settings_editing &&
+                    step == lcd_settings_selected ? '>' : ' ';
+            }
+            for (uint8_t i = 0u; i < value_length; ++i) {
+                const uint16_t divisor = value_length == 4u ?
+                    (uint16_t)(i == 0u ? 1000u : i == 1u ? 100u :
+                        i == 2u ? 10u : 1u) :
+                    (uint16_t)(i == 0u ? 10u : 1u);
+                line[value_start + i] =
+                    (char)('0' + (field_value / divisor) % 10u);
+            }
+            if (step == 5u) {
+                if (lcd_time_save_failed) {
+                    const char *const error = lcd_time_save_error == 1u ?
+                        "RDY " : lcd_time_save_error == 2u ? "INIT" :
+                        lcd_time_save_error == 3u ? "SYNC" :
+                        lcd_time_save_error == 4u ? "DRFT" :
+                        lcd_time_save_error == 5u ? "OSC " :
+                        lcd_time_save_error == 6u ? "INIT" :
+                        lcd_time_save_error == 7u ? "SYNC" : "DATE";
+                    for (uint8_t i = 0u; i < 4u; ++i) {
+                        line[16u + i] = error[i];
+                    }
+                } else if (lcd_time_save_succeeded) {
+                    line[18] = 'O';
+                    line[19] = 'K';
+                }
+            }
+            lcd_text_glyph_pixels = (uint16_t)(159u *
+                FONT_SMALL_CELL_HEIGHT);
+            lcd_text_dma_glyph_advance = 1u;
+            for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
+                for (uint16_t x = 0u; x < 159u; ++x) {
+                    const uint8_t column = (uint8_t)(x / 8u);
+                    const uint8_t glyph_x = (uint8_t)(x % 8u);
+                    const bool lit = column < 20u &&
+                        glyph_x < FONT_SMALL_CELL_WIDTH &&
+                        font_small_pixel(line[column], glyph_x, y);
+                    uint16_t color = LCD_TEXT_FOREGROUND;
+                    if (step == 5u && lcd_time_save_failed &&
+                        column >= 16u) {
+                        color = LCD_TEXT_RED;
+                    } else if (step == 5u && lcd_time_save_succeeded &&
+                               column >= 18u) {
+                        color = LCD_TEXT_GREEN;
+                    } else if (lcd_settings_editing &&
+                        step == lcd_settings_selected &&
+                        column >= value_start - 1u) {
+                        color = LCD_SETTINGS_SELECTED_COLOR;
+                    } else if (!lcd_settings_editing &&
+                               step == lcd_settings_selected &&
+                               column <= 6u) {
+                        color = LCD_SETTINGS_SELECTED_COLOR;
+                    }
+                    lcd_text_glyph[(uint16_t)y * 159u + x] = lit ? color :
+                        LCD_TEXT_BACKGROUND;
+                }
+            }
+            x_window[0] = 0u;
+            x_window[1] = 0u;
+            x_window[2] = 0u;
+            x_window[3] = 158u;
+            y_window[0] = 0u;
+            y_window[1] = (uint8_t)(LCD_Y_OFFSET + 3u + step * 12u);
+            y_window[2] = 0u;
+            y_window[3] = (uint8_t)(y_window[1] +
+                FONT_SMALL_CELL_HEIGHT - 1u);
+            REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
+            lcd_command(0x2Au, x_window, sizeof(x_window));
+            lcd_command(0x2Bu, y_window, sizeof(y_window));
+            lcd_command(0x2Cu, 0, 0u);
+            lcd_text_row_commands_queued = true;
+            return true;
+        }
 
         if (step >= 7u) {
             lcd_text_active = false;
@@ -1423,11 +1818,24 @@ static bool lcd_text_prepare_glyph(void)
             uint32_t days = board_uptime_seconds / 86400u;
 
             if (step == 0u) {
-                static const char header[] = "UPTIME";
-                days_length = 6u;
+                const char *header = show_calendar ? "TIME" : "UPTIME";
+                days_length = show_calendar ? 4u : 6u;
                 for (uint8_t i = 0u; i < days_length; ++i) {
                     days_text[i] = header[i];
                 }
+            } else if (show_calendar) {
+                days_text[days_length++] = (char)('0' + calendar.year / 1000u);
+                days_text[days_length++] = (char)('0' +
+                    (calendar.year / 100u) % 10u);
+                days_text[days_length++] = (char)('0' +
+                    (calendar.year / 10u) % 10u);
+                days_text[days_length++] = (char)('0' + calendar.year % 10u);
+                days_text[days_length++] = '-';
+                days_text[days_length++] = (char)('0' + calendar.month / 10u);
+                days_text[days_length++] = (char)('0' + calendar.month % 10u);
+                days_text[days_length++] = '-';
+                days_text[days_length++] = (char)('0' + calendar.day / 10u);
+                days_text[days_length++] = (char)('0' + calendar.day % 10u);
             } else {
                 char reversed[10];
                 uint8_t digit_count = 0u;
@@ -1482,8 +1890,10 @@ static bool lcd_text_prepare_glyph(void)
             }
         } else {
             const uint32_t total_minutes = board_uptime_seconds / 60u;
-            const uint32_t hour = (total_minutes / 60u) % 24u;
-            const uint32_t minute = total_minutes % 60u;
+            const uint32_t hour = show_calendar ? calendar.hour :
+                (total_minutes / 60u) % 24u;
+            const uint32_t minute = show_calendar ? calendar.minute :
+                total_minutes % 60u;
             const char glyph = step == 3u ? ':' :
                 (step < 3u ? (char)('0' + (step == 1u ? hour / 10u : hour % 10u)) :
                  (char)('0' + (step == 4u ? minute / 10u : minute % 10u)));
@@ -2288,6 +2698,11 @@ void board_display_extra_enter(void)
     lcd_cpm_redraw_pending = true;
 }
 
+bool board_display_extra_active(void)
+{
+    return lcd_screen_page >= 2u;
+}
+
 void board_display_extra_step(bool forward)
 {
     if (lcd_screen_page < 2u) {
@@ -2952,7 +3367,8 @@ static bool settings_eeprom_save(void)
 
 bool board_display_settings_list_active(void)
 {
-    return lcd_screen_page == 3u && lcd_settings_list_active;
+    return (lcd_screen_page == 2u || lcd_screen_page == 3u) &&
+        lcd_settings_list_active;
 }
 
 static void lcd_settings_apply_current(void)
@@ -3272,19 +3688,64 @@ bool board_display_sound_alarm_stop_on_clear(void)
 
 void board_display_settings_list_activate(void)
 {
-    if (lcd_screen_page != 3u || lcd_settings_list_active) return;
+    if ((lcd_screen_page != 2u && lcd_screen_page != 3u) ||
+        lcd_settings_list_active) return;
     lcd_settings_list_active = true;
+    if (lcd_screen_page == 2u) {
+        lcd_settings_selected = 0u;
+        lcd_settings_editing = false;
+        rtc_get_time_edit_base(&lcd_time_draft);
+        lcd_time_draft_ready = true;
+        lcd_time_save_failed = false;
+        lcd_time_save_succeeded = false;
+        lcd_time_save_status_deadline = 0u;
+        lcd_background_pending = true;
+    }
     board_display_settings_redraw();
 }
 
 static void board_display_settings_redraw(void)
 {
-    lcd_settings_redraw_pending = true;
+    if (lcd_screen_page == 2u) {
+        lcd_time_redraw_pending = true;
+    } else {
+        lcd_settings_redraw_pending = true;
+    }
 }
 
 void board_display_settings_move(bool forward)
 {
     if (!board_display_settings_list_active()) return;
+    if (lcd_screen_page == 2u) {
+        if (lcd_settings_editing) {
+            uint16_t minimum;
+            uint16_t maximum;
+            switch (lcd_settings_selected) {
+            case 0u: minimum = 2000u; maximum = 2099u; break;
+            case 1u: minimum = 1u; maximum = 12u; break;
+            case 2u: minimum = 1u;
+                maximum = rtc_days_in_month(lcd_time_draft.year,
+                                             lcd_time_draft.month);
+                break;
+            case 3u: minimum = 0u; maximum = 23u; break;
+            default: minimum = 0u; maximum = 59u; break;
+            }
+            if (forward) {
+                lcd_time_edit_value = lcd_time_edit_value >= maximum ?
+                    minimum : (uint16_t)(lcd_time_edit_value + 1u);
+            } else {
+                lcd_time_edit_value = lcd_time_edit_value <= minimum ?
+                    maximum : (uint16_t)(lcd_time_edit_value - 1u);
+            }
+            board_display_settings_redraw();
+            return;
+        }
+        lcd_settings_selected = forward ?
+            (uint8_t)((lcd_settings_selected + 1u) % 6u) :
+            (uint8_t)((lcd_settings_selected + 5u) % 6u);
+        board_display_settings_redraw();
+        return;
+    }
     if (lcd_settings_editing) {
         const uint8_t count = lcd_settings_value_count(lcd_settings_selected);
         lcd_settings_edit_value = forward ?
@@ -3306,6 +3767,54 @@ void board_display_settings_move(bool forward)
 void board_display_settings_change(void)
 {
     if (!board_display_settings_list_active()) return;
+    if (lcd_screen_page == 2u) {
+        if (lcd_settings_selected == 5u && !lcd_settings_editing) {
+            if (lcd_time_draft_ready &&
+                rtc_write_calendar(&lcd_time_draft, true)) {
+                lcd_time_save_failed = false;
+                lcd_time_save_succeeded = true;
+                lcd_time_redraw_pending = true;
+            } else {
+                lcd_time_save_failed = true;
+                lcd_time_save_succeeded = false;
+                if (!lcd_time_draft_ready) lcd_time_save_error = 4u;
+            }
+            lcd_time_save_status_deadline = board_millis + 3000u;
+            board_display_settings_redraw();
+            return;
+        }
+        if (!lcd_settings_editing) {
+            lcd_time_save_failed = false;
+            lcd_time_save_succeeded = false;
+            switch (lcd_settings_selected) {
+            case 0u: lcd_time_edit_value = lcd_time_draft.year; break;
+            case 1u: lcd_time_edit_value = lcd_time_draft.month; break;
+            case 2u: lcd_time_edit_value = lcd_time_draft.day; break;
+            case 3u: lcd_time_edit_value = lcd_time_draft.hour; break;
+            default: lcd_time_edit_value = lcd_time_draft.minute; break;
+            }
+            lcd_time_edit_original = lcd_time_edit_value;
+            lcd_settings_editing = true;
+        } else {
+            switch (lcd_settings_selected) {
+            case 0u: lcd_time_draft.year = lcd_time_edit_value; break;
+            case 1u: lcd_time_draft.month = (uint8_t)lcd_time_edit_value; break;
+            case 2u: lcd_time_draft.day = (uint8_t)lcd_time_edit_value; break;
+            case 3u: lcd_time_draft.hour = (uint8_t)lcd_time_edit_value; break;
+            default: lcd_time_draft.minute = (uint8_t)lcd_time_edit_value; break;
+            }
+            if (lcd_time_draft.day > rtc_days_in_month(lcd_time_draft.year,
+                                                       lcd_time_draft.month)) {
+                lcd_time_draft.day = rtc_days_in_month(lcd_time_draft.year,
+                                                       lcd_time_draft.month);
+            }
+            lcd_settings_editing = false;
+            lcd_time_save_failed = false;
+            lcd_time_save_succeeded = false;
+        }
+        board_display_settings_redraw();
+        return;
+    }
     if (lcd_settings_selected == 14u) {
         if (settings_reset_all()) board_reboot();
         return;
@@ -3344,6 +3853,20 @@ void board_display_settings_change(void)
 void board_display_settings_list_exit(void)
 {
     if (!board_display_settings_list_active()) return;
+    if (lcd_screen_page == 2u) {
+        if (lcd_settings_editing) {
+            lcd_time_edit_value = lcd_time_edit_original;
+            lcd_settings_editing = false;
+            board_display_settings_redraw();
+            return;
+        }
+        lcd_settings_list_active = false;
+        lcd_settings_editing = false;
+        lcd_time_draft_ready = false;
+        lcd_background_pending = true;
+        board_display_settings_redraw();
+        return;
+    }
     if (lcd_settings_editing) {
         lcd_settings_editing = false;
         board_display_settings_redraw();
@@ -3615,7 +4138,8 @@ static void lcd_text_render_service(void)
         lcd_text_row_commands_queued = false;
         lcd_settings_redraw_pending = false;
     }
-    if (lcd_screen_page == 2u && lcd_time_redraw_pending) {
+    if (lcd_screen_page == 2u && lcd_time_redraw_pending &&
+        !lcd_text_active) {
         lcd_text_active = true;
         lcd_text_glyph_index = 0u;
         lcd_text_row_commands_queued = false;
@@ -3650,6 +4174,15 @@ void board_display_service(void)
     lcd_spi_pump();
     if (lcd_init_state == LCD_INIT_FAILED || !lcd_spi_ready) {
         return;
+    }
+    if ((lcd_time_save_failed || lcd_time_save_succeeded) &&
+        deadline_reached(lcd_time_save_status_deadline)) {
+        lcd_time_save_failed = false;
+        lcd_time_save_succeeded = false;
+        if (lcd_screen_page == 2u && lcd_settings_list_active &&
+            !lcd_settings_editing && lcd_settings_selected == 5u) {
+            board_display_settings_redraw();
+        }
     }
 
     switch (lcd_init_state) {
@@ -3774,15 +4307,29 @@ void board_display_service(void)
         return;
     }
     if (lcd_screen_page == 2u) {
-        const uint32_t uptime_minute = board_uptime_seconds / 60u;
-        if (uptime_minute != lcd_time_displayed_minute) {
-            lcd_time_displayed_minute = uptime_minute;
+        rtc_calendar_t calendar;
+        uint32_t minute_key = board_uptime_seconds / 60u;
+        if (rtc_time_valid && rtc_read_calendar(&calendar)) {
+            minute_key = (uint32_t)calendar.year * 1000000u +
+                (uint32_t)calendar.month * 10000u +
+                (uint32_t)calendar.day * 100u +
+                (uint32_t)calendar.hour * 60u + calendar.minute;
+        }
+        if (minute_key != lcd_time_displayed_minute) {
+            lcd_time_displayed_minute = minute_key;
             lcd_time_redraw_pending = true;
         }
     } else if (lcd_screen_page < 2u) {
-        const uint32_t uptime_minute = board_uptime_seconds / 60u;
-        if (uptime_minute != lcd_time_displayed_minute) {
-            lcd_time_displayed_minute = uptime_minute;
+        rtc_calendar_t calendar;
+        uint32_t minute_key = board_uptime_seconds / 60u;
+        if (rtc_time_valid && rtc_read_calendar(&calendar)) {
+            minute_key = (uint32_t)calendar.year * 1000000u +
+                (uint32_t)calendar.month * 10000u +
+                (uint32_t)calendar.day * 100u +
+                (uint32_t)calendar.hour * 60u + calendar.minute;
+        }
+        if (minute_key != lcd_time_displayed_minute) {
+            lcd_time_displayed_minute = minute_key;
             lcd_cpm_redraw_pending = true;
         }
     } else if (lcd_screen_page == 4u) {
@@ -3824,6 +4371,7 @@ void board_display_init(void)
     lcd_text_active = false;
     lcd_text_row_commands_queued = false;
     lcd_background_pending = true;
+    board_rtc_init();
     settings_eeprom_load();
     settings_clicks_load();
     settings_click_tone_load();
@@ -3834,7 +4382,6 @@ void board_display_init(void)
     settings_hv_load();
     settings_light_alarm_load();
     settings_dose_alarm_load();
-    board_hv_set_enabled(lcd_settings_value_index[15] == 0u);
     lcd_apply_brightness_settings();
     /* Replace static startup labels with the loaded unit/prefix choices
      * before the LCD's initial background fill and first text render. */
@@ -3843,6 +4390,8 @@ void board_display_init(void)
     lcd_cpm_redraw_pending = true;
     lcd_started = true;
     lcd_configure();
+    /* RTC, saved configuration and display are ready before enabling HV. */
+    board_hv_set_enabled(lcd_settings_value_index[15] == 0u);
 }
 
 static uint32_t gpio_read(uint32_t base, uint32_t pin)
@@ -4199,10 +4748,9 @@ void board_init(void)
         (1u << (FLASHLIGHT_PIN * 2u));
     flashlight_enabled = false;
 
-    /* Stock enables the detector/power stage by driving PA5 high while active.
-     * Keep the evidence-based stock state so the tube can produce pulses. */
-    REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 5u;
-    board_hv_enabled = true;
+    /* Keep the detector stage off during startup transients. */
+    REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 5u);
+    board_hv_enabled = false;
     *gpioa_moder = (*gpioa_moder & ~(3u << 10u)) | (1u << 10u);
 
     /* Preload the assumed inactive LED level before enabling output mode. */

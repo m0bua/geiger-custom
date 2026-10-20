@@ -38,6 +38,7 @@ bool board_display_sound_alarm_active(void);
 bool board_display_sound_alarm_stop_on_clear(void);
 void board_flashlight_alarm_set(bool active, bool on);
 void board_display_extra_enter(void);
+bool board_display_extra_active(void);
 void board_display_extra_step(bool forward);
 void board_display_extra_exit(void);
 bool board_display_settings_list_active(void);
