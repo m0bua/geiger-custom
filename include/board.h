@@ -16,6 +16,11 @@
 extern volatile uint32_t board_millis;
 
 void board_init(void);
+bool board_eeprom_read(uint16_t offset, uint8_t *value);
+bool board_eeprom_write(uint16_t offset, uint8_t value);
+bool board_rtc_log_time(uint32_t *uptime_seconds, uint32_t *calendar_seconds,
+                        bool *calendar_valid);
+uint32_t board_uptime_seconds_get(void);
 void board_set_idle_tick(bool idle);
 bool board_set_idle_clock(bool idle);
 uint8_t board_buttons_sample_10ms(void);
@@ -73,6 +78,7 @@ uint32_t board_display_screen_timeout_ms(void);
 bool board_display_led_flash_enabled(bool screen_on);
 bool board_display_click_sound_enabled(bool screen_on);
 bool board_display_search_mode(void);
+bool board_display_use_spi(void);
 void board_click_sound_start(void);
 void board_click_sound_service(void);
 void board_sound_alarm_set(bool active);

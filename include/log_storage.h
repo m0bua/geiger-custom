@@ -1,0 +1,22 @@
+#ifndef LOG_STORAGE_H
+#define LOG_STORAGE_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#define LOG_CUTOFF_REASON_BOOT 1u
+#define LOG_CUTOFF_REASON_CLOCK_SET 2u
+
+void log_storage_init(bool use_spi);
+void log_storage_sample_cpm(uint32_t cpm);
+void log_storage_second(uint32_t pulse_count);
+void log_storage_alert_sample(uint32_t cpm, uint32_t pulse_count,
+                              uint32_t uptime_seconds, bool rate_valid);
+bool log_storage_spi_available(void);
+/* Loads up to capacity completed minute CPM values, oldest first. */
+bool log_storage_minute_history_load(uint32_t *cpm, uint8_t capacity,
+                                     uint8_t *count);
+void log_storage_time_cutoff(uint32_t uptime_seconds, uint32_t calendar_seconds,
+                             bool calendar_valid, uint8_t reason);
+
+#endif

@@ -1,5 +1,6 @@
 #include "board.h"
 #include "cpm_history.h"
+#include "log_storage.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -68,6 +69,17 @@ int main(void)
     board_lcd_backlight_set_brightness(10u);
     board_lcd_backlight_set(false);
     board_display_init();
+    log_storage_init(board_display_use_spi());
+    {
+        uint32_t uptime_seconds;
+        uint32_t calendar_seconds;
+        bool calendar_valid;
+        if (board_rtc_log_time(&uptime_seconds, &calendar_seconds,
+                &calendar_valid)) {
+            log_storage_time_cutoff(uptime_seconds, calendar_seconds,
+                calendar_valid, LOG_CUTOFF_REASON_BOOT);
+        }
+    }
     screen_alarm_active = board_display_screen_alarm_active();
     sound_alarm_active = board_display_sound_alarm_active();
     board_sound_alarm_set(sound_alarm_active);
@@ -367,6 +379,10 @@ int main(void)
                 }
                 if (cpm > session_max_cpm) session_max_cpm = cpm;
                 latest_cpm = cpm;
+                log_storage_second(second_pulses);
+                log_storage_alert_sample(cpm, second_pulses,
+                    board_uptime_seconds_get(),
+                    pulses_since_start >= 25u);
                 board_display_set_rate(rate_thousandths, cpm,
                                        pulses_since_start,
                                        pulses_since_start >= 25u);
@@ -378,6 +394,9 @@ int main(void)
                 dose_fraction %= 3600u;
                 board_display_set_dose(dose_thousandths, dose_fraction,
                                        dose_measurement_seconds);
+                } else {
+                    log_storage_alert_sample(0u, 0u,
+                        board_uptime_seconds_get(), false);
                 }
                 if (session_elapsed_seconds != 0u) {
                     const uint64_t integrated_rate =
@@ -401,6 +420,7 @@ int main(void)
 
             if ((int32_t)(now - next_cpm_history_tick) >= 0) {
                 cpm_history_push(latest_cpm);
+                if (hv_enabled) log_storage_sample_cpm(latest_cpm);
                 board_display_history_updated();
                 /* Do not fabricate a burst of old samples after a delayed
                  * service pass; resume the regular 500 ms cadence from now. */

@@ -4,8 +4,11 @@
 #include "cpm_history.h"
 #include "font_large.h"
 #include "font_small.h"
+#include "log_storage.h"
+#include "spi_nor.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 volatile uint32_t board_millis;
@@ -150,7 +153,7 @@ static uint8_t lcd_indication_mode = 1u;
     FONT_SMALL_CELL_HEIGHT)
 #define LCD_EXTRA_SCREEN_COUNT 3u
 #define LCD_GRAPH_PAGE 5u
-#define LCD_GRAPH_RANGE_COUNT 4u
+#define LCD_GRAPH_RANGE_COUNT 5u
 #define LCD_GRAPH_HEIGHT (LCD_HEIGHT - FONT_SMALL_CELL_HEIGHT)
 #define LCD_GRAPH_CHUNK_HEIGHT FONT_SMALL_CELL_HEIGHT
 #define LCD_GRAPH_CHUNK_COUNT (LCD_GRAPH_HEIGHT / LCD_GRAPH_CHUNK_HEIGHT)
@@ -264,9 +267,12 @@ static uint8_t lcd_screen_page;
 static uint8_t lcd_main_return_page;
 static uint8_t lcd_graph_range_index = 1u;
 static uint8_t lcd_graph_column_y[LCD_WIDTH];
+static uint32_t lcd_graph_minute_cpm[60];
+static uint8_t lcd_graph_minute_count;
 static uint32_t lcd_graph_refresh_deadline;
 static bool lcd_settings_list_active;
 static uint8_t lcd_settings_selected;
+static bool settings_spi_enabled;
 static bool lcd_settings_editing;
 static uint8_t lcd_settings_edit_value;
 static bool rtc_ready;
@@ -415,6 +421,7 @@ typedef struct {
 
 static rtc_calendar_t lcd_time_draft;
 static bool lcd_time_draft_ready;
+static bool rtc_read_calendar(rtc_calendar_t *calendar);
 
 #define RTC_CONFIG_MAGIC 0x47523255u /* v2: correct RTCEN/RTCRST setup */
 #define RTC_TIME_VALID_MAGIC 0x54494D45u
@@ -441,6 +448,39 @@ static uint8_t rtc_days_in_month(uint16_t year, uint8_t month)
     if (month == 0u || month > 12u) return 31u;
     if (month == 2u && (year % 4u) == 0u) return 29u;
     return month_days[month - 1u];
+}
+
+static uint32_t rtc_calendar_seconds_since_2000(const rtc_calendar_t *calendar)
+{
+    uint32_t days = 0u;
+    for (uint16_t year = 2000u; year < calendar->year; ++year) {
+        days += (year % 4u) == 0u ? 366u : 365u;
+    }
+    for (uint8_t month = 1u; month < calendar->month; ++month) {
+        days += rtc_days_in_month(calendar->year, month);
+    }
+    days += (uint32_t)calendar->day - 1u;
+    return (((days * 24u + calendar->hour) * 60u + calendar->minute) *
+        60u) + calendar->second;
+}
+
+bool board_rtc_log_time(uint32_t *uptime_seconds, uint32_t *calendar_seconds,
+                        bool *calendar_valid)
+{
+    rtc_calendar_t calendar;
+    bool valid;
+    if (uptime_seconds == NULL || calendar_seconds == NULL ||
+        calendar_valid == NULL) return false;
+    valid = rtc_time_valid && rtc_read_calendar(&calendar);
+    *uptime_seconds = board_uptime_seconds;
+    *calendar_valid = valid;
+    *calendar_seconds = valid ? rtc_calendar_seconds_since_2000(&calendar) : 0u;
+    return true;
+}
+
+uint32_t board_uptime_seconds_get(void)
+{
+    return board_uptime_seconds;
 }
 
 static bool rtc_wait_flag(volatile uint32_t *reg, uint32_t mask,
@@ -564,6 +604,9 @@ static bool rtc_write_calendar(const rtc_calendar_t *calendar,
     if (mark_time_valid) {
         RTC_BKP1R = RTC_TIME_VALID_MAGIC;
         rtc_time_valid = true;
+        log_storage_time_cutoff(board_uptime_seconds,
+            rtc_calendar_seconds_since_2000(calendar), true,
+            LOG_CUTOFF_REASON_CLOCK_SET);
     }
     return true;
 }
@@ -1769,7 +1812,8 @@ static uint8_t lcd_settings_make_line(uint8_t visible_row, char *line)
 
 static void lcd_graph_build_series(uint8_t requested)
 {
-    const uint8_t available = cpm_history_count();
+    const uint8_t available = lcd_graph_range_index == 4u ?
+        lcd_graph_minute_count : cpm_history_count();
     const uint8_t visible = available < requested ? available : requested;
     uint32_t maximum = 0u;
     uint32_t candidate;
@@ -1779,7 +1823,12 @@ static void lcd_graph_build_series(uint8_t requested)
         lcd_graph_column_y[x] = UINT8_MAX;
     }
     for (uint8_t age = 0u; age < visible; ++age) {
-        if (cpm_history_get(age, &candidate) && candidate > maximum) {
+        const bool got_value = lcd_graph_range_index == 4u ?
+            (age < lcd_graph_minute_count &&
+             (candidate = lcd_graph_minute_cpm[
+                lcd_graph_minute_count - 1u - age], true)) :
+            cpm_history_get(age, &candidate);
+        if (got_value && candidate > maximum) {
             maximum = candidate;
         }
     }
@@ -1796,7 +1845,12 @@ static void lcd_graph_build_series(uint8_t requested)
         for (uint16_t x = data_start; x < LCD_WIDTH; ++x) {
             uint32_t value;
             if (visible == 1u || span == 0u) {
-                (void)cpm_history_get(0u, &value);
+                if (lcd_graph_range_index == 4u) {
+                    value = lcd_graph_minute_cpm[
+                        lcd_graph_minute_count - 1u];
+                } else {
+                    (void)cpm_history_get(0u, &value);
+                }
             } else {
                 const uint32_t position =
                     (uint32_t)(x - data_start) * (visible - 1u);
@@ -1806,10 +1860,20 @@ static void lcd_graph_build_series(uint8_t requested)
                 uint32_t older_value = 0u;
                 uint32_t newer_value = 0u;
 
-                (void)cpm_history_get(age, &older_value);
+                if (lcd_graph_range_index == 4u) {
+                    older_value = lcd_graph_minute_cpm[
+                        lcd_graph_minute_count - 1u - age];
+                } else {
+                    (void)cpm_history_get(age, &older_value);
+                }
                 if (age != 0u) {
-                    (void)cpm_history_get((uint8_t)(age - 1u),
-                                          &newer_value);
+                    if (lcd_graph_range_index == 4u) {
+                        newer_value = lcd_graph_minute_cpm[
+                            lcd_graph_minute_count - age];
+                    } else {
+                        (void)cpm_history_get((uint8_t)(age - 1u),
+                                              &newer_value);
+                    }
                 } else {
                     newer_value = older_value;
                 }
@@ -1826,7 +1890,7 @@ static void lcd_graph_build_series(uint8_t requested)
 static bool lcd_graph_prepare_glyph(void)
 {
     static const uint8_t range_seconds[LCD_GRAPH_RANGE_COUNT] = {
-        10u, 30u, 60u, 90u
+        10u, 30u, 60u, 90u, 0u
     };
     const uint8_t step = lcd_text_glyph_index;
     uint8_t x_window[4] = { 0u, 0u, 0u, LCD_WIDTH - 1u };
@@ -1839,7 +1903,7 @@ static bool lcd_graph_prepare_glyph(void)
 
     lcd_text_dma_glyph_advance = 1u;
     if (step == 0u) {
-        static const char range_label[] = "10s/30s/60s/90s";
+        static const char range_label[] = "10s/30s/60s/90s/1h";
         const uint8_t length = (uint8_t)(sizeof(range_label) - 1u);
         const uint8_t x_start = (uint8_t)((LCD_WIDTH -
             (length * (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP) -
@@ -1857,9 +1921,10 @@ static bool lcd_graph_prepare_glyph(void)
                     (uint8_t)(relative_x %
                         (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
                 const uint8_t option = column < 3u ? 0u :
-                    (column < 7u ? 1u : (column < 11u ? 2u : 3u));
+                    (column < 7u ? 1u : (column < 11u ? 2u :
+                        (column < 15u ? 3u : 4u)));
                 const bool separator = column == 3u || column == 7u ||
-                    column == 11u;
+                    column == 11u || column == 15u;
                 const uint16_t color = !separator &&
                     option == lcd_graph_range_index ? LCD_COUNTER_GREEN :
                         LCD_TEXT_FOREGROUND;
@@ -1869,8 +1934,17 @@ static bool lcd_graph_prepare_glyph(void)
                         color : LCD_TEXT_BACKGROUND;
             }
         }
-        lcd_graph_build_series((uint8_t)(range_seconds[
-            lcd_graph_range_index] * 2u));
+        if (lcd_graph_range_index == 4u) {
+            lcd_graph_minute_count = 0u;
+            (void)log_storage_minute_history_load(lcd_graph_minute_cpm,
+                (uint8_t)(sizeof(lcd_graph_minute_cpm) /
+                    sizeof(lcd_graph_minute_cpm[0])),
+                &lcd_graph_minute_count);
+            lcd_graph_build_series(60u);
+        } else {
+            lcd_graph_build_series((uint8_t)(range_seconds[
+                lcd_graph_range_index] * 2u));
+        }
         y_window[1] = LCD_Y_OFFSET;
         y_window[3] = (uint8_t)(LCD_Y_OFFSET + FONT_SMALL_CELL_HEIGHT - 1u);
     } else {
@@ -2899,6 +2973,11 @@ bool board_display_search_mode(void)
     return lcd_indication_mode == 2u;
 }
 
+bool board_display_use_spi(void)
+{
+    return settings_spi_enabled;
+}
+
 bool board_display_rate_long_press(void)
 {
     if (lcd_screen_page != 0u || lcd_settings_list_active) return false;
@@ -3117,8 +3196,9 @@ static bool settings_legacy_record_read(uint8_t slot, uint8_t *sequence,
             *lead_zero ^ *unit);
 }
 
-static bool settings_eeprom_write_byte(uint8_t offset, uint8_t value)
+static bool settings_eeprom_write_byte(uint16_t offset, uint8_t value)
 {
+    if (offset >= 2048u) return false;
     volatile uint8_t *address = (volatile uint8_t *)(uintptr_t)(
         DATA_EEPROM_BASE + offset);
     uint32_t timeout = 1000000u;
@@ -3138,6 +3218,18 @@ static bool settings_eeprom_write_byte(uint8_t offset, uint8_t value)
     return timeout != 0u && *address == value;
 }
 
+bool board_eeprom_read(uint16_t offset, uint8_t *value)
+{
+    if (offset >= 2048u || value == NULL) return false;
+    *value = *(volatile const uint8_t *)(uintptr_t)(DATA_EEPROM_BASE + offset);
+    return true;
+}
+
+bool board_eeprom_write(uint16_t offset, uint8_t value)
+{
+    return settings_eeprom_write_byte(offset, value);
+}
+
 #define SETTINGS_CLICKS_EEPROM_BASE 120u
 #define SETTINGS_CLICKS_MAGIC 0xB6u
 #define SETTINGS_CLICK_TONE_EEPROM_BASE 124u
@@ -3146,6 +3238,8 @@ static bool settings_eeprom_write_byte(uint8_t offset, uint8_t value)
 #define SETTINGS_SOUND_ALARM_MAGIC 0xB9u
 #define SETTINGS_ALARM_STOP_EEPROM_BASE 132u
 #define SETTINGS_ALARM_STOP_MAGIC 0xBAu
+#define SETTINGS_SPI_EEPROM_BASE 136u
+#define SETTINGS_SPI_EEPROM_MAGIC 0xBCu
 
 static void settings_clicks_load(void)
 {
@@ -3155,6 +3249,32 @@ static void settings_clicks_load(void)
         record[2] == (uint8_t)(0x6Du ^ record[1])) {
         lcd_settings_value_index[1] = record[1];
     }
+}
+
+static void settings_spi_load(void)
+{
+    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + SETTINGS_SPI_EEPROM_BASE);
+    if (record[0] == SETTINGS_SPI_EEPROM_MAGIC && record[1] < 2u &&
+        record[2] == (uint8_t)(0xA5u ^ record[1])) {
+        settings_spi_enabled = record[1] != 0u;
+        lcd_settings_value_index[13] = record[1];
+    }
+}
+
+static bool settings_spi_save(void)
+{
+    const uint8_t value = lcd_settings_value_index[13] != 0u ? 1u : 0u;
+    if (!settings_eeprom_write_byte(SETTINGS_SPI_EEPROM_BASE, 0u) ||
+        !settings_eeprom_write_byte(SETTINGS_SPI_EEPROM_BASE + 1u, value) ||
+        !settings_eeprom_write_byte(SETTINGS_SPI_EEPROM_BASE + 2u,
+            (uint8_t)(0xA5u ^ value)) ||
+        !settings_eeprom_write_byte(SETTINGS_SPI_EEPROM_BASE,
+            SETTINGS_SPI_EEPROM_MAGIC)) {
+        return false;
+    }
+    settings_spi_enabled = value != 0u;
+    return true;
 }
 
 static void settings_clicks_save(void)
@@ -3680,6 +3800,14 @@ static void lcd_settings_apply_current(void)
     if (lcd_settings_selected == 4u) settings_sound_alarm_save();
     if (lcd_settings_selected == 20u) settings_click_tone_save();
     if (lcd_settings_selected == 17u) settings_alarm_stop_save();
+    if (lcd_settings_selected == 13u) {
+        (void)settings_spi_save();
+        if (settings_spi_enabled) {
+            (void)spi_nor_init();
+        } else {
+            spi_nor_deinit();
+        }
+    }
     if (lcd_settings_selected == 0u || lcd_settings_selected == 2u) {
         (void)settings_alarm_save();
     }
@@ -3711,7 +3839,8 @@ static bool settings_reset_all(void)
 {
     static const uint8_t record_magic_offsets[] = {
         0u, 5u, 16u, 23u, 32u, 41u, 64u, 68u, 80u, 85u,
-        96u, 100u, 104u, 108u, 112u, 116u, 120u, 124u, 128u, 132u
+        96u, 100u, 104u, 108u, 112u, 116u, 120u, 124u, 128u, 132u,
+        SETTINGS_SPI_EEPROM_BASE
     };
 
     for (uint8_t i = 0u;
@@ -4710,6 +4839,7 @@ void board_display_init(void)
     lcd_background_pending = true;
     board_rtc_init();
     settings_eeprom_load();
+    settings_spi_load();
     settings_clicks_load();
     settings_click_tone_load();
     settings_sound_alarm_load();
@@ -4719,6 +4849,9 @@ void board_display_init(void)
     settings_hv_load();
     settings_light_alarm_load();
     settings_dose_alarm_load();
+    if (settings_spi_enabled) {
+        (void)spi_nor_init();
+    }
     lcd_apply_brightness_settings();
     /* Replace static startup labels with the loaded unit/prefix choices
      * before the LCD's initial background fill and first text render. */
