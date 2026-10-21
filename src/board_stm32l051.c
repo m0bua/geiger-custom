@@ -1,6 +1,7 @@
 #include "board.h"
 #include "board_config.h"
 #include "button_input.h"
+#include "cpm_history.h"
 #include "font_large.h"
 #include "font_small.h"
 
@@ -148,6 +149,11 @@ static uint8_t lcd_indication_mode = 1u;
 #define LCD_SMALL_TEXT_ROW_PIXELS (LCD_SMALL_TEXT_ROW_WIDTH * \
     FONT_SMALL_CELL_HEIGHT)
 #define LCD_EXTRA_SCREEN_COUNT 3u
+#define LCD_GRAPH_PAGE 5u
+#define LCD_GRAPH_RANGE_COUNT 4u
+#define LCD_GRAPH_HEIGHT (LCD_HEIGHT - FONT_SMALL_CELL_HEIGHT)
+#define LCD_GRAPH_CHUNK_HEIGHT FONT_SMALL_CELL_HEIGHT
+#define LCD_GRAPH_CHUNK_COUNT (LCD_GRAPH_HEIGHT / LCD_GRAPH_CHUNK_HEIGHT)
 #define LCD_TEXT_FIRST_X ((LCD_WIDTH - (LCD_TEXT_COLUMNS * \
     FONT_LARGE_CELL_WIDTH + (LCD_TEXT_COLUMNS - 1u) * LCD_TEXT_GAP)) / 2u)
 #define LCD_SMALL_TEXT_FIRST_Y ((LCD_HEIGHT - (LCD_SMALL_TEXT_ROWS * \
@@ -256,6 +262,9 @@ static uint16_t lcd_displayed_solar_percent;
 static bool lcd_solar_sample_ready;
 static uint8_t lcd_screen_page;
 static uint8_t lcd_main_return_page;
+static uint8_t lcd_graph_range_index = 1u;
+static uint8_t lcd_graph_column_y[LCD_WIDTH];
+static uint32_t lcd_graph_refresh_deadline;
 static bool lcd_settings_list_active;
 static uint8_t lcd_settings_selected;
 static bool lcd_settings_editing;
@@ -1758,6 +1767,148 @@ static uint8_t lcd_settings_make_line(uint8_t visible_row, char *line)
     return 20u;
 }
 
+static void lcd_graph_build_series(uint8_t requested)
+{
+    const uint8_t available = cpm_history_count();
+    const uint8_t visible = available < requested ? available : requested;
+    uint32_t maximum = 0u;
+    uint32_t candidate;
+    const uint16_t bottom = LCD_HEIGHT - 1u;
+
+    for (uint16_t x = 0u; x < LCD_WIDTH; ++x) {
+        lcd_graph_column_y[x] = UINT8_MAX;
+    }
+    for (uint8_t age = 0u; age < visible; ++age) {
+        if (cpm_history_get(age, &candidate) && candidate > maximum) {
+            maximum = candidate;
+        }
+    }
+    if (maximum == 0u) maximum = 1u;
+    if (visible == 0u) return;
+
+    {
+        const uint16_t data_start = visible >= requested ? 0u :
+            (uint16_t)(LCD_WIDTH - 1u -
+                (((uint32_t)(visible - 1u) * (LCD_WIDTH - 1u)) /
+                    (requested - 1u)));
+        const uint16_t span = (uint16_t)(LCD_WIDTH - 1u - data_start);
+
+        for (uint16_t x = data_start; x < LCD_WIDTH; ++x) {
+            uint32_t value;
+            if (visible == 1u || span == 0u) {
+                (void)cpm_history_get(0u, &value);
+            } else {
+                const uint32_t position =
+                    (uint32_t)(x - data_start) * (visible - 1u);
+                const uint8_t older_index = (uint8_t)(position / span);
+                const uint32_t remainder = position % span;
+                const uint8_t age = (uint8_t)(visible - 1u - older_index);
+                uint32_t older_value = 0u;
+                uint32_t newer_value = 0u;
+
+                (void)cpm_history_get(age, &older_value);
+                if (age != 0u) {
+                    (void)cpm_history_get((uint8_t)(age - 1u),
+                                          &newer_value);
+                } else {
+                    newer_value = older_value;
+                }
+                value = (uint32_t)(((uint64_t)older_value *
+                    (span - remainder) +
+                    (uint64_t)newer_value * remainder) / span);
+            }
+            lcd_graph_column_y[x] = (uint8_t)(bottom -
+                ((uint64_t)value * (LCD_GRAPH_HEIGHT - 1u)) / maximum);
+        }
+    }
+}
+
+static bool lcd_graph_prepare_glyph(void)
+{
+    static const uint8_t range_seconds[LCD_GRAPH_RANGE_COUNT] = {
+        10u, 30u, 60u, 90u
+    };
+    const uint8_t step = lcd_text_glyph_index;
+    uint8_t x_window[4] = { 0u, 0u, 0u, LCD_WIDTH - 1u };
+    uint8_t y_window[4];
+
+    if (step > LCD_GRAPH_CHUNK_COUNT) {
+        lcd_text_active = false;
+        return false;
+    }
+
+    lcd_text_dma_glyph_advance = 1u;
+    if (step == 0u) {
+        static const char range_label[] = "10s/30s/60s/90s";
+        const uint8_t length = (uint8_t)(sizeof(range_label) - 1u);
+        const uint8_t x_start = (uint8_t)((LCD_WIDTH -
+            (length * (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP) -
+             LCD_SMALL_TEXT_GAP)) / 2u);
+        lcd_text_glyph_pixels = LCD_TOP_ROW_PIXELS;
+        for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
+            for (uint16_t x = 0u; x < LCD_WIDTH; ++x) {
+                const uint16_t pixel = (uint16_t)y * LCD_WIDTH + x;
+                const uint16_t relative_x = x >= x_start ?
+                    (uint16_t)(x - x_start) : UINT16_MAX;
+                const uint8_t column = relative_x == UINT16_MAX ? length :
+                    (uint8_t)(relative_x /
+                        (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
+                const uint8_t glyph_x = relative_x == UINT16_MAX ? 0u :
+                    (uint8_t)(relative_x %
+                        (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
+                const uint8_t option = column < 3u ? 0u :
+                    (column < 7u ? 1u : (column < 11u ? 2u : 3u));
+                const bool separator = column == 3u || column == 7u ||
+                    column == 11u;
+                const uint16_t color = !separator &&
+                    option == lcd_graph_range_index ? LCD_COUNTER_GREEN :
+                        LCD_TEXT_FOREGROUND;
+                lcd_text_glyph[pixel] = column < length &&
+                    glyph_x < FONT_SMALL_CELL_WIDTH &&
+                    font_small_pixel(range_label[column], glyph_x, y) ?
+                        color : LCD_TEXT_BACKGROUND;
+            }
+        }
+        lcd_graph_build_series((uint8_t)(range_seconds[
+            lcd_graph_range_index] * 2u));
+        y_window[1] = LCD_Y_OFFSET;
+        y_window[3] = (uint8_t)(LCD_Y_OFFSET + FONT_SMALL_CELL_HEIGHT - 1u);
+    } else {
+        const uint8_t chunk_row = (uint8_t)((step - 1u) *
+            LCD_GRAPH_CHUNK_HEIGHT);
+        const uint16_t graph_y_start = (uint16_t)(FONT_SMALL_CELL_HEIGHT +
+            chunk_row);
+        const uint16_t graph_bottom = LCD_HEIGHT - 1u;
+        lcd_text_glyph_pixels = (uint16_t)(LCD_WIDTH *
+            LCD_GRAPH_CHUNK_HEIGHT);
+
+        for (uint8_t row = 0u; row < LCD_GRAPH_CHUNK_HEIGHT; ++row) {
+            const uint16_t graph_y = (uint16_t)(graph_y_start + row);
+            const bool grid_line = graph_y == FONT_SMALL_CELL_HEIGHT + 15u ||
+                graph_y == FONT_SMALL_CELL_HEIGHT + 30u ||
+                graph_y == FONT_SMALL_CELL_HEIGHT + 45u ||
+                graph_y == graph_bottom;
+            for (uint16_t x = 0u; x < LCD_WIDTH; ++x) {
+                lcd_text_glyph[(uint16_t)row * LCD_WIDTH + x] =
+                    lcd_graph_column_y[x] == graph_y ? LCD_COUNTER_GREEN :
+                        (grid_line ? 0x3186u : LCD_TEXT_BACKGROUND);
+            }
+        }
+        y_window[1] = (uint8_t)(LCD_Y_OFFSET + graph_y_start);
+        y_window[3] = (uint8_t)(y_window[1] +
+            LCD_GRAPH_CHUNK_HEIGHT - 1u);
+    }
+
+    y_window[0] = 0u;
+    y_window[2] = 0u;
+    REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 11u);
+    lcd_command(0x2Au, x_window, sizeof(x_window));
+    lcd_command(0x2Bu, y_window, sizeof(y_window));
+    lcd_command(0x2Cu, 0, 0u);
+    lcd_text_row_commands_queued = true;
+    return true;
+}
+
 static bool lcd_text_prepare_glyph(void)
 {
     if (lcd_screen_page == 2u) {
@@ -2001,6 +2152,10 @@ static bool lcd_text_prepare_glyph(void)
         lcd_command(0x2Cu, 0, 0u);
         lcd_text_row_commands_queued = true;
         return true;
+    }
+
+    if (lcd_screen_page == LCD_GRAPH_PAGE) {
+        return lcd_graph_prepare_glyph();
     }
 
     if (lcd_screen_page >= 3u) {
@@ -2679,6 +2834,15 @@ static bool lcd_text_prepare_glyph(void)
 
 void board_display_left_short(void)
 {
+    if (lcd_screen_page == LCD_GRAPH_PAGE) {
+        lcd_graph_range_index = (uint8_t)((lcd_graph_range_index +
+            LCD_GRAPH_RANGE_COUNT - 1u) % LCD_GRAPH_RANGE_COUNT);
+        lcd_text_active = false;
+        lcd_text_row_commands_queued = false;
+        lcd_background_pending = false;
+        lcd_cpm_redraw_pending = true;
+        return;
+    }
     if (lcd_screen_page >= 2u) {
         board_display_extra_step(false);
         return;
@@ -2703,6 +2867,15 @@ void board_display_left_short(void)
 
 void board_display_right_short(void)
 {
+    if (lcd_screen_page == LCD_GRAPH_PAGE) {
+        lcd_graph_range_index = (uint8_t)((lcd_graph_range_index + 1u) %
+            LCD_GRAPH_RANGE_COUNT);
+        lcd_text_active = false;
+        lcd_text_row_commands_queued = false;
+        lcd_background_pending = false;
+        lcd_cpm_redraw_pending = true;
+        return;
+    }
     if (lcd_screen_page >= 2u) {
         board_display_extra_step(true);
         return;
@@ -2728,7 +2901,7 @@ bool board_display_search_mode(void)
 
 bool board_display_rate_long_press(void)
 {
-    if (lcd_screen_page >= 2u || lcd_settings_list_active) return false;
+    if (lcd_screen_page != 0u || lcd_settings_list_active) return false;
 
     flashlight_manual_enabled = !flashlight_manual_enabled;
     flashlight_enabled = flashlight_alarm_override ? flashlight_alarm_output :
@@ -2737,6 +2910,25 @@ bool board_display_rate_long_press(void)
         (1u << FLASHLIGHT_PIN) : (1u << (16u + FLASHLIGHT_PIN));
     lcd_text_active = false;
     lcd_text_row_commands_queued = false;
+    lcd_cpm_redraw_pending = true;
+    return true;
+}
+
+bool board_display_graph_enter(void)
+{
+    if (lcd_screen_page != 1u || lcd_settings_list_active) return false;
+
+    lcd_main_return_page = 1u;
+    lcd_screen_page = LCD_GRAPH_PAGE;
+    lcd_graph_range_index = 1u;
+    lcd_graph_refresh_deadline = board_millis + 500u;
+    lcd_graph_column_y[0] = UINT8_MAX;
+    lcd_text_active = false;
+    lcd_text_row_commands_queued = false;
+    lcd_dma_text_glyph_advance = 0u;
+    /* The graph renderer writes every pixel, so a preceding full-screen
+     * clearing pass is unnecessary and would only make entry flash. */
+    lcd_background_pending = false;
     lcd_cpm_redraw_pending = true;
     return true;
 }
@@ -2775,7 +2967,7 @@ void board_display_extra_enter(void)
 
 bool board_display_extra_active(void)
 {
-    return lcd_screen_page >= 2u;
+    return lcd_screen_page >= 2u && lcd_screen_page < LCD_GRAPH_PAGE;
 }
 
 void board_display_extra_step(bool forward)
@@ -2809,6 +3001,7 @@ void board_display_extra_exit(void)
     lcd_settings_list_active = false;
     lcd_settings_editing = false;
     lcd_settings_selected = 0u;
+    lcd_graph_column_y[0] = UINT8_MAX;
     if (lcd_screen_page == 0u) {
         lcd_format_rate_display(lcd_rate_value_thousandths);
         lcd_format_cpm(lcd_current_cpm);
@@ -4085,8 +4278,18 @@ void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm,
         }
         changed = true;
     }
-    if (changed && lcd_ready) {
+    if (changed && lcd_ready && lcd_screen_page != LCD_GRAPH_PAGE) {
         lcd_cpm_redraw_pending = true;
+    }
+}
+
+void board_display_history_updated(void)
+{
+    if (lcd_screen_page == LCD_GRAPH_PAGE && lcd_ready &&
+        !lcd_text_active && !lcd_background_pending && !lcd_fill_active &&
+        !lcd_dma_active && deadline_reached(lcd_graph_refresh_deadline)) {
+        lcd_cpm_redraw_pending = true;
+        lcd_graph_refresh_deadline = board_millis + 500u;
     }
 }
 
@@ -4484,6 +4687,8 @@ bool board_display_busy(void)
     }
     const bool redraw_pending = backlight_requested_on &&
         (lcd_cpm_redraw_pending ||
+         (lcd_screen_page == LCD_GRAPH_PAGE &&
+          deadline_reached(lcd_graph_refresh_deadline)) ||
          (lcd_screen_page == 2u && lcd_time_redraw_pending) ||
          (lcd_screen_page == 3u && lcd_settings_redraw_pending) ||
          (lcd_screen_page == 4u && lcd_debug_redraw_pending));

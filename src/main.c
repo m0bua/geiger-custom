@@ -39,7 +39,6 @@ int main(void)
     uint32_t next_minute_tick;
     uint32_t next_cpm_history_tick;
     uint32_t latest_cpm = 0u;
-    static cpm_history_t cpm_history;
     uint8_t minute_head = 0u;
     uint32_t led_blink_deadline = 0u;
     uint32_t high_speed_deadline = 0u;
@@ -81,7 +80,7 @@ int main(void)
     next_solar_sample = board_millis;
     next_battery_sample = board_millis;
     next_minute_tick = board_millis + 1000u;
-    cpm_history_init(&cpm_history);
+    cpm_history_init();
     next_cpm_history_tick = board_millis + 500u;
     screen_timeout_ms = board_display_screen_timeout_ms();
     inactivity_deadline = board_millis + screen_timeout_ms;
@@ -187,7 +186,7 @@ int main(void)
                     board_display_settings_change();
                 } else if (board_display_extra_active()) {
                     board_display_settings_list_activate();
-                } else {
+                } else if (!board_display_graph_enter()) {
                     board_display_extra_enter();
                 }
                 right_long_handled = true;
@@ -401,7 +400,8 @@ int main(void)
             }
 
             if ((int32_t)(now - next_cpm_history_tick) >= 0) {
-                cpm_history_push(&cpm_history, latest_cpm);
+                cpm_history_push(latest_cpm);
+                board_display_history_updated();
                 /* Do not fabricate a burst of old samples after a delayed
                  * service pass; resume the regular 500 ms cadence from now. */
                 next_cpm_history_tick = now + 500u;

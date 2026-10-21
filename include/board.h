@@ -38,6 +38,7 @@ void board_display_service(void);
 void board_display_left_short(void);
 void board_display_right_short(void);
 bool board_display_rate_long_press(void);
+bool board_display_graph_enter(void);
 bool board_display_light_alarm_active(void);
 bool board_display_dose_alarm_active(void);
 bool board_display_sound_alarm_active(void);
@@ -56,6 +57,7 @@ void board_reboot(void);
 void board_power_off(void);
 void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm,
                             uint32_t pulses_since_start, bool window_ready);
+void board_display_history_updated(void);
 uint8_t board_display_rate_led_mask(void);
 void board_display_set_rate_led(void);
 void board_display_set_dose(uint32_t dose_thousandths,

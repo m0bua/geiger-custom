@@ -2,63 +2,59 @@
 
 #include <stddef.h>
 
-void cpm_history_init(cpm_history_t *history)
-{
-    if (history == NULL) {
-        return;
-    }
+static uint8_t cpm_samples[CPM_HISTORY_CAPACITY *
+    CPM_HISTORY_BYTES_PER_SAMPLE];
+static uint8_t cpm_head;
+static uint8_t cpm_count;
 
-    for (size_t i = 0u; i < sizeof(history->samples); ++i) {
-        history->samples[i] = 0u;
+void cpm_history_init(void)
+{
+    for (size_t i = 0u; i < sizeof(cpm_samples); ++i) {
+        cpm_samples[i] = 0u;
     }
-    history->head = 0u;
-    history->count = 0u;
+    cpm_head = 0u;
+    cpm_count = 0u;
 }
 
-void cpm_history_push(cpm_history_t *history, uint32_t cpm)
+void cpm_history_push(uint32_t cpm)
 {
     uint8_t *sample;
-
-    if (history == NULL) {
-        return;
-    }
 
     if (cpm > 0xFFFFFFu) {
         cpm = 0xFFFFFFu;
     }
 
-    sample = &history->samples[(uint16_t)history->head *
+    sample = &cpm_samples[(uint16_t)cpm_head *
         CPM_HISTORY_BYTES_PER_SAMPLE];
     sample[0] = (uint8_t)cpm;
     sample[1] = (uint8_t)(cpm >> 8u);
     sample[2] = (uint8_t)(cpm >> 16u);
 
-    history->head = (uint8_t)((history->head + 1u) % CPM_HISTORY_CAPACITY);
-    if (history->count < CPM_HISTORY_CAPACITY) {
-        ++history->count;
+    cpm_head = (uint8_t)((cpm_head + 1u) % CPM_HISTORY_CAPACITY);
+    if (cpm_count < CPM_HISTORY_CAPACITY) {
+        ++cpm_count;
     }
 }
 
-uint8_t cpm_history_count(const cpm_history_t *history)
+uint8_t cpm_history_count(void)
 {
-    return history == NULL ? 0u : history->count;
+    return cpm_count;
 }
 
-bool cpm_history_get(const cpm_history_t *history, uint8_t age,
-                     uint32_t *cpm)
+bool cpm_history_get(uint8_t age, uint32_t *cpm)
 {
     uint8_t index;
     uint16_t offset;
 
-    if (history == NULL || cpm == NULL || age >= history->count) {
+    if (cpm == NULL || age >= cpm_count) {
         return false;
     }
 
-    index = (uint8_t)((history->head + CPM_HISTORY_CAPACITY - 1u - age) %
+    index = (uint8_t)((cpm_head + CPM_HISTORY_CAPACITY - 1u - age) %
         CPM_HISTORY_CAPACITY);
     offset = (uint16_t)index * CPM_HISTORY_BYTES_PER_SAMPLE;
-    *cpm = (uint32_t)history->samples[offset] |
-        ((uint32_t)history->samples[offset + 1u] << 8u) |
-        ((uint32_t)history->samples[offset + 2u] << 16u);
+    *cpm = (uint32_t)cpm_samples[offset] |
+        ((uint32_t)cpm_samples[offset + 1u] << 8u) |
+        ((uint32_t)cpm_samples[offset + 2u] << 16u);
     return true;
 }
