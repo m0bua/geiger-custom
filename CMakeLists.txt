@@ -12,6 +12,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 add_executable(geiger2
     startup_stm32l051.S
     src/main.c
+    src/button_input.c
     src/board_stm32l051.c
     src/app.c
     src/app_config.c

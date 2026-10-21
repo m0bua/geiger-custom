@@ -3,10 +3,23 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define SOLAR_SAMPLE_INTERVAL_MS 300u
+#define BATTERY_ACTIVE_SAMPLE_INTERVAL_MS 30000u
+#define BATTERY_IDLE_SAMPLE_INTERVAL_MS 600000u
+#define BATTERY_CRITICAL_SAMPLE_INTERVAL_MS 30000u
+
+static void screen_backlight_wake(void)
+{
+    /* Avoid a stale ambient-light level flashing before the fresh ADC sample. */
+    board_lcd_backlight_set_brightness(1u);
+    board_lcd_backlight_set(true);
+}
+
 int main(void)
 {
     uint32_t next_sample;
-    uint32_t next_adc_sample;
+    uint32_t next_solar_sample;
+    uint32_t next_battery_sample;
     uint32_t inactivity_deadline;
     uint32_t screen_timeout_ms;
     uint32_t event_count = 0u;
@@ -25,6 +38,7 @@ int main(void)
     uint32_t next_minute_tick;
     uint8_t minute_head = 0u;
     uint32_t led_blink_deadline = 0u;
+    uint32_t high_speed_deadline = 0u;
     uint32_t light_alarm_deadline = 0u;
     uint32_t startup_led_deadline;
     bool backlight_on = false;
@@ -35,11 +49,12 @@ int main(void)
     bool light_alarm_on = false;
     bool event_led_on = false;
     bool startup_led_active = true;
+    bool idle_tick_active = false;
+    bool idle_clock_active = false;
+    bool adc_screen_was_on = false;
     bool hv_enabled;
     bool left_long_handled = false;
     bool right_long_handled = false;
-    uint8_t wake_suppressed_buttons = 0u;
-    uint8_t alarm_suppressed_buttons = 0u;
 
     board_init();
     board_adc_init();
@@ -59,15 +74,38 @@ int main(void)
     previous_minute_sample = event_count;
 
     next_sample = board_millis;
-    next_adc_sample = board_millis;
+    next_solar_sample = board_millis;
+    next_battery_sample = board_millis;
     next_minute_tick = board_millis + 1000u;
     screen_timeout_ms = board_display_screen_timeout_ms();
     inactivity_deadline = board_millis + screen_timeout_ms;
 
     for (;;) {
-        board_display_service();
-        board_click_sound_service();
         uint32_t now = board_millis;
+        const uint8_t button_wakeup_mask =
+            board_take_button_wakeup_request();
+        const uint8_t currently_pressed = backlight_on ? 0u :
+            board_buttons_pressed_mask();
+
+        /* Button EXTI wakes immediately on the press edge; restore clocks and
+         * light the display without waiting for the 10 ms debounce samples. */
+        if (!backlight_on &&
+            (button_wakeup_mask != 0u || currently_pressed != 0u)) {
+            if (idle_clock_active) {
+                (void)board_set_idle_clock(false);
+                idle_clock_active = false;
+            }
+            if (idle_tick_active) {
+                board_set_idle_tick(false);
+                idle_tick_active = false;
+            }
+            now = board_millis;
+            screen_backlight_wake();
+            backlight_on = true;
+            inactivity_deadline = now + screen_timeout_ms;
+            board_buttons_suppress_until_release(button_wakeup_mask |
+                currently_pressed);
+        }
 
         if (startup_led_active &&
             (int32_t)(now - startup_led_deadline) >= 0) {
@@ -76,6 +114,14 @@ int main(void)
         }
 
         if ((uint32_t)(now - next_sample) >= 10u) {
+            /* Run the periodic 64-bit rate/dose calculations at full speed.
+             * MSI remains the clock between these brief service intervals. */
+            if (idle_clock_active &&
+                (int32_t)(now - next_minute_tick) >= 0) {
+                (void)board_set_idle_clock(false);
+                idle_clock_active = false;
+            }
+            now = board_millis;
             uint8_t events = board_buttons_sample_10ms();
             uint32_t detected_pulses = board_detector_count();
             const uint8_t button_events = BOARD_BUTTON_LEFT_DOWN |
@@ -83,68 +129,36 @@ int main(void)
                 BOARD_BUTTON_RIGHT | BOARD_BUTTON_LEFT_LONG |
                 BOARD_BUTTON_RIGHT_LONG;
 
+            /* A late loop samples once at the current time; it must not
+             * replay old samples and manufacture a long press. */
+            next_sample = now;
             if ((screen_alarm_active || light_alarm_active ||
                  sound_alarm_active) &&
                 (events & (BOARD_BUTTON_LEFT_DOWN |
                            BOARD_BUTTON_RIGHT_DOWN)) != 0u) {
-                alarm_suppressed_buttons |= events &
-                    (BOARD_BUTTON_LEFT_DOWN | BOARD_BUTTON_RIGHT_DOWN);
+                board_buttons_suppress_until_release(events &
+                    (BOARD_BUTTON_LEFT_DOWN | BOARD_BUTTON_RIGHT_DOWN));
                 sound_alarm_active = false;
                 alarms_acknowledged = true;
                 board_sound_alarm_set(false);
+                events &= (uint8_t)~button_events;
             }
 
-            if ((alarm_suppressed_buttons & BOARD_BUTTON_LEFT_DOWN) != 0u) {
-                events &= (uint8_t)~(BOARD_BUTTON_LEFT_DOWN | BOARD_BUTTON_LEFT |
-                                    BOARD_BUTTON_LEFT_LONG);
-                if ((events & BOARD_BUTTON_LEFT_UP) != 0u) {
-                    alarm_suppressed_buttons &=
-                        (uint8_t)~BOARD_BUTTON_LEFT_DOWN;
-                }
-            }
-            if ((alarm_suppressed_buttons & BOARD_BUTTON_RIGHT_DOWN) != 0u) {
-                events &= (uint8_t)~(BOARD_BUTTON_RIGHT_DOWN |
-                    BOARD_BUTTON_RIGHT | BOARD_BUTTON_RIGHT_LONG);
-                if ((events & BOARD_BUTTON_RIGHT_UP) != 0u) {
-                    alarm_suppressed_buttons &=
-                        (uint8_t)~BOARD_BUTTON_RIGHT_DOWN;
-                }
-            }
-
-            next_sample += 10u;
             if (!backlight_on &&
                 (events & (BOARD_BUTTON_LEFT_DOWN |
                            BOARD_BUTTON_RIGHT_DOWN)) != 0u) {
-                board_lcd_backlight_set(true);
+                if (idle_clock_active) {
+                    (void)board_set_idle_clock(false);
+                    idle_clock_active = false;
+                }
+                board_buttons_suppress_until_release(events &
+                    (BOARD_BUTTON_LEFT_DOWN | BOARD_BUTTON_RIGHT_DOWN));
+                screen_backlight_wake();
                 backlight_on = true;
                 inactivity_deadline = now + screen_timeout_ms;
-                wake_suppressed_buttons |= events &
-                    (BOARD_BUTTON_LEFT_DOWN | BOARD_BUTTON_RIGHT_DOWN);
                 events &= (uint8_t)~button_events;
             } else if ((events & button_events) != 0u) {
                 inactivity_deadline = now + screen_timeout_ms;
-            }
-            if ((events & BOARD_BUTTON_LEFT_UP) != 0u) {
-                if ((wake_suppressed_buttons & BOARD_BUTTON_LEFT_DOWN) != 0u) {
-                    events &= (uint8_t)~(BOARD_BUTTON_LEFT |
-                        BOARD_BUTTON_LEFT_LONG | BOARD_BUTTON_LEFT_DOWN);
-                }
-                wake_suppressed_buttons &= (uint8_t)~BOARD_BUTTON_LEFT_DOWN;
-            }
-            if ((events & BOARD_BUTTON_RIGHT_UP) != 0u) {
-                if ((wake_suppressed_buttons & BOARD_BUTTON_RIGHT_DOWN) != 0u) {
-                    events &= (uint8_t)~(BOARD_BUTTON_RIGHT |
-                        BOARD_BUTTON_RIGHT_LONG | BOARD_BUTTON_RIGHT_DOWN);
-                }
-                wake_suppressed_buttons &= (uint8_t)~BOARD_BUTTON_RIGHT_DOWN;
-            }
-            if ((wake_suppressed_buttons & BOARD_BUTTON_LEFT_DOWN) != 0u) {
-                events &= (uint8_t)~(BOARD_BUTTON_LEFT | BOARD_BUTTON_LEFT_LONG |
-                                     BOARD_BUTTON_LEFT_DOWN);
-            }
-            if ((wake_suppressed_buttons & BOARD_BUTTON_RIGHT_DOWN) != 0u) {
-                events &= (uint8_t)~(BOARD_BUTTON_RIGHT | BOARD_BUTTON_RIGHT_LONG |
-                                     BOARD_BUTTON_RIGHT_DOWN);
             }
             if ((events & BOARD_BUTTON_LEFT_DOWN) != 0u) {
                 left_long_handled = false;
@@ -213,7 +227,11 @@ int main(void)
                     board_display_screen_alarm_active() &&
                     !alarms_acknowledged;
                 if (alarm_active && !screen_alarm_active && !backlight_on) {
-                    board_lcd_backlight_set(true);
+                    if (idle_clock_active) {
+                        (void)board_set_idle_clock(false);
+                        idle_clock_active = false;
+                    }
+                    screen_backlight_wake();
                     backlight_on = true;
                     inactivity_deadline = now + screen_timeout_ms;
                 } else if (!alarm_active && screen_alarm_active) {
@@ -254,6 +272,10 @@ int main(void)
                     sound_alarm_active = true;
                 }
                 if (sound_alarm_active != previous_alarm_active) {
+                    if (sound_alarm_active && idle_clock_active) {
+                        (void)board_set_idle_clock(false);
+                        idle_clock_active = false;
+                    }
                     board_sound_alarm_set(sound_alarm_active);
                 }
             }
@@ -266,6 +288,11 @@ int main(void)
 
             if (detected_pulses != event_count) {
                 event_count = detected_pulses;
+                high_speed_deadline = now + 500u;
+                if (idle_clock_active) {
+                    (void)board_set_idle_clock(false);
+                    idle_clock_active = false;
+                }
                 board_display_set_count(detected_pulses);
                 if (!sound_alarm_active &&
                     board_display_click_sound_enabled(backlight_on)) {
@@ -289,7 +316,11 @@ int main(void)
             }
 
             if (board_display_search_mode() && !backlight_on) {
-                board_lcd_backlight_set(true);
+                if (idle_clock_active) {
+                    (void)board_set_idle_clock(false);
+                    idle_clock_active = false;
+                }
+                screen_backlight_wake();
                 backlight_on = true;
                 inactivity_deadline = now + screen_timeout_ms;
             }
@@ -365,8 +396,8 @@ int main(void)
             if (backlight_on && !screen_alarm_active &&
                 !board_display_search_mode() &&
                 (int32_t)(now - inactivity_deadline) >= 0) {
-                board_lcd_backlight_set(false);
                 backlight_on = false;
+                board_lcd_backlight_set(false);
             }
 
             if (event_led_on &&
@@ -376,14 +407,90 @@ int main(void)
             }
         }
 
-        if ((int32_t)(now - next_adc_sample) >= 0) {
-            uint16_t channel2;
-            uint16_t channel8;
-            uint16_t channel9;
-
-            board_adc_read_all(&channel2, &channel8, &channel9);
-            board_display_set_adc(channel2, channel8, channel9);
-            next_adc_sample += 1000u;
+        if (idle_clock_active && board_display_busy()) {
+            (void)board_set_idle_clock(false);
+            idle_clock_active = false;
         }
+        board_display_service();
+        board_click_sound_service();
+        now = board_millis;
+
+        if (backlight_on != adc_screen_was_on) {
+            adc_screen_was_on = backlight_on;
+            if (backlight_on) {
+                /* Refresh solar brightness and battery/USB as soon as the
+                 * display wakes; then use their normal active intervals. */
+                next_solar_sample = now;
+                next_battery_sample = now;
+            } else {
+                const uint32_t idle_battery_interval =
+                    board_display_battery_below_3_percent() ?
+                        BATTERY_CRITICAL_SAMPLE_INTERVAL_MS :
+                        BATTERY_IDLE_SAMPLE_INTERVAL_MS;
+                next_battery_sample = now + idle_battery_interval;
+            }
+        }
+
+        {
+            const bool read_solar = backlight_on &&
+                (int32_t)(now - next_solar_sample) >= 0;
+            const bool battery_due =
+                (int32_t)(now - next_battery_sample) >= 0;
+            if (read_solar || battery_due) {
+                uint16_t channel2;
+                uint16_t channel8;
+                uint16_t channel9;
+
+                if (idle_clock_active) {
+                    (void)board_set_idle_clock(false);
+                    idle_clock_active = false;
+                }
+                board_adc_read_selected(battery_due,
+                    battery_due && backlight_on, read_solar,
+                    &channel2, &channel8, &channel9);
+                board_display_set_adc(channel2, channel8, channel9);
+                const uint32_t sampled_at = board_millis;
+                if (read_solar) {
+                    next_solar_sample = sampled_at +
+                        SOLAR_SAMPLE_INTERVAL_MS;
+                }
+                if (battery_due) {
+                    const uint32_t battery_interval = backlight_on ?
+                        BATTERY_ACTIVE_SAMPLE_INTERVAL_MS :
+                        (board_display_battery_below_3_percent() ?
+                            BATTERY_CRITICAL_SAMPLE_INTERVAL_MS :
+                            BATTERY_IDLE_SAMPLE_INTERVAL_MS);
+                    next_battery_sample = sampled_at + battery_interval;
+                }
+            }
+        }
+
+        /* Use a 10 ms tick only after the LCD work queue has drained. This
+         * cuts idle wakeups tenfold while preserving 1 ms service when active. */
+        {
+            const bool should_use_idle_tick =
+                !backlight_on && !board_display_busy();
+            if (should_use_idle_tick != idle_tick_active) {
+                board_set_idle_tick(should_use_idle_tick);
+                idle_tick_active = should_use_idle_tick;
+            }
+        }
+
+        {
+            const bool high_speed_needed = backlight_on ||
+                board_display_busy() || startup_led_active || event_led_on ||
+                light_alarm_active || sound_alarm_active ||
+                (int32_t)(now - high_speed_deadline) < 0;
+            if (high_speed_needed && idle_clock_active) {
+                (void)board_set_idle_clock(false);
+                idle_clock_active = false;
+            } else if (!high_speed_needed && !idle_clock_active) {
+                idle_clock_active = board_set_idle_clock(true);
+            }
+        }
+
+        /* Keep clocks and interrupt-driven pulse counting alive while the CPU
+         * waits for the next SysTick, detector, RTC, DMA, or button interrupt. */
+        __asm volatile ("dsb\n\twfi" ::: "memory");
     }
 }

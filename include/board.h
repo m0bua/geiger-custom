@@ -16,14 +16,20 @@
 extern volatile uint32_t board_millis;
 
 void board_init(void);
+void board_set_idle_tick(bool idle);
+bool board_set_idle_clock(bool idle);
 uint8_t board_buttons_sample_10ms(void);
+void board_buttons_suppress_until_release(uint8_t mask);
+uint8_t board_buttons_pressed_mask(void);
+uint8_t board_take_button_wakeup_request(void);
 uint32_t board_detector_count(void);
 void board_hv_set_enabled(bool enabled);
 bool board_hv_is_enabled(void);
 void board_adc_init(void);
 uint16_t board_adc_read(uint8_t channel);
-void board_adc_read_all(uint16_t *channel2, uint16_t *channel8,
-                        uint16_t *channel9);
+void board_adc_read_selected(bool read_battery, bool read_usb, bool read_solar,
+                             uint16_t *channel2, uint16_t *channel8,
+                             uint16_t *channel9);
 void board_rgb_set(uint8_t logical_rgb_mask);
 void board_rgb_set_color(uint8_t red, uint8_t green, uint8_t blue);
 void board_rgb_set_brightness(uint8_t percent);
@@ -71,6 +77,7 @@ void board_sound_alarm_set(bool active);
 bool board_display_screen_alarm_active(void);
 void board_display_set_adc(uint16_t channel2, uint16_t channel8,
                            uint16_t channel9);
+bool board_display_battery_below_3_percent(void);
 bool board_display_busy(void);
 void board_lcd_backlight_set(bool enabled);
 void board_lcd_backlight_set_brightness(uint8_t percent);

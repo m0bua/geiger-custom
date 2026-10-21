@@ -1,5 +1,6 @@
 #include "board.h"
 #include "board_config.h"
+#include "button_input.h"
 #include "font_large.h"
 #include "font_small.h"
 
@@ -9,13 +10,17 @@
 volatile uint32_t board_millis;
 static volatile uint32_t board_uptime_seconds;
 static volatile uint16_t board_uptime_millisecond_remainder;
+static volatile uint8_t systick_period_ms = 1u;
+static bool idle_clock_active;
 static volatile uint32_t detector_pulse_count;
 static volatile bool board_hv_enabled = true;
 static volatile uint16_t lcd_adc_battery_raw;
 static volatile uint16_t lcd_adc_sun_raw;
 static volatile uint16_t lcd_adc_usb_raw;
 static bool adc_ready;
+static bool adc_calibrated;
 static volatile bool power_off_wakeup;
+static volatile uint8_t button_wakeup_pending_mask;
 /* Runtime-only indication mode: INVISIBLE, NORMAL, SEARCH. */
 static uint8_t lcd_indication_mode = 1u;
 
@@ -29,6 +34,7 @@ static uint8_t lcd_indication_mode = 1u;
 
 #define RCC_BASE       0x40021000u
 #define RCC_CR         REG32(RCC_BASE + 0x00u)
+#define RCC_ICSCR      REG32(RCC_BASE + 0x04u)
 #define RCC_CFGR       REG32(RCC_BASE + 0x0Cu)
 #define RCC_AHBENR     REG32(RCC_BASE + 0x30u)
 #define RCC_CCIPR      REG32(RCC_BASE + 0x4Cu)
@@ -103,6 +109,7 @@ static uint8_t lcd_indication_mode = 1u;
 #define NVIC_ISER      REG32(0xE000E100u)
 #define SCB_SCR        REG32(0xE000ED10u)
 #define SCB_AIRCR      REG32(0xE000ED0Cu)
+#define SCB_ICSR       REG32(0xE000ED04u)
 
 #define TIM2_BASE      0x40000000u
 #define TIM22_BASE     0x40011400u
@@ -120,7 +127,6 @@ static uint8_t lcd_indication_mode = 1u;
 
 #define PWM_PERIOD     1000u
 #define BACKLIGHT_PWM_PERIOD 1000u
-#define LONG_PRESS_TICKS 80u
 #define LCD_QUEUE_CAPACITY 192u
 #define LCD_SPI_ENABLED 1u
 #define LCD_DIAGNOSTIC_COMMANDS 1u
@@ -189,7 +195,11 @@ static uint8_t lcd_indication_mode = 1u;
 #define LCD_SETTINGS_WARNING_COLOR 0x7800u
 
 static void adc_wait_ms(uint32_t duration);
+static bool adc_enable(void);
+static void adc_disable(void);
 static void lcd_apply_brightness_settings(void);
+static void lcd_format_dose(uint32_t dose_thousandths,
+                            uint32_t dose_fraction);
 static bool button_pressed(uint32_t base, uint32_t pin);
 static void pin_input_with_pull(uint32_t base, uint32_t pin);
 
@@ -197,17 +207,8 @@ static void pin_input_with_pull(uint32_t base, uint32_t pin);
 #define SYST_RVR       REG32(0xE000E014u)
 #define SYST_CVR       REG32(0xE000E018u)
 
-typedef struct {
-    uint8_t stable;
-    uint8_t candidate;
-    uint8_t count;
-    uint8_t long_reported;
-    uint16_t held_ticks;
-    uint8_t repeat_ticks;
-} button_debounce_t;
-
-static button_debounce_t left_button;
-static button_debounce_t right_button;
+static button_input_t left_button;
+static button_input_t right_button;
 static uint8_t rgb_brightness_percent = 100u;
 static uint8_t backlight_brightness_percent = 100u;
 static bool backlight_pwm_running;
@@ -236,8 +237,10 @@ static bool lcd_text_row_commands_queued;
 static uint8_t lcd_text_glyph_index;
 static uint8_t lcd_text_dma_glyph_advance;
 static uint16_t lcd_text_glyph_pixels;
-static char lcd_rate_glyphs[LCD_RATE_MAX_GLYPHS + 2u] = ".0000";
+static char lcd_rate_glyphs[LCD_RATE_MAX_GLYPHS + 2u] = "      ";
 static uint8_t lcd_rate_glyph_count = LCD_RATE_MAX_GLYPHS;
+static bool lcd_rate_has_measurement;
+static bool lcd_dose_has_measurement;
 static uint16_t lcd_rate_color = LCD_COUNTER_PURPLE;
 static uint8_t lcd_rate_led_mask = 5u;
 static char lcd_rate_label[] = "mSv/h";
@@ -291,9 +294,37 @@ static uint32_t board_rgb_channel_compare(uint8_t channel)
 
 static void board_rgb_apply(void)
 {
-    REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) ? board_rgb_channel_compare(0u) : 0u;
-    REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) ? board_rgb_channel_compare(1u) : 0u;
-    REG32(TIM22_BASE + TIM_CCR1) = (rgb_channels & 4u) ? board_rgb_channel_compare(2u) : 0u;
+    const uint32_t red_compare = (rgb_channels & 1u) ?
+        board_rgb_channel_compare(0u) : 0u;
+    const uint32_t green_compare = (rgb_channels & 2u) ?
+        board_rgb_channel_compare(1u) : 0u;
+    const uint32_t blue_compare = (rgb_channels & 4u) ?
+        board_rgb_channel_compare(2u) : 0u;
+    const bool tim2_active = click_sound_active || red_compare != 0u ||
+        green_compare != 0u;
+
+    /* Enable clocks only while touching/configuring the PWM peripherals. */
+    RCC_APB1ENR |= 1u; /* TIM2 */
+    RCC_APB2ENR |= 1u << 5u; /* TIM22 */
+    (void)RCC_APB2ENR;
+    REG32(TIM2_BASE + TIM_CCR1) = red_compare;
+    REG32(TIM2_BASE + TIM_CCR2) = green_compare;
+    REG32(TIM22_BASE + TIM_CCR1) = blue_compare;
+    REG32(TIM2_BASE + TIM_EGR) = 1u;
+    REG32(TIM22_BASE + TIM_EGR) = 1u;
+
+    if (tim2_active) {
+        REG32(TIM2_BASE + TIM_CR1) |= 1u;
+    } else {
+        REG32(TIM2_BASE + TIM_CR1) &= ~1u;
+        RCC_APB1ENR &= ~1u;
+    }
+    if (blue_compare != 0u) {
+        REG32(TIM22_BASE + TIM_CR1) |= 1u;
+    } else {
+        REG32(TIM22_BASE + TIM_CR1) &= ~1u;
+        RCC_APB2ENR &= ~(1u << 5u);
+    }
 }
 static bool flashlight_enabled;
 static bool flashlight_manual_enabled;
@@ -839,6 +870,28 @@ static void lcd_format_rate(uint32_t rate_thousandths)
     }
     /* Input is in 0.001 µSv/h (nSv/h), in units of 1/18 pSv. */
     lcd_format_scaled_sv((uint64_t)rate_thousandths * 18000u, 10u, false);
+}
+
+static void lcd_blank_large_value(void)
+{
+    for (uint8_t i = 0u; i < LCD_RATE_MASK_GLYPHS; ++i) {
+        lcd_rate_glyphs[i] = ' ';
+    }
+    lcd_rate_glyphs[LCD_RATE_MASK_GLYPHS] = '\0';
+    lcd_rate_glyph_count = LCD_RATE_MASK_GLYPHS;
+}
+
+static void lcd_format_rate_display(uint32_t rate_thousandths)
+{
+    lcd_format_rate(rate_thousandths);
+    if (!lcd_rate_has_measurement) lcd_blank_large_value();
+}
+
+static void lcd_format_dose_display(uint32_t dose_thousandths,
+                                    uint32_t dose_fraction)
+{
+    lcd_format_dose(dose_thousandths, dose_fraction);
+    if (!lcd_dose_has_measurement) lcd_blank_large_value();
 }
 
 static void lcd_format_cpm(uint32_t cpm)
@@ -2659,10 +2712,11 @@ void board_display_right_short(void)
     lcd_text_row_commands_queued = false;
     lcd_background_pending = true;
     if (lcd_screen_page == 0u) {
-        lcd_format_rate(lcd_rate_value_thousandths);
+        lcd_format_rate_display(lcd_rate_value_thousandths);
         lcd_format_cpm(lcd_current_cpm);
     } else {
-        lcd_format_dose(lcd_dose_value_thousandths, lcd_dose_fraction);
+        lcd_format_dose_display(lcd_dose_value_thousandths,
+                                lcd_dose_fraction);
     }
     lcd_cpm_redraw_pending = true;
 }
@@ -2756,10 +2810,11 @@ void board_display_extra_exit(void)
     lcd_settings_editing = false;
     lcd_settings_selected = 0u;
     if (lcd_screen_page == 0u) {
-        lcd_format_rate(lcd_rate_value_thousandths);
+        lcd_format_rate_display(lcd_rate_value_thousandths);
         lcd_format_cpm(lcd_current_cpm);
     } else {
-        lcd_format_dose(lcd_dose_value_thousandths, lcd_dose_fraction);
+        lcd_format_dose_display(lcd_dose_value_thousandths,
+                                lcd_dose_fraction);
     }
     lcd_text_active = false;
     lcd_text_row_commands_queued = false;
@@ -3412,9 +3467,10 @@ static void lcd_settings_apply_current(void)
     if (lcd_settings_selected >= 8u && lcd_settings_selected <= 11u) {
         (void)settings_eeprom_save();
         if (lcd_screen_page == 0u) {
-            lcd_format_rate(lcd_rate_value_thousandths);
+            lcd_format_rate_display(lcd_rate_value_thousandths);
         } else if (lcd_screen_page == 1u) {
-            lcd_format_dose(lcd_dose_value_thousandths, lcd_dose_fraction);
+            lcd_format_dose_display(lcd_dose_value_thousandths,
+                                    lcd_dose_fraction);
         }
         lcd_cpm_redraw_pending = true;
     }
@@ -3446,7 +3502,9 @@ static void lcd_settings_apply_current(void)
         if (lcd_settings_value_index[15] == 0u) {
             lcd_rate_value_thousandths = 0u;
             lcd_current_cpm = 0u;
-            lcd_format_rate(0u);
+            lcd_rate_has_measurement = false;
+            lcd_dose_has_measurement = false;
+            lcd_format_rate_display(0u);
             lcd_format_cpm(0u);
         }
         lcd_text_active = false;
@@ -3511,11 +3569,10 @@ static void board_click_sound_stop(void)
     REG32(TIM2_BASE + TIM_CCR4) = 0u;
     REG32(TIM2_BASE + TIM_PSC) = 0u;
     REG32(TIM2_BASE + TIM_ARR) = PWM_PERIOD - 1u;
+    click_sound_active = false;
     board_rgb_apply();
-    REG32(TIM2_BASE + TIM_EGR) = 1u;
     REG32(GPIOA_BASE + GPIO_MODER) &= ~(3u << 6u);
     pin_input_with_pull(GPIOA_BASE, BOARD_BUTTON_RIGHT_PIN);
-    click_sound_active = false;
     click_sound_stage = 0u;
 }
 
@@ -3531,6 +3588,8 @@ void board_click_sound_start(void)
     REG32(GPIOA_BASE + GPIO_MODER) =
         (REG32(GPIOA_BASE + GPIO_MODER) & ~(3u << 6u)) | (2u << 6u);
 
+    RCC_APB1ENR |= 1u; /* TIM2 may be clock-gated while RGB is off. */
+    (void)RCC_APB1ENR;
     sound_alarm_mode = false;
     click_sound_profile = lcd_settings_value_index[20];
     click_sound_stage = 0u;
@@ -3547,6 +3606,7 @@ void board_click_sound_start(void)
     REG32(TIM2_BASE + TIM_EGR) = 1u;
     REG32(TIM2_BASE + TIM_CNT) = 0u;
     REG32(TIM2_BASE + TIM_CCER) |= 1u << 12u;
+    REG32(TIM2_BASE + TIM_CR1) |= 1u;
     click_sound_deadline = board_millis +
         (click_sound_profile == 2u ? 4u :
             (click_sound_profile == 1u ? 2u : 38u));
@@ -3575,6 +3635,8 @@ void board_sound_alarm_set(bool active)
         (REG32(GPIOA_BASE + GPIO_AFRL) & ~(0xFu << 12u)) | (2u << 12u);
     REG32(GPIOA_BASE + GPIO_MODER) =
         (REG32(GPIOA_BASE + GPIO_MODER) & ~(3u << 6u)) | (2u << 6u);
+    RCC_APB1ENR |= 1u; /* TIM2 may be clock-gated while RGB is off. */
+    (void)RCC_APB1ENR;
     REG32(TIM2_BASE + TIM_ARR) = 310u;
     REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) ?
         (compare * rgb_level[0]) / 255u : 0u;
@@ -3588,6 +3650,7 @@ void board_sound_alarm_set(bool active)
     REG32(TIM2_BASE + TIM_EGR) = 1u;
     REG32(TIM2_BASE + TIM_CNT) = 0u;
     REG32(TIM2_BASE + TIM_CCER) |= 1u << 12u;
+    REG32(TIM2_BASE + TIM_CR1) |= 1u;
     click_sound_deadline = board_millis +
         (click_sound_profile == 2u ? 120u :
             (click_sound_profile == 1u ? 240u : 400u));
@@ -3907,12 +3970,16 @@ void board_display_set_dose(uint32_t dose_thousandths,
     lcd_dose_value_thousandths = dose_thousandths;
     lcd_dose_fraction = dose_fraction;
     lcd_dose_measurement_seconds = measurement_seconds;
+    if (dose_thousandths != 0u || dose_fraction != 0u ||
+        (lcd_settings_value_index[9] == 1u && lcd_count_total != 0u)) {
+        lcd_dose_has_measurement = true;
+    }
     if (dose_thousandths != previous_dose_thousandths ||
         dose_fraction != previous_dose_fraction) {
         previous_dose_thousandths = dose_thousandths;
         previous_dose_fraction = dose_fraction;
         if (lcd_screen_page == 1u) {
-            lcd_format_dose(dose_thousandths, dose_fraction);
+            lcd_format_dose_display(dose_thousandths, dose_fraction);
             lcd_cpm_redraw_pending = true;
         }
     }
@@ -3946,7 +4013,9 @@ void board_display_set_count(uint32_t count)
     if (lcd_count_total == count) return;
     lcd_count_total = count;
     if (lcd_settings_value_index[9] == 1u && lcd_screen_page == 1u) {
-        lcd_format_dose(lcd_dose_value_thousandths, lcd_dose_fraction);
+        if (count != 0u) lcd_dose_has_measurement = true;
+        lcd_format_dose_display(lcd_dose_value_thousandths,
+                                lcd_dose_fraction);
         lcd_cpm_redraw_pending = true;
     }
 }
@@ -3964,6 +4033,9 @@ void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm,
 
     lcd_rate_value_thousandths = rate_thousandths;
     lcd_warmup_pulses = pulses_since_start;
+    if (pulses_since_start != 0u || cpm != 0u) {
+        lcd_rate_has_measurement = true;
+    }
     lcd_rate_window_ready = window_ready;
     if (pulses_since_start != previous_warmup_pulses ||
         window_ready != previous_window_ready) {
@@ -4002,14 +4074,14 @@ void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm,
         previous_cpm = cpm;
         lcd_format_cpm(cpm);
         if (lcd_settings_value_index[9] == 1u && lcd_screen_page == 0u) {
-            lcd_format_rate(rate_thousandths);
+            lcd_format_rate_display(rate_thousandths);
         }
         changed = true;
     }
     if (cpm != 0u && rate_thousandths != previous_rate_thousandths) {
         previous_rate_thousandths = rate_thousandths;
         if (lcd_screen_page == 0u) {
-            lcd_format_rate(rate_thousandths);
+            lcd_format_rate_display(rate_thousandths);
         }
         changed = true;
     }
@@ -4111,13 +4183,18 @@ void board_display_set_adc(uint16_t channel2, uint16_t channel8,
     uint16_t battery_percent;
     uint16_t solar_percent;
 
-    if (channel2 != lcd_adc_battery_raw || channel8 != lcd_adc_usb_raw ||
-        channel9 != lcd_adc_sun_raw) {
-        changed = true;
+    if (channel2 <= 4095u) {
+        if (channel2 != lcd_adc_battery_raw) changed = true;
+        lcd_adc_battery_raw = channel2;
     }
-    lcd_adc_battery_raw = channel2;
-    lcd_adc_sun_raw = channel9;
-    lcd_adc_usb_raw = channel8;
+    if (channel8 <= 4095u) {
+        if (channel8 != lcd_adc_usb_raw) changed = true;
+        lcd_adc_usb_raw = channel8;
+    }
+    if (channel9 <= 4095u) {
+        if (channel9 != lcd_adc_sun_raw) changed = true;
+        lcd_adc_sun_raw = channel9;
+    }
     if (channel2 <= 4095u) {
         battery_percent = lcd_battery_percent(channel2);
         if (!lcd_battery_percent_initialized) {
@@ -4157,8 +4234,20 @@ void board_display_set_adc(uint16_t channel2, uint16_t channel8,
     }
 }
 
+bool board_display_battery_below_3_percent(void)
+{
+    return lcd_battery_percent_initialized &&
+        (lcd_displayed_battery_percent < 3u ||
+         lcd_battery_percent_candidate < 3u);
+}
+
 static void lcd_text_render_service(void)
 {
+    /* Finish in-flight work, but leave new redraws pending while the panel
+     * is dark. Rasterizing them on MSI delays the next button response. */
+    if (!backlight_requested_on && !lcd_text_active) {
+        return;
+    }
     if (lcd_background_pending || lcd_fill_start_pending || lcd_fill_active ||
         lcd_dma_active || !lcd_queue_drained()) {
         return;
@@ -4393,9 +4482,14 @@ bool board_display_busy(void)
     if (lcd_spi_error || lcd_control_error) {
         return false;
     }
+    const bool redraw_pending = backlight_requested_on &&
+        (lcd_cpm_redraw_pending ||
+         (lcd_screen_page == 2u && lcd_time_redraw_pending) ||
+         (lcd_screen_page == 3u && lcd_settings_redraw_pending) ||
+         (lcd_screen_page == 4u && lcd_debug_redraw_pending));
     return !lcd_ready || !lcd_queue_drained() || lcd_background_pending ||
            lcd_fill_start_pending ||
-           lcd_fill_active || lcd_text_active;
+           lcd_fill_active || lcd_text_active || redraw_pending;
 }
 
 void board_display_init(void)
@@ -4423,8 +4517,9 @@ void board_display_init(void)
     lcd_apply_brightness_settings();
     /* Replace static startup labels with the loaded unit/prefix choices
      * before the LCD's initial background fill and first text render. */
-    lcd_format_rate(lcd_rate_value_thousandths);
     lcd_format_dose(lcd_dose_value_thousandths, lcd_dose_fraction);
+    lcd_format_rate(lcd_rate_value_thousandths);
+    lcd_blank_large_value();
     lcd_cpm_redraw_pending = true;
     lcd_started = true;
     lcd_configure();
@@ -4452,7 +4547,11 @@ static void detector_input_init(void)
 {
     volatile uint32_t *exticr2 =
         (volatile uint32_t *)(uintptr_t)(SYSCFG_BASE + 0x0Cu);
+    volatile uint32_t *exticr3 =
+        (volatile uint32_t *)(uintptr_t)(SYSCFG_BASE + 0x10u);
     const uint32_t exti_port_shift = (DETECTOR_PIN - 4u) * 4u;
+    const uint32_t button_exti_mask =
+        (1u << BOARD_BUTTON_RIGHT_PIN) | (1u << BOARD_BUTTON_LEFT_PIN);
 
     /* Stock HEX dispatches EXTI lines 4, 6 and 9. Lines 4/9 are the known
      * buttons; PA6 is the confirmed blue LED output, so PB6 is the remaining
@@ -4462,12 +4561,19 @@ static void detector_input_init(void)
     (void)RCC_APB2ENR;
     *exticr2 = (*exticr2 & ~(0xFu << exti_port_shift)) |
         (1u << exti_port_shift); /* EXTI6 source = GPIOB */
+    *exticr2 &= ~0xFu; /* EXTI4 source = GPIOA (right button). */
+    *exticr3 = (*exticr3 & ~(0xFu << 4u)) | (1u << 4u);
+    /* EXTI9 source = GPIOB (left button). */
     EXTI_IMR &= ~DETECTOR_EXTI_MASK;
     EXTI_RTSR &= ~DETECTOR_EXTI_MASK;
     EXTI_FTSR |= DETECTOR_EXTI_MASK;
     EXTI_PR = DETECTOR_EXTI_MASK;
+    /* Wake on both press and release edges; this also catches very short taps. */
+    EXTI_RTSR |= button_exti_mask;
+    EXTI_FTSR |= button_exti_mask;
+    EXTI_PR = button_exti_mask;
     NVIC_ISER = 1u << 7u; /* EXTI4_15_IRQn */
-    EXTI_IMR |= DETECTOR_EXTI_MASK;
+    EXTI_IMR |= DETECTOR_EXTI_MASK | button_exti_mask;
 }
 
 uint32_t board_detector_count(void)
@@ -4532,12 +4638,57 @@ void board_adc_init(void)
         return;
     }
 
-    ADC_ISR = 1u; /* Clear ADRDY, if set. */
-    ADC_CR = 1u; /* ADEN */
-    timeout = 1000000u;
+    adc_calibrated = true;
+    /* Calibration is retained with ADEN=0; remove regulator and clock load. */
+    adc_disable();
+    REG32(GPIOB_BASE + GPIO_BSRR) = 1u << (16u + 10u);
+}
+
+static bool adc_enable(void)
+{
+    uint32_t timeout = 1000000u;
+
+    if (!adc_calibrated) {
+        return false;
+    }
+
+    RCC_APB2ENR |= 1u << 9u;
+    (void)RCC_APB2ENR;
+    ADC_ISR = 1u; /* Clear ADRDY before enabling. */
+    ADC_CR = 1u; /* ADEN; the ADC regulator starts with the converter. */
     while ((ADC_ISR & 1u) == 0u && --timeout != 0u) { }
     adc_ready = timeout != 0u;
-    REG32(GPIOB_BASE + GPIO_BSRR) = 1u << (16u + 10u);
+    return adc_ready;
+}
+
+static void adc_disable(void)
+{
+    uint32_t timeout;
+
+    if ((ADC_CR & (1u << 2u)) != 0u) {
+        ADC_CR |= 1u << 4u; /* ADSTP */
+        timeout = 1000000u;
+        while ((ADC_CR & (1u << 4u)) != 0u && --timeout != 0u) { }
+        if (timeout == 0u) {
+            adc_ready = false;
+            return;
+        }
+    }
+
+    if ((ADC_CR & 1u) != 0u) {
+        ADC_CR |= 1u << 1u; /* ADDIS */
+        timeout = 1000000u;
+        while ((ADC_CR & 1u) != 0u && --timeout != 0u) { }
+        if (timeout == 0u) {
+            adc_ready = false;
+            return;
+        }
+    }
+
+    /* Preserve calibration while removing the internal ADC regulator load. */
+    ADC_CR &= ~(1u << 28u); /* ADVREGEN */
+    adc_ready = false;
+    RCC_APB2ENR &= ~(1u << 9u);
 }
 
 uint16_t board_adc_read(uint8_t channel)
@@ -4566,19 +4717,28 @@ static void adc_wait_ms(uint32_t duration)
     while ((int32_t)(board_millis - deadline) < 0) { }
 }
 
-void board_adc_read_all(uint16_t *channel2, uint16_t *channel8,
-                        uint16_t *channel9)
+void board_adc_read_selected(bool read_battery, bool read_usb, bool read_solar,
+                             uint16_t *channel2, uint16_t *channel8,
+                             uint16_t *channel9)
 {
     uint16_t values[3] = { UINT16_MAX, UINT16_MAX, UINT16_MAX };
 
+    if (!read_battery && !read_usb && !read_solar) {
+        *channel2 = values[0];
+        *channel8 = values[1];
+        *channel9 = values[2];
+        return;
+    }
+
     REG32(GPIOB_BASE + GPIO_BSRR) = 1u << 10u;
-    adc_wait_ms(5u);
-    if (adc_ready) {
-        values[0] = board_adc_read(2u);
-        values[1] = board_adc_read(8u);
-        values[2] = board_adc_read(9u);
+    if (adc_enable()) {
+        adc_wait_ms(5u);
+        if (read_battery) values[0] = board_adc_read(2u);
+        if (read_usb) values[1] = board_adc_read(8u);
+        if (read_solar) values[2] = board_adc_read(9u);
     }
     REG32(GPIOB_BASE + GPIO_BSRR) = 1u << (16u + 10u);
+    adc_disable();
     adc_wait_ms(1u);
 
     *channel2 = values[0];
@@ -4589,6 +4749,8 @@ void board_adc_read_all(uint16_t *channel2, uint16_t *channel8,
 void EXTI4_15_IRQHandler(void)
 {
     const uint32_t pending = EXTI_PR;
+    const uint32_t button_mask = (1u << BOARD_BUTTON_LEFT_PIN) |
+        (1u << BOARD_BUTTON_RIGHT_PIN);
 
     if ((pending & DETECTOR_EXTI_MASK) != 0u) {
         EXTI_PR = DETECTOR_EXTI_MASK;
@@ -4599,6 +4761,15 @@ void EXTI4_15_IRQHandler(void)
     if ((pending & (1u << BOARD_BUTTON_LEFT_PIN)) != 0u) {
         EXTI_PR = 1u << BOARD_BUTTON_LEFT_PIN;
         power_off_wakeup = true;
+    }
+    if ((pending & button_mask) != 0u) {
+        EXTI_PR = pending & button_mask;
+        if ((pending & (1u << BOARD_BUTTON_LEFT_PIN)) != 0u) {
+            button_wakeup_pending_mask |= BOARD_BUTTON_LEFT_DOWN;
+        }
+        if ((pending & (1u << BOARD_BUTTON_RIGHT_PIN)) != 0u) {
+            button_wakeup_pending_mask |= BOARD_BUTTON_RIGHT_DOWN;
+        }
     }
 }
 
@@ -4655,70 +4826,6 @@ static bool button_pressed(uint32_t base, uint32_t pin)
     return BOARD_BUTTON_ACTIVE_LOW ? (level == 0u) : (level != 0u);
 }
 
-static uint8_t debounce(button_debounce_t *button, bool raw_pressed,
-                        uint8_t press_event, uint8_t short_event,
-                        uint8_t long_event, uint8_t release_event)
-{
-    uint8_t events = 0u;
-    uint8_t raw = raw_pressed ? 1u : 0u;
-
-    if (raw != button->candidate) {
-        button->candidate = raw;
-        button->count = 1u;
-    } else if (button->count < 3u) {
-        ++button->count;
-    }
-
-    if (button->count >= 3u && button->stable != button->candidate) {
-        button->stable = button->candidate;
-        if (button->stable != 0u) {
-            events |= press_event;
-            button->held_ticks = 0u;
-            button->long_reported = 0u;
-            button->repeat_ticks = 0u;
-        } else {
-            events |= release_event;
-            if (button->long_reported == 0u) {
-                events |= short_event;
-            }
-            button->held_ticks = 0u;
-            button->long_reported = 0u;
-            button->repeat_ticks = 0u;
-        }
-    }
-
-    if (button->stable != 0u) {
-        if (button->held_ticks < 0xFFFFu) {
-            ++button->held_ticks;
-        }
-        if (button->held_ticks >= LONG_PRESS_TICKS &&
-            button->long_reported == 0u) {
-            button->long_reported = 1u;
-            button->repeat_ticks = 0u;
-            events |= long_event;
-        } else if (button->long_reported != 0u) {
-            uint8_t interval_ticks = 10u;
-
-            /* Accelerate geometrically with hold duration: 10, 7, 5, 3,
-             * then 2 samples per repeat (100 ms down to 20 ms). */
-            if (button->held_ticks >= LONG_PRESS_TICKS + 400u) {
-                interval_ticks = 2u;
-            } else if (button->held_ticks >= LONG_PRESS_TICKS + 300u) {
-                interval_ticks = 3u;
-            } else if (button->held_ticks >= LONG_PRESS_TICKS + 200u) {
-                interval_ticks = 5u;
-            } else if (button->held_ticks >= LONG_PRESS_TICKS + 100u) {
-                interval_ticks = 7u;
-            }
-            if (++button->repeat_ticks >= interval_ticks) {
-                button->repeat_ticks = 0u;
-                events |= long_event;
-            }
-        }
-    }
-    return events;
-}
-
 static void timer_pwm_init(uint32_t base, uint8_t channels)
 {
     REG32(base + TIM_PSC) = 0u;
@@ -4731,7 +4838,7 @@ static void timer_pwm_init(uint32_t base, uint8_t channels)
     REG32(base + TIM_CCER) = ((channels & 1u) ? (1u | (1u << 1)) : 0u) |
                              ((channels & 2u) ? (1u << 4) | (1u << 5) : 0u);
     REG32(base + TIM_EGR) = 1u;
-    REG32(base + TIM_CR1) = (1u << 7) | 1u; /* ARPE, counter enable */
+    REG32(base + TIM_CR1) = 1u << 7; /* ARPE; board_rgb_apply starts as needed. */
 }
 
 void board_rgb_set_brightness(uint8_t percent)
@@ -4820,35 +4927,148 @@ void board_init(void)
         ~(3u << (BOARD_LCD_BACKLIGHT_PIN * 2u))) |
         (1u << (BOARD_LCD_BACKLIGHT_PIN * 2u));
 
-    /* Establish a baseline so a button held at reset does not advance a color. */
-    left_button.stable = left_button.candidate =
-        button_pressed(GPIOB_BASE, BOARD_BUTTON_LEFT_PIN) ? 1u : 0u;
-    right_button.stable = right_button.candidate =
-        button_pressed(GPIOA_BASE, BOARD_BUTTON_RIGHT_PIN) ? 1u : 0u;
-    left_button.count = right_button.count = 0u;
-    /* Ignore a button already held at reset until it is released. */
-    left_button.long_reported = left_button.stable;
-    right_button.long_reported = right_button.stable;
-    left_button.held_ticks = right_button.held_ticks = 0u;
+    button_input_init(&left_button,
+        button_pressed(GPIOB_BASE, BOARD_BUTTON_LEFT_PIN), board_millis);
+    button_input_init(&right_button,
+        button_pressed(GPIOA_BASE, BOARD_BUTTON_RIGHT_PIN), board_millis);
 
     SYST_RVR = 32000u - 1u; /* 1 ms at 32 MHz SYSCLK */
     SYST_CVR = 0u;
     SYST_CSR = 7u; /* processor clock, interrupt, enable */
+    systick_period_ms = 1u;
+}
+
+void board_set_idle_tick(bool idle)
+{
+    const uint8_t period_ms = idle ? 10u : 1u;
+    uint32_t primask;
+
+    if (systick_period_ms == period_ms) {
+        return;
+    }
+
+    __asm volatile ("mrs %0, primask\n\tcpsid i" : "=r" (primask) :: "memory");
+    SYST_RVR = (((idle_clock_active ? 131072u : 32000000u) *
+        period_ms) / 1000u) - 1u;
+    SYST_CVR = 0u;
+    systick_period_ms = period_ms;
+    if ((primask & 1u) == 0u) {
+        __asm volatile ("cpsie i" ::: "memory");
+    }
+}
+
+bool board_set_idle_clock(bool idle)
+{
+    uint32_t primask;
+    uint32_t timeout;
+
+    if (idle_clock_active == idle) return true;
+    __asm volatile ("mrs %0, primask\n\tcpsid i" : "=r" (primask) :: "memory");
+    SYST_CSR = 0u;
+    SCB_ICSR = 1u << 25u; /* Clear pending SysTick across the clock switch. */
+
+    if (idle) {
+        /* MSI range 1 is 131.072 kHz on STM32L051. */
+        RCC_ICSCR = (RCC_ICSCR & ~(7u << 13u)) | (1u << 13u);
+        RCC_CR |= 1u << 8u; /* MSION */
+        timeout = 2000000u;
+        while ((RCC_CR & (1u << 9u)) == 0u && --timeout != 0u) { }
+        if (timeout == 0u) goto clock_change_failed;
+        RCC_CFGR &= ~3u; /* SYSCLK = MSI */
+        timeout = 2000000u;
+        while ((RCC_CFGR & (3u << 2u)) != 0u && --timeout != 0u) { }
+        if (timeout == 0u) goto clock_change_failed;
+        idle_clock_active = true;
+        RCC_CR &= ~(1u << 24u); /* PLL is no longer needed. */
+        timeout = 2000000u;
+        while ((RCC_CR & (1u << 25u)) != 0u && --timeout != 0u) { }
+        RCC_CR &= ~1u; /* HSI16 is no longer needed. */
+    } else {
+        RCC_CR |= 1u; /* HSI16 */
+        timeout = 2000000u;
+        while ((RCC_CR & (1u << 2u)) == 0u && --timeout != 0u) { }
+        if (timeout == 0u) goto clock_change_failed;
+        RCC_CR |= 1u << 24u; /* Restart the configured HSI16 x4 /2 PLL. */
+        timeout = 2000000u;
+        while ((RCC_CR & (1u << 25u)) == 0u && --timeout != 0u) { }
+        if (timeout == 0u) goto clock_change_failed;
+        RCC_CFGR = (RCC_CFGR & ~3u) | 3u; /* SYSCLK = PLL */
+        timeout = 2000000u;
+        while ((RCC_CFGR & (3u << 2u)) != (3u << 2u) && --timeout != 0u) { }
+        if (timeout == 0u) goto clock_change_failed;
+        idle_clock_active = false;
+    }
+
+    SYST_RVR = (((idle_clock_active ? 131072u : 32000000u) *
+        systick_period_ms) / 1000u) - 1u;
+    SYST_CVR = 0u;
+    SYST_CSR = 7u;
+    if ((primask & 1u) == 0u) __asm volatile ("cpsie i" ::: "memory");
+    return true;
+
+clock_change_failed:
+    SYST_RVR = (((idle_clock_active ? 131072u : 32000000u) *
+        systick_period_ms) / 1000u) - 1u;
+    SYST_CVR = 0u;
+    SYST_CSR = 7u;
+    if ((primask & 1u) == 0u) __asm volatile ("cpsie i" ::: "memory");
+    return false;
 }
 
 uint8_t board_buttons_sample_10ms(void)
 {
+    const uint32_t now = board_millis;
+    const uint8_t left = button_input_update(&left_button,
+        button_pressed(GPIOB_BASE, BOARD_BUTTON_LEFT_PIN), now);
+    const uint8_t right = button_input_update(&right_button,
+        button_pressed(GPIOA_BASE, BOARD_BUTTON_RIGHT_PIN), now);
     uint8_t events = 0u;
-    /* Right advances through the RGB states; left steps back. */
-    events |= debounce(&left_button,
-                       button_pressed(GPIOB_BASE, BOARD_BUTTON_LEFT_PIN),
-                       BOARD_BUTTON_LEFT_DOWN, BOARD_BUTTON_LEFT,
-                       BOARD_BUTTON_LEFT_LONG, BOARD_BUTTON_LEFT_UP);
-    events |= debounce(&right_button,
-                       button_pressed(GPIOA_BASE, BOARD_BUTTON_RIGHT_PIN),
-                       BOARD_BUTTON_RIGHT_DOWN, BOARD_BUTTON_RIGHT,
-                       BOARD_BUTTON_RIGHT_LONG, BOARD_BUTTON_RIGHT_UP);
+
+    if ((left & BUTTON_INPUT_DOWN) != 0u) events |= BOARD_BUTTON_LEFT_DOWN;
+    if ((left & BUTTON_INPUT_UP) != 0u) events |= BOARD_BUTTON_LEFT_UP;
+    if ((left & BUTTON_INPUT_CLICK) != 0u) events |= BOARD_BUTTON_LEFT;
+    if ((left & BUTTON_INPUT_LONG) != 0u) events |= BOARD_BUTTON_LEFT_LONG;
+    if ((right & BUTTON_INPUT_DOWN) != 0u) events |= BOARD_BUTTON_RIGHT_DOWN;
+    if ((right & BUTTON_INPUT_UP) != 0u) events |= BOARD_BUTTON_RIGHT_UP;
+    if ((right & BUTTON_INPUT_CLICK) != 0u) events |= BOARD_BUTTON_RIGHT;
+    if ((right & BUTTON_INPUT_LONG) != 0u) events |= BOARD_BUTTON_RIGHT_LONG;
     return events;
+}
+
+void board_buttons_suppress_until_release(uint8_t mask)
+{
+    const uint32_t now = board_millis;
+    if ((mask & BOARD_BUTTON_LEFT_DOWN) != 0u) {
+        button_input_suppress(&left_button,
+            button_pressed(GPIOB_BASE, BOARD_BUTTON_LEFT_PIN), now);
+    }
+    if ((mask & BOARD_BUTTON_RIGHT_DOWN) != 0u) {
+        button_input_suppress(&right_button,
+            button_pressed(GPIOA_BASE, BOARD_BUTTON_RIGHT_PIN), now);
+    }
+}
+
+uint8_t board_buttons_pressed_mask(void)
+{
+    uint8_t pressed = 0u;
+    if (button_pressed(GPIOB_BASE, BOARD_BUTTON_LEFT_PIN)) {
+        pressed |= BOARD_BUTTON_LEFT_DOWN;
+    }
+    if (button_pressed(GPIOA_BASE, BOARD_BUTTON_RIGHT_PIN)) {
+        pressed |= BOARD_BUTTON_RIGHT_DOWN;
+    }
+    return pressed;
+}
+
+uint8_t board_take_button_wakeup_request(void)
+{
+    uint32_t primask;
+    uint8_t requested;
+    __asm volatile ("mrs %0, primask\n\tcpsid i" : "=r" (primask) :: "memory");
+    requested = button_wakeup_pending_mask;
+    button_wakeup_pending_mask = 0u;
+    if ((primask & 1u) == 0u) __asm volatile ("cpsie i" ::: "memory");
+    return requested;
 }
 
 void board_rgb_set(uint8_t logical_rgb_mask)
@@ -4871,10 +5091,13 @@ void board_rgb_set_color(uint8_t red, uint8_t green, uint8_t blue)
 
 void SysTick_Handler(void)
 {
-    /* A polling firmware loop derives its 10 ms cadence from this hardware tick. */
-    ++board_millis;
-    if (++board_uptime_millisecond_remainder >= 1000u) {
-        board_uptime_millisecond_remainder = 0u;
+    const uint8_t elapsed_ms = systick_period_ms;
+
+    /* The idle tick is 10 ms; preserve the monotonic millisecond timebase. */
+    board_millis += elapsed_ms;
+    board_uptime_millisecond_remainder += elapsed_ms;
+    if (board_uptime_millisecond_remainder >= 1000u) {
+        board_uptime_millisecond_remainder -= 1000u;
         ++board_uptime_seconds;
     }
 }
