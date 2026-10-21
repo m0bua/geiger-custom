@@ -429,6 +429,7 @@ int main(void)
 
             if (backlight_on && !screen_alarm_active &&
                 !board_display_search_mode() &&
+                !board_display_cleanup_feedback_active() &&
                 (int32_t)(now - inactivity_deadline) >= 0) {
                 backlight_on = false;
                 board_lcd_backlight_set(false);
@@ -446,6 +447,9 @@ int main(void)
             idle_clock_active = false;
         }
         board_display_service();
+        if (board_display_take_cleanup_feedback_dismissed()) {
+            inactivity_deadline = board_millis + screen_timeout_ms;
+        }
         board_click_sound_service();
         now = board_millis;
 

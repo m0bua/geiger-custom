@@ -75,6 +75,8 @@ void board_display_set_session_rates(uint32_t average_rate_thousandths,
                                      uint32_t session_count_total);
 void board_display_set_count(uint32_t count);
 uint32_t board_display_screen_timeout_ms(void);
+bool board_display_cleanup_feedback_active(void);
+bool board_display_take_cleanup_feedback_dismissed(void);
 bool board_display_led_flash_enabled(bool screen_on);
 bool board_display_click_sound_enabled(bool screen_on);
 bool board_display_search_mode(void);

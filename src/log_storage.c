@@ -963,6 +963,133 @@ bool log_storage_minute_history_load(uint32_t *cpm, uint8_t capacity,
     return true;
 }
 
+static bool erase_nor_sectors(uint16_t first, uint16_t count)
+{
+    if (!spi_nor_is_ready() && !spi_nor_init()) return false;
+    for (uint16_t i = 0u; i < count; ++i) {
+        if (!spi_nor_erase_sector((uint32_t)(first + i) * NOR_SECTOR_SIZE)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool clear_eeprom_range(uint16_t first, uint16_t end)
+{
+    for (uint16_t address = first; address < end; ++address) {
+        if (!board_eeprom_write(address, 0xFFu)) return false;
+    }
+    return true;
+}
+
+bool log_storage_clear(log_clear_target_t target)
+{
+    bool ok = true;
+
+    switch (target) {
+    case LOG_CLEAR_MINUTE:
+        ok = erase_nor_sectors(0u, NOR_MINUTE_SECTORS);
+        break;
+    case LOG_CLEAR_HOUR:
+        ok = clear_eeprom_range(EEPROM_CHECKPOINT_BASE,
+                EEPROM_CHECKPOINT_BASE + 2u * EEPROM_HOUR_CHECKPOINT_SIZE) &&
+            clear_eeprom_range(EEPROM_LOG_BASE,
+                EEPROM_LOG_BASE + EEPROM_HOUR_COUNT * EEPROM_HOUR_SIZE) &&
+            erase_nor_sectors(NOR_HOUR_BASE_SECTOR, NOR_HOUR_SECTORS);
+        break;
+    case LOG_CLEAR_DAY:
+        ok = clear_eeprom_range(EEPROM_CHECKPOINT_BASE +
+                2u * EEPROM_HOUR_CHECKPOINT_SIZE,
+                EEPROM_CHECKPOINT_BASE + 2u * EEPROM_HOUR_CHECKPOINT_SIZE +
+                    2u * EEPROM_DAY_CHECKPOINT_SIZE) &&
+            clear_eeprom_range(EEPROM_DAY_BASE,
+                EEPROM_DAY_BASE + EEPROM_DAY_COUNT * EEPROM_DAY_SIZE);
+        break;
+    case LOG_CLEAR_ERROR:
+        ok = erase_nor_sectors(NOR_MINUTE_SECTORS, NOR_ALERT_SECTORS);
+        break;
+    case LOG_CLEAR_LOGS:
+        ok = clear_eeprom_range(EEPROM_CHECKPOINT_BASE, 2048u) &&
+            erase_nor_sectors(0u, 256u);
+        break;
+    case LOG_CLEAR_EEPROM_LOGS:
+        ok = clear_eeprom_range(EEPROM_CHECKPOINT_BASE, 2048u);
+        break;
+    case LOG_CLEAR_SPI:
+        ok = erase_nor_sectors(0u,
+            (uint16_t)(spi_nor_size_bytes() / NOR_SECTOR_SIZE));
+        break;
+    default:
+        return false;
+    }
+
+    if (!ok) return false;
+    switch (target) {
+    case LOG_CLEAR_MINUTE:
+        minute_ring.initialized = false;
+        reset_interval(&minute_dose, &minute_min_cpm, &minute_max_cpm);
+        minute_seconds = 0u;
+        break;
+    case LOG_CLEAR_HOUR:
+        hour_ring.initialized = false;
+        hour_sequence = 0u;
+        hour_checkpoint_generation = 0u;
+        hour_minutes = 0u;
+        reset_interval(&hour_dose, &hour_min_cpm, &hour_max_cpm);
+        break;
+    case LOG_CLEAR_DAY:
+        day_sequence = 0u;
+        day_checkpoint_generation = 0u;
+        day_minutes = 0u;
+        reset_interval(&day_dose, &day_min_cpm, &day_max_cpm);
+        break;
+    case LOG_CLEAR_ERROR:
+        alert_ring.initialized = false;
+        alert_active = false;
+        break;
+    case LOG_CLEAR_LOGS:
+        minute_ring.initialized = false;
+        hour_ring.initialized = false;
+        cutoff_ring.initialized = false;
+        alert_ring.initialized = false;
+        alert_active = false;
+        minute_sequence = 0u;
+        hour_sequence = 0u;
+        day_sequence = 0u;
+        hour_checkpoint_generation = 0u;
+        day_checkpoint_generation = 0u;
+        minute_seconds = 0u;
+        hour_minutes = 0u;
+        day_minutes = 0u;
+        reset_interval(&minute_dose, &minute_min_cpm, &minute_max_cpm);
+        reset_interval(&hour_dose, &hour_min_cpm, &hour_max_cpm);
+        reset_interval(&day_dose, &day_min_cpm, &day_max_cpm);
+        break;
+    case LOG_CLEAR_EEPROM_LOGS:
+        hour_sequence = 0u;
+        day_sequence = 0u;
+        hour_checkpoint_generation = 0u;
+        day_checkpoint_generation = 0u;
+        minute_seconds = 0u;
+        hour_minutes = 0u;
+        day_minutes = 0u;
+        reset_interval(&minute_dose, &minute_min_cpm, &minute_max_cpm);
+        reset_interval(&hour_dose, &hour_min_cpm, &hour_max_cpm);
+        reset_interval(&day_dose, &day_min_cpm, &day_max_cpm);
+        break;
+    case LOG_CLEAR_SPI:
+        minute_ring.initialized = false;
+        hour_ring.initialized = false;
+        cutoff_ring.initialized = false;
+        alert_ring.initialized = false;
+        alert_active = false;
+        break;
+    default:
+        return false;
+    }
+    return true;
+}
+
 void log_storage_time_cutoff(uint32_t uptime_seconds, uint32_t calendar_seconds,
                              bool calendar_valid, uint8_t reason)
 {
