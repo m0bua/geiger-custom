@@ -1,4 +1,5 @@
 #include "board.h"
+#include "cpm_history.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -36,6 +37,9 @@ int main(void)
     uint32_t dose_measurement_seconds = 0u;
     uint32_t minute_bins[60] = {0u};
     uint32_t next_minute_tick;
+    uint32_t next_cpm_history_tick;
+    uint32_t latest_cpm = 0u;
+    static cpm_history_t cpm_history;
     uint8_t minute_head = 0u;
     uint32_t led_blink_deadline = 0u;
     uint32_t high_speed_deadline = 0u;
@@ -77,6 +81,8 @@ int main(void)
     next_solar_sample = board_millis;
     next_battery_sample = board_millis;
     next_minute_tick = board_millis + 1000u;
+    cpm_history_init(&cpm_history);
+    next_cpm_history_tick = board_millis + 500u;
     screen_timeout_ms = board_display_screen_timeout_ms();
     inactivity_deadline = board_millis + screen_timeout_ms;
 
@@ -361,6 +367,7 @@ int main(void)
                     session_max_rate_thousandths = rate_thousandths;
                 }
                 if (cpm > session_max_cpm) session_max_cpm = cpm;
+                latest_cpm = cpm;
                 board_display_set_rate(rate_thousandths, cpm,
                                        pulses_since_start,
                                        pulses_since_start >= 25u);
@@ -391,6 +398,13 @@ int main(void)
                         session_max_cpm, session_pulses_total);
                 }
                 next_minute_tick += 1000u;
+            }
+
+            if ((int32_t)(now - next_cpm_history_tick) >= 0) {
+                cpm_history_push(&cpm_history, latest_cpm);
+                /* Do not fabricate a burst of old samples after a delayed
+                 * service pass; resume the regular 500 ms cadence from now. */
+                next_cpm_history_tick = now + 500u;
             }
 
             if (backlight_on && !screen_alarm_active &&
