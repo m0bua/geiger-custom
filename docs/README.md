@@ -13,7 +13,7 @@
 5. [STOCK_BATTERY_ADC_AND_POWER](docs/STOCK_BATTERY_ADC_AND_POWER.md) — аналіз стокового ADC, шкали батареї та переходів живлення.
 6. [LCD_STOCK_GUIDE](docs/LCD_STOCK_GUIDE.md) — відновлена послідовність запуску LCD зі стокового HEX.
 7. [PRODUCT_AND_UI](docs/PRODUCT_AND_UI.md) — цільова специфікація екранів і взаємодії.
-8. [LOG_AND_STORAGE](docs/LOG_AND_STORAGE.md) — пропозиція щодо часу, подій та сховища.
+8. [LOG_AND_STORAGE](docs/LOG_AND_STORAGE.md) — узгоджені вимоги до журналів, часу та сховища.
 9. [APP_AND_SETTINGS](docs/APP_AND_SETTINGS.md) — майбутні налаштування й вимоги до застосунку.
 10. [OPEN_ITEMS](docs/OPEN_ITEMS.md) — питання, які ще потребують рішення або вимірювання.
 11. [REFERENCE_INDEX](docs/REFERENCE_INDEX.md) — покажчик вихідних матеріалів і технічних індексів.
