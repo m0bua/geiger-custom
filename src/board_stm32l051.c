@@ -23,6 +23,7 @@ static uint8_t lcd_indication_mode = 1u;
 #define DETECTOR_PIN       BOARD_DETECTOR_PIN
 #define DETECTOR_EXTI_MASK (1u << DETECTOR_PIN)
 #define FLASHLIGHT_PIN     8u
+#define LCD_BATTERY_PERCENT_STABLE_MS 90000u
 
 #define REG32(address) (*(volatile uint32_t *)(uintptr_t)(address))
 
@@ -34,11 +35,13 @@ static uint8_t lcd_indication_mode = 1u;
 #define RCC_IOPENR     REG32(RCC_BASE + 0x2Cu)
 #define RCC_APB1ENR    REG32(RCC_BASE + 0x38u)
 #define RCC_APB2ENR    REG32(RCC_BASE + 0x34u)
-#define RCC_CSR        REG32(RCC_BASE + 0x24u)
+/* STM32L051: +0x24 is APB2RSTR (bit 0 holds SYSCFG in reset), NOT CSR. */
+#define RCC_CSR        REG32(RCC_BASE + 0x50u)
 #define PWR_CR         REG32(0x40007000u)
 #define RTC_BASE       0x40002800u
 #define RTC_TR         REG32(RTC_BASE + 0x00u)
 #define RTC_DR         REG32(RTC_BASE + 0x04u)
+#define RTC_CR         REG32(RTC_BASE + 0x08u)
 #define RTC_ISR        REG32(RTC_BASE + 0x0Cu)
 #define RTC_PRER       REG32(RTC_BASE + 0x10u)
 #define RTC_WPR        REG32(RTC_BASE + 0x24u)
@@ -243,6 +246,9 @@ static char lcd_cpm_text[LCD_CPM_TEXT_LENGTH + 1u] = "   0 CPM   ";
 static char lcd_adc_glyphs[LCD_ADC_TEXT_LENGTH + 1u] =
     "      \x01  0% \x02  0% ";
 static uint16_t lcd_displayed_battery_percent;
+static uint16_t lcd_battery_percent_candidate;
+static uint32_t lcd_battery_percent_candidate_since_ms;
+static bool lcd_battery_percent_initialized;
 static uint16_t lcd_displayed_solar_percent;
 static bool lcd_solar_sample_ready;
 static uint8_t lcd_screen_page;
@@ -410,8 +416,7 @@ static bool rtc_exit_init_and_sync(void)
 {
     /* Clear INIT and RSF while writing 1s to unrelated write-0-clear flags. */
     RTC_ISR = RTC_ISR_KEEP_FLAGS_CLEAR_RSF & ~(1u << 7u);
-    return rtc_wait_flag((volatile uint32_t *)(uintptr_t)(RTC_BASE + 0x0Cu),
-                         1u << 5u, true);
+    return rtc_wait_flag(&RTC_ISR, 1u << 5u, true);
 }
 
 static void rtc_seed_from_build(rtc_calendar_t *calendar)
@@ -442,21 +447,17 @@ static void rtc_seed_from_build(rtc_calendar_t *calendar)
 
 static bool rtc_read_calendar(rtc_calendar_t *calendar)
 {
-    uint32_t time_a;
-    uint32_t time_b;
+    uint32_t time;
     uint32_t date;
-    uint8_t attempts = 4u;
 
     if (!rtc_ready) return false;
-    do {
-        time_a = RTC_TR;
-        date = RTC_DR;
-        time_b = RTC_TR;
-    } while (time_a != time_b && --attempts != 0u);
-    if (time_a != time_b) return false;
-    calendar->hour = rtc_from_bcd((time_a >> 16u) & 0x3Fu);
-    calendar->minute = rtc_from_bcd((time_a >> 8u) & 0x7Fu);
-    calendar->second = rtc_from_bcd(time_a & 0x7Fu);
+    /* TR locks the calendar shadow registers; DR must be the final read to
+     * unlock them. A trailing TR would leave the date shadow locked. */
+    time = RTC_TR;
+    date = RTC_DR;
+    calendar->hour = rtc_from_bcd((time >> 16u) & 0x3Fu);
+    calendar->minute = rtc_from_bcd((time >> 8u) & 0x7Fu);
+    calendar->second = rtc_from_bcd(time & 0x7Fu);
     calendar->year = (uint16_t)(2000u +
         rtc_from_bcd((date >> 16u) & 0xFFu));
     calendar->month = rtc_from_bcd((date >> 8u) & 0x1Fu);
@@ -534,32 +535,51 @@ static void board_rtc_init(void)
     uint32_t source;
 
     rtc_ready = false;
+    rtc_time_valid = false;
     rtc_init_error = 0u;
     RCC_APB1ENR |= 1u << 28u; /* PWR interface clock */
+    (void)RCC_APB1ENR;       /* Let the peripheral clock enable propagate. */
     PWR_CR |= 1u << 8u;       /* allow backup-domain writes */
-    if (RTC_BKP0R == RTC_CONFIG_MAGIC) {
-        rtc_ready = true;
-        rtc_time_valid = RTC_BKP1R == RTC_TIME_VALID_MAGIC;
+    if (!rtc_wait_flag(&PWR_CR, 1u << 8u, true)) {
+        rtc_init_error = 4u;
+        return;
+    }
+    source = (RCC_CSR >> 16u) & 3u;
+    if (RTC_BKP0R == RTC_CONFIG_MAGIC &&
+        (RCC_CSR & ((1u << 18u) | (1u << 19u))) == (1u << 18u) &&
+        ((source == 1u && (RCC_CSR & (1u << 9u)) != 0u) ||
+         (source == 2u && (RCC_CSR & (1u << 1u)) != 0u)) &&
+        (RTC_ISR & ((1u << 4u) | (1u << 7u))) == (1u << 4u) &&
+        (RTC_CR & ((1u << 6u) | (1u << 5u))) == 0u) {
+        /* A backup marker alone does not prove that the RTC is running.
+         * Resynchronize its shadow registers after a system reset. */
+        RTC_WPR = 0xCAu;
+        RTC_WPR = 0x53u;
+        rtc_ready = rtc_exit_init_and_sync();
+        RTC_WPR = 0xFFu;
+        rtc_time_valid = rtc_ready && RTC_BKP1R == RTC_TIME_VALID_MAGIC;
+        if (!rtc_ready) rtc_init_error = 3u;
         return;
     }
 
+    /* Reset before starting LSE: backup reset also clears LSE configuration. */
+    RCC_CSR |= 1u << 19u;
+    RCC_CSR &= ~(1u << 19u);
+
     /* First setup only: prefer an accurate 32.768 kHz crystal, then use LSI. */
     RCC_CSR |= 1u << 8u; /* LSEON */
-    if (rtc_wait_flag((volatile uint32_t *)(uintptr_t)(RCC_BASE + 0x24u),
-                      1u << 9u, true)) {
+    if (rtc_wait_flag(&RCC_CSR, 1u << 9u, true)) {
         source = 1u;
     } else {
         RCC_CSR |= 1u; /* LSION */
-        if (!rtc_wait_flag((volatile uint32_t *)(uintptr_t)(RCC_BASE + 0x24u),
-                           1u << 1u, true)) {
+        if (!rtc_wait_flag(&RCC_CSR, 1u << 1u, true)) {
             rtc_init_error = 1u;
             return;
         }
+        RCC_CSR &= ~(1u << 8u); /* Do not leave the unused LSE running. */
         source = 2u;
     }
 
-    RCC_CSR |= 1u << 19u; /* RTCRST: reset RTC/backup domain on first setup */
-    RCC_CSR &= ~(1u << 19u);
     RCC_CSR = (RCC_CSR & ~((3u << 16u) | (1u << 18u))) |
         (source << 16u) | (1u << 18u); /* RTCSEL + RTCEN */
 
@@ -573,6 +593,7 @@ static void board_rtc_init(void)
         RTC_WPR = 0xFFu;
         return;
     }
+    RTC_CR &= ~((1u << 6u) | (1u << 5u)); /* 24-hour, shadow registers on. */
     /* LSE: 128 x 256; LSI nominal ~37 kHz: 128 x 289. */
     RTC_PRER = (127u << 16u) | (source == 1u ? 255u : 288u);
     rtc_seed_from_build(&seed);
@@ -1486,12 +1507,11 @@ static uint8_t lcd_debug_make_line(uint8_t row, char *line)
         value[value_length++] = (char)('0' + minutes % 10u);
         lcd_debug_put_right(line, 20u, value, value_length);
     } else if (row == 1u) {
-        line[0] = rtc_init_error == 1u ? 'O' :
-            rtc_init_error == 2u ? 'I' : rtc_init_error == 3u ? 'S' : '-';
-        line[1] = rtc_init_error == 1u ? 'S' :
-            rtc_init_error == 2u ? 'N' : rtc_init_error == 3u ? 'Y' : '-';
-        line[2] = rtc_init_error == 1u ? 'C' :
-            rtc_init_error == 2u ? 'T' : rtc_init_error == 3u ? 'C' : '-';
+        const char *const status = rtc_init_error == 1u ? "OSC" :
+            rtc_init_error == 2u ? "INT" : rtc_init_error == 3u ? "SYC" :
+            rtc_init_error == 4u ? "DBP" : !rtc_ready ? "---" :
+            ((RCC_CSR >> 16u) & 3u) == 1u ? "LSE" : "LSI";
+        for (uint8_t i = 0u; i < 3u; ++i) line[i] = status[i];
         line[4] = 'L';
         line[5] = (RCC_CSR & 1u) != 0u ? '1' : '0';
         line[6] = 'R';
@@ -1751,7 +1771,8 @@ static bool lcd_text_prepare_glyph(void)
                         lcd_time_save_error == 4u ? "DRFT" :
                         lcd_time_save_error == 5u ? "OSC " :
                         lcd_time_save_error == 6u ? "INIT" :
-                        lcd_time_save_error == 7u ? "SYNC" : "DATE";
+                        lcd_time_save_error == 7u ? "SYNC" :
+                        lcd_time_save_error == 8u ? "DBP " : "DATE";
                     for (uint8_t i = 0u; i < 4u; ++i) {
                         line[16u + i] = error[i];
                     }
@@ -4055,6 +4076,9 @@ static void lcd_apply_brightness_settings(void)
         apply_screen = lcd_solar_sample_ready;
         screen_percent = (uint8_t)lcd_displayed_solar_percent;
         if (screen_percent < 1u) screen_percent = 1u;
+        if (lcd_adc_sun_raw >= 10u && screen_percent < 10u) {
+            screen_percent = 10u;
+        }
     } else {
         screen_percent = levels[screen_setting];
     }
@@ -4096,7 +4120,21 @@ void board_display_set_adc(uint16_t channel2, uint16_t channel8,
     lcd_adc_usb_raw = channel8;
     if (channel2 <= 4095u) {
         battery_percent = lcd_battery_percent(channel2);
-        if (battery_percent != lcd_displayed_battery_percent) {
+        if (!lcd_battery_percent_initialized) {
+            /* Give the display a useful initial value; debounce later changes. */
+            lcd_displayed_battery_percent = battery_percent;
+            lcd_battery_percent_candidate = battery_percent;
+            lcd_battery_percent_candidate_since_ms = board_millis;
+            lcd_battery_percent_initialized = true;
+            lcd_format_percent(battery_percent, 13u);
+            changed = true;
+        } else if (battery_percent != lcd_battery_percent_candidate) {
+            lcd_battery_percent_candidate = battery_percent;
+            lcd_battery_percent_candidate_since_ms = board_millis;
+        } else if (battery_percent != lcd_displayed_battery_percent &&
+                   (uint32_t)(board_millis -
+                       lcd_battery_percent_candidate_since_ms) >=
+                           LCD_BATTERY_PERCENT_STABLE_MS) {
             lcd_displayed_battery_percent = battery_percent;
             lcd_format_percent(battery_percent, 13u);
             changed = true;
