@@ -29,5 +29,9 @@ bool log_storage_minute_history_load(uint32_t *cpm, uint8_t capacity,
 bool log_storage_clear(log_clear_target_t target);
 void log_storage_time_cutoff(uint32_t uptime_seconds, uint32_t calendar_seconds,
                              bool calendar_valid, uint8_t reason);
+bool log_storage_calendar_day(uint16_t day_key, bool at_runtime_boundary);
+void log_storage_today_seed(uint32_t pulse_count);
+uint32_t log_storage_today_pulse_count(void);
+uint32_t log_storage_today_recover_from_hours(uint8_t completed_hours);
 
 #endif

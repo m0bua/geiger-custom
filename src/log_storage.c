@@ -14,7 +14,11 @@
 #define EEPROM_DAY_SIZE 12u
 #define EEPROM_CHECKPOINT_BASE 140u
 #define EEPROM_HOUR_CHECKPOINT_SIZE 14u
-#define EEPROM_DAY_CHECKPOINT_SIZE 15u
+#define EEPROM_DAY_CHECKPOINT_SIZE 17u
+#define EEPROM_DAY_CHECKPOINT_BASE (EEPROM_CHECKPOINT_BASE + \
+    2u * EEPROM_HOUR_CHECKPOINT_SIZE)
+#define EEPROM_DAY_CHECKPOINT_MAGIC 0xD4u
+#define EEPROM_DAY_UNKNOWN_KEY UINT16_MAX
 
 #define NOR_SECTOR_SIZE 4096u
 #define NOR_SECTOR_HEADER_SIZE 16u
@@ -76,6 +80,8 @@ static uint32_t day_dose;
 static uint32_t day_min_cpm;
 static uint32_t day_max_cpm;
 static uint16_t day_minutes;
+static uint16_t day_calendar_key = EEPROM_DAY_UNKNOWN_KEY;
+static bool day_calendar_key_valid;
 static uint16_t alert_run_id;
 static uint32_t alert_start_uptime;
 static uint32_t alert_end_uptime;
@@ -165,7 +171,8 @@ static bool decode_hour(const uint8_t record[NOR_HOUR_RECORD_SIZE],
                         uint16_t *sequence)
 {
     if (((record[9] & 0xF0u) != 0xA0u &&
-         (record[9] & 0xF0u) != 0xB0u) ||
+         (record[9] & 0xF0u) != 0xB0u &&
+         (record[9] & 0xF0u) != 0xC0u) ||
         record[10] != crc8(record, 10u)) return false;
     *sequence = (uint16_t)get_bits(record, 0u, 16u);
     return true;
@@ -536,23 +543,25 @@ static bool hour_checkpoint_read(uint8_t slot, uint16_t *sequence,
 }
 
 static bool day_checkpoint_read(uint8_t slot, uint16_t *sequence,
-                                uint8_t *generation, uint32_t *dose,
-                                uint32_t *minimum, uint32_t *maximum)
+                                uint8_t *generation, uint16_t *day_key,
+                                uint32_t *dose, uint32_t *minimum,
+                                uint32_t *maximum)
 {
     uint8_t record[EEPROM_DAY_CHECKPOINT_SIZE];
-    const uint16_t address = (uint16_t)(EEPROM_CHECKPOINT_BASE +
-        2u * EEPROM_HOUR_CHECKPOINT_SIZE +
+    const uint16_t address = (uint16_t)(EEPROM_DAY_CHECKPOINT_BASE +
         slot * EEPROM_DAY_CHECKPOINT_SIZE);
     if (!eeprom_read_record(address, record, sizeof(record)) ||
-        record[13] != 0xD3u || record[14] != crc8(record, 14u)) return false;
+        record[16] != EEPROM_DAY_CHECKPOINT_MAGIC ||
+        record[15] != crc8(record, 15u)) return false;
     *sequence = (uint16_t)record[0] | ((uint16_t)record[1] << 8u);
     *generation = record[2];
-    *dose = (uint32_t)record[3] | ((uint32_t)record[4] << 8u) |
-        ((uint32_t)record[5] << 16u) | ((uint32_t)record[6] << 24u);
-    *minimum = (uint32_t)record[7] | ((uint32_t)record[8] << 8u) |
-        ((uint32_t)record[9] << 16u);
-    *maximum = (uint32_t)record[10] | ((uint32_t)record[11] << 8u) |
-        ((uint32_t)record[12] << 16u);
+    *day_key = (uint16_t)record[3] | ((uint16_t)record[4] << 8u);
+    *dose = (uint32_t)record[5] | ((uint32_t)record[6] << 8u) |
+        ((uint32_t)record[7] << 16u) | ((uint32_t)record[8] << 24u);
+    *minimum = (uint32_t)record[9] | ((uint32_t)record[10] << 8u) |
+        ((uint32_t)record[11] << 16u);
+    *maximum = (uint32_t)record[12] | ((uint32_t)record[13] << 8u) |
+        ((uint32_t)record[14] << 16u);
     return true;
 }
 
@@ -578,26 +587,27 @@ static bool hour_checkpoint_write(uint16_t sequence, uint8_t generation,
 }
 
 static bool day_checkpoint_write(uint16_t sequence, uint8_t generation,
-                                 uint32_t dose, uint32_t minimum,
-                                 uint32_t maximum)
+                                 uint16_t day_key, uint32_t dose,
+                                 uint32_t minimum, uint32_t maximum)
 {
     uint8_t record[EEPROM_DAY_CHECKPOINT_SIZE];
     const uint8_t slot = generation & 1u;
-    const uint16_t address = (uint16_t)(EEPROM_CHECKPOINT_BASE +
-        2u * EEPROM_HOUR_CHECKPOINT_SIZE +
+    const uint16_t address = (uint16_t)(EEPROM_DAY_CHECKPOINT_BASE +
         slot * EEPROM_DAY_CHECKPOINT_SIZE);
     record[0] = (uint8_t)sequence;
     record[1] = (uint8_t)(sequence >> 8u);
     record[2] = generation;
+    record[3] = (uint8_t)day_key;
+    record[4] = (uint8_t)(day_key >> 8u);
     for (uint8_t i = 0u; i < 4u; ++i) {
-        record[3u + i] = (uint8_t)(dose >> (i * 8u));
+        record[5u + i] = (uint8_t)(dose >> (i * 8u));
     }
     for (uint8_t i = 0u; i < 3u; ++i) {
-        record[7u + i] = (uint8_t)(minimum >> (i * 8u));
-        record[10u + i] = (uint8_t)(maximum >> (i * 8u));
+        record[9u + i] = (uint8_t)(minimum >> (i * 8u));
+        record[12u + i] = (uint8_t)(maximum >> (i * 8u));
     }
-    record[13] = 0xD3u;
-    record[14] = crc8(record, 14u);
+    record[15] = crc8(record, 15u);
+    record[16] = EEPROM_DAY_CHECKPOINT_MAGIC;
     return eeprom_write_record(address, record, sizeof(record));
 }
 
@@ -605,6 +615,7 @@ static void eeprom_recover_checkpoints(void)
 {
     uint16_t seq0, seq1;
     uint8_t generation0, generation1;
+    uint16_t day_key0, day_key1;
     uint32_t dose0, dose1, min0, min1, max0, max1;
     const bool hour0 = hour_checkpoint_read(0u, &seq0, &generation0,
         &dose0, &min0, &max0);
@@ -619,6 +630,10 @@ static void eeprom_recover_checkpoints(void)
         if (sequence_newer(sequence, (uint16_t)(hour_sequence - 1u)) ||
             hour_sequence == 0u) {
             hour_sequence = sequence;
+            hour_dose = choose1 ? dose1 : dose0;
+            hour_min_cpm = choose1 ? min1 : min0;
+            hour_max_cpm = choose1 ? max1 : max0;
+            hour_minutes = 0u;
             (void)eeprom_write_hour(choose1 ? dose1 : dose0,
                 choose1 ? min1 : min0, choose1 ? max1 : max0, false);
             hour_sequence = (uint16_t)(sequence + 1u);
@@ -626,21 +641,30 @@ static void eeprom_recover_checkpoints(void)
     }
 
     const bool day0 = day_checkpoint_read(0u, &seq0, &generation0,
-        &dose0, &min0, &max0);
+        &day_key0, &dose0, &min0, &max0);
     const bool day1 = day_checkpoint_read(1u, &seq1, &generation1,
-        &dose1, &min1, &max1);
+        &day_key1, &dose1, &min1, &max1);
     choose1 = day1 && (!day0 ||
         (int8_t)(generation1 - generation0) > 0);
     if (day0 || day1) {
         const uint16_t sequence = choose1 ? seq1 : seq0;
         day_checkpoint_generation = (uint8_t)((choose1 ? generation1 :
             generation0) + 1u);
+        day_calendar_key = choose1 ? day_key1 : day_key0;
+        day_calendar_key_valid = day_calendar_key !=
+            EEPROM_DAY_UNKNOWN_KEY;
         if (sequence_newer(sequence, (uint16_t)(day_sequence - 1u)) ||
             day_sequence == 0u) {
             day_sequence = sequence;
             (void)eeprom_write_day(choose1 ? dose1 : dose0,
                 choose1 ? min1 : min0, choose1 ? max1 : max0, false);
             day_sequence = (uint16_t)(sequence + 1u);
+        }
+        if (day_calendar_key_valid) {
+            day_dose = choose1 ? dose1 : dose0;
+            day_min_cpm = choose1 ? min1 : min0;
+            day_max_cpm = choose1 ? max1 : max0;
+            day_minutes = day_dose != 0u || day_max_cpm != 0u ? 1u : 0u;
         }
     }
 }
@@ -663,6 +687,15 @@ static bool nor_append_hour(uint32_t dose, uint32_t minimum,
     return ring_append(&hour_ring, record);
 }
 
+static bool nor_append_hour_day_marker(void)
+{
+    uint8_t record[NOR_HOUR_RECORD_SIZE];
+    encode_hour(record, hour_ring.record_sequence, 0u, 0u, 0u, false);
+    record[9] = (uint8_t)((record[9] & 0x0Fu) | 0xC0u);
+    record[10] = crc8(record, 10u);
+    return ring_append(&hour_ring, record);
+}
+
 static void reset_interval(uint32_t *dose, uint32_t *minimum,
                            uint32_t *maximum)
 {
@@ -679,6 +712,8 @@ void log_storage_init(bool use_spi)
     minute_seconds = 0u;
     hour_minutes = 0u;
     day_minutes = 0u;
+    day_calendar_key = EEPROM_DAY_UNKNOWN_KEY;
+    day_calendar_key_valid = false;
     minute_sequence = 0u;
     storage_spi = use_spi && spi_nor_is_ready();
     storage_ready = true;
@@ -804,19 +839,13 @@ static void close_minute(bool complete)
         }
     }
     {
-        const bool day_complete = day_minutes >= 1440u;
         const uint32_t day_min = day_min_cpm == UINT32_MAX ? 0u :
             day_min_cpm;
         if (day_checkpoint_write(day_sequence, day_checkpoint_generation,
+                day_calendar_key_valid ? day_calendar_key :
+                    EEPROM_DAY_UNKNOWN_KEY,
                 day_dose, day_min, day_max_cpm)) {
             ++day_checkpoint_generation;
-        }
-        if (day_complete) {
-            (void)eeprom_write_day(day_dose, day_min, day_max_cpm, true);
-        }
-        if (day_complete) {
-            day_minutes = 0u;
-            reset_interval(&day_dose, &day_min_cpm, &day_max_cpm);
         }
     }
 
@@ -842,15 +871,6 @@ static void close_time_segment(void)
         reset_interval(&hour_dose, &hour_min_cpm, &hour_max_cpm);
     }
 
-    if (day_minutes != 0u || day_dose != 0u || day_min_cpm != UINT32_MAX) {
-        const uint32_t minimum = day_min_cpm == UINT32_MAX ? 0u :
-            day_min_cpm;
-        if (eeprom_write_day(day_dose, minimum, day_max_cpm, false)) {
-            ++day_sequence;
-        }
-        day_minutes = 0u;
-        reset_interval(&day_dose, &day_min_cpm, &day_max_cpm);
-    }
 }
 
 void log_storage_second(uint32_t pulse_count)
@@ -859,6 +879,134 @@ void log_storage_second(uint32_t pulse_count)
     minute_dose = add_saturated(minute_dose, pulse_count, 0x3FFFFu);
     if (minute_seconds < 60u) ++minute_seconds;
     if (minute_seconds >= 60u) close_minute(true);
+}
+
+bool log_storage_calendar_day(uint16_t day_key, bool at_runtime_boundary)
+{
+    const bool changing_known_day = day_calendar_key_valid &&
+        day_calendar_key != day_key;
+    if (!storage_ready) return false;
+    if (day_calendar_key_valid && day_calendar_key == day_key) return true;
+
+    if (changing_known_day) close_time_segment();
+    if (changing_known_day &&
+        (day_minutes != 0u || day_dose != 0u ||
+         day_min_cpm != UINT32_MAX)) {
+        const uint32_t minimum = day_min_cpm == UINT32_MAX ? 0u :
+            day_min_cpm;
+        (void)eeprom_write_day(day_dose, minimum, day_max_cpm,
+            day_minutes >= 1440u);
+        ++day_sequence;
+    }
+
+    day_calendar_key = day_key;
+    day_calendar_key_valid = true;
+    if (changing_known_day) {
+        day_minutes = 0u;
+        reset_interval(&day_dose, &day_min_cpm, &day_max_cpm);
+        if (at_runtime_boundary && storage_spi &&
+            !nor_append_hour_day_marker()) {
+            storage_spi = false;
+        }
+    }
+    if (day_checkpoint_write(day_sequence, day_checkpoint_generation,
+            day_calendar_key, day_dose,
+            day_min_cpm == UINT32_MAX ? 0u : day_min_cpm,
+            day_max_cpm)) {
+        ++day_checkpoint_generation;
+    }
+    return false;
+}
+
+void log_storage_today_seed(uint32_t pulse_count)
+{
+    if (!storage_ready) return;
+    if (minute_seconds != 0u) close_minute(false);
+    day_dose = pulse_count > 0x1FFFFFFFu ? 0x1FFFFFFFu : pulse_count;
+    day_minutes = day_dose != 0u ? 1u : day_minutes;
+    if (day_checkpoint_write(day_sequence, day_checkpoint_generation,
+            day_calendar_key_valid ? day_calendar_key :
+                EEPROM_DAY_UNKNOWN_KEY,
+            day_dose, day_min_cpm == UINT32_MAX ? 0u : day_min_cpm,
+            day_max_cpm)) {
+        ++day_checkpoint_generation;
+    }
+}
+
+uint32_t log_storage_today_pulse_count(void)
+{
+    const uint32_t maximum = 0x1FFFFFFFu;
+    return minute_dose > maximum - day_dose ? maximum :
+        day_dose + minute_dose;
+}
+
+uint32_t log_storage_today_recover_from_hours(uint8_t completed_hours)
+{
+    uint8_t header[NOR_SECTOR_HEADER_SIZE];
+    uint8_t record[NOR_HOUR_RECORD_SIZE];
+    uint32_t recent_total = 0u;
+    uint32_t since_marker_total = 0u;
+    uint8_t recovered = 0u;
+    bool marker_found = false;
+
+    if (!storage_ready || !storage_spi || !hour_ring.initialized) {
+        return log_storage_today_pulse_count();
+    }
+    if (completed_hours > 23u) completed_hours = 23u;
+
+    /* A day marker gives an exact start for new logs. Older log data predates
+     * markers, so use the RTC hour as a bounded fallback for that history. */
+    for (uint16_t back = 0u; back < 2u && !marker_found; ++back) {
+        const uint16_t sector = (uint16_t)((hour_ring.active_sector +
+            hour_ring.sector_count - back) % hour_ring.sector_count);
+        const uint32_t base = (uint32_t)(hour_ring.base_sector + sector) *
+            NOR_SECTOR_SIZE;
+        uint32_t sector_sequence;
+        const uint16_t top_slot = back == 0u ? hour_ring.next_slot :
+            hour_ring.records_per_sector;
+        if (!spi_nor_read(base, header, sizeof(header)) ||
+            !parse_sector_header(header, NOR_RING_HOUR, &sector_sequence)) {
+            continue;
+        }
+        (void)sector_sequence;
+        for (uint16_t slot = top_slot; slot > 0u; --slot) {
+            uint16_t sequence;
+            const uint32_t address = base + NOR_SECTOR_HEADER_SIZE +
+                (uint32_t)(slot - 1u) * NOR_HOUR_RECORD_SIZE;
+            if (!spi_nor_read(address, record, sizeof(record))) {
+                return log_storage_today_pulse_count();
+            }
+            if (!decode_hour(record, &sequence)) continue;
+            (void)sequence;
+            const uint8_t kind = record[9] & 0xF0u;
+            if (kind == 0xC0u) {
+                marker_found = true;
+                break;
+            }
+            const uint32_t dose = get_bits(record, 16u, 24u);
+            since_marker_total = add_saturated(since_marker_total, dose,
+                                               0x1FFFFFFFu);
+            if (kind == 0xB0u && recovered < completed_hours) {
+                recent_total = add_saturated(recent_total, dose,
+                                             0x1FFFFFFFu);
+                ++recovered;
+            }
+        }
+    }
+
+    uint32_t total = marker_found ? since_marker_total : recent_total;
+    /* The current hour checkpoint has not reached SPI yet. The open minute
+     * stays separate and is included by log_storage_today_pulse_count(). */
+    total = add_saturated(total, hour_dose, 0x1FFFFFFFu);
+    day_dose = total;
+    if (day_checkpoint_write(day_sequence, day_checkpoint_generation,
+            day_calendar_key_valid ? day_calendar_key :
+                EEPROM_DAY_UNKNOWN_KEY,
+            day_dose, day_min_cpm == UINT32_MAX ? 0u : day_min_cpm,
+            day_max_cpm)) {
+        ++day_checkpoint_generation;
+    }
+    return log_storage_today_pulse_count();
 }
 
 static bool alert_append(bool active, bool interrupted)
@@ -998,9 +1146,8 @@ bool log_storage_clear(log_clear_target_t target)
             erase_nor_sectors(NOR_HOUR_BASE_SECTOR, NOR_HOUR_SECTORS);
         break;
     case LOG_CLEAR_DAY:
-        ok = clear_eeprom_range(EEPROM_CHECKPOINT_BASE +
-                2u * EEPROM_HOUR_CHECKPOINT_SIZE,
-                EEPROM_CHECKPOINT_BASE + 2u * EEPROM_HOUR_CHECKPOINT_SIZE +
+        ok = clear_eeprom_range(EEPROM_DAY_CHECKPOINT_BASE,
+                EEPROM_DAY_CHECKPOINT_BASE +
                     2u * EEPROM_DAY_CHECKPOINT_SIZE) &&
             clear_eeprom_range(EEPROM_DAY_BASE,
                 EEPROM_DAY_BASE + EEPROM_DAY_COUNT * EEPROM_DAY_SIZE);
@@ -1041,6 +1188,8 @@ bool log_storage_clear(log_clear_target_t target)
         day_sequence = 0u;
         day_checkpoint_generation = 0u;
         day_minutes = 0u;
+        day_calendar_key = EEPROM_DAY_UNKNOWN_KEY;
+        day_calendar_key_valid = false;
         reset_interval(&day_dose, &day_min_cpm, &day_max_cpm);
         break;
     case LOG_CLEAR_ERROR:
@@ -1061,6 +1210,8 @@ bool log_storage_clear(log_clear_target_t target)
         minute_seconds = 0u;
         hour_minutes = 0u;
         day_minutes = 0u;
+        day_calendar_key = EEPROM_DAY_UNKNOWN_KEY;
+        day_calendar_key_valid = false;
         reset_interval(&minute_dose, &minute_min_cpm, &minute_max_cpm);
         reset_interval(&hour_dose, &hour_min_cpm, &hour_max_cpm);
         reset_interval(&day_dose, &day_min_cpm, &day_max_cpm);
@@ -1073,6 +1224,8 @@ bool log_storage_clear(log_clear_target_t target)
         minute_seconds = 0u;
         hour_minutes = 0u;
         day_minutes = 0u;
+        day_calendar_key = EEPROM_DAY_UNKNOWN_KEY;
+        day_calendar_key_valid = false;
         reset_interval(&minute_dose, &minute_min_cpm, &minute_max_cpm);
         reset_interval(&hour_dose, &hour_min_cpm, &hour_max_cpm);
         reset_interval(&day_dose, &day_min_cpm, &day_max_cpm);

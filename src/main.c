@@ -10,6 +10,21 @@
 #define BATTERY_IDLE_SAMPLE_INTERVAL_MS 600000u
 #define BATTERY_CRITICAL_SAMPLE_INTERVAL_MS 30000u
 
+static void dose_from_pulse_count(uint32_t pulse_count,
+                                  uint32_t *dose_thousandths,
+                                  uint32_t *dose_fraction)
+{
+    const uint64_t scaled = (uint64_t)pulse_count * 666u;
+    const uint64_t whole = scaled / 100u;
+    if (whole > UINT32_MAX) {
+        *dose_thousandths = UINT32_MAX;
+        *dose_fraction = 0u;
+    } else {
+        *dose_thousandths = (uint32_t)whole;
+        *dose_fraction = (uint32_t)(scaled % 100u) * 36u;
+    }
+}
+
 static void screen_backlight_wake(void)
 {
     /* Avoid a stale ambient-light level flashing before the fresh ADC sample. */
@@ -36,6 +51,11 @@ int main(void)
     uint32_t dose_thousandths = 0u;
     uint32_t dose_fraction = 0u;
     uint32_t dose_measurement_seconds = 0u;
+    uint32_t session_dose_thousandths = 0u;
+    uint32_t session_dose_fraction = 0u;
+    uint32_t today_pulse_count = 0u;
+    uint16_t calendar_day_key = UINT16_MAX;
+    bool calendar_day_valid = false;
     uint32_t minute_bins[60] = {0u};
     uint32_t next_minute_tick;
     uint32_t next_cpm_history_tick;
@@ -76,10 +96,27 @@ int main(void)
         bool calendar_valid;
         if (board_rtc_log_time(&uptime_seconds, &calendar_seconds,
                 &calendar_valid)) {
+            if (calendar_valid) {
+                calendar_day_key = (uint16_t)(calendar_seconds / 86400u);
+                calendar_day_valid = true;
+                const bool day_checkpoint_matches =
+                    log_storage_calendar_day(calendar_day_key, true);
+                today_pulse_count = log_storage_today_pulse_count();
+                if ((!day_checkpoint_matches || today_pulse_count == 0u) &&
+                    log_storage_spi_available()) {
+                    today_pulse_count = log_storage_today_recover_from_hours(
+                        (uint8_t)((calendar_seconds % 86400u) / 3600u));
+                }
+                dose_measurement_seconds = calendar_seconds % 86400u;
+                dose_from_pulse_count(today_pulse_count,
+                    &dose_thousandths, &dose_fraction);
+            }
             log_storage_time_cutoff(uptime_seconds, calendar_seconds,
                 calendar_valid, LOG_CUTOFF_REASON_BOOT);
         }
     }
+    board_display_set_dose(dose_thousandths, dose_fraction,
+                           dose_measurement_seconds);
     screen_alarm_active = board_display_screen_alarm_active();
     sound_alarm_active = board_display_sound_alarm_active();
     board_sound_alarm_set(sound_alarm_active);
@@ -343,6 +380,39 @@ int main(void)
             }
 
             while ((int32_t)(now - next_minute_tick) >= 0) {
+                {
+                    uint32_t uptime_seconds;
+                    uint32_t calendar_seconds;
+                    bool calendar_valid;
+                    if (board_rtc_log_time(&uptime_seconds,
+                            &calendar_seconds, &calendar_valid) &&
+                        calendar_valid) {
+                        const uint16_t current_day = (uint16_t)(
+                            calendar_seconds / 86400u);
+                        if (!calendar_day_valid ||
+                            current_day != calendar_day_key) {
+                            const bool time_was_valid = calendar_day_valid;
+                            const bool day_matches =
+                                log_storage_calendar_day(current_day,
+                                                         time_was_valid);
+                            calendar_day_key = current_day;
+                            calendar_day_valid = true;
+                            if (!time_was_valid && !day_matches) {
+                                log_storage_today_seed(session_pulses_total);
+                                today_pulse_count = session_pulses_total;
+                            } else {
+                                today_pulse_count =
+                                    log_storage_today_pulse_count();
+                            }
+                            dose_measurement_seconds =
+                                calendar_seconds % 86400u;
+                            dose_from_pulse_count(today_pulse_count,
+                                &dose_thousandths, &dose_fraction);
+                            board_display_set_dose(dose_thousandths,
+                                dose_fraction, dose_measurement_seconds);
+                        }
+                    }
+                }
                 if (session_elapsed_seconds < UINT32_MAX) {
                     ++session_elapsed_seconds;
                 }
@@ -380,6 +450,8 @@ int main(void)
                 if (cpm > session_max_cpm) session_max_cpm = cpm;
                 latest_cpm = cpm;
                 log_storage_second(second_pulses);
+                today_pulse_count = calendar_day_valid ?
+                    log_storage_today_pulse_count() : session_pulses_total;
                 log_storage_alert_sample(cpm, second_pulses,
                     board_uptime_seconds_get(),
                     pulses_since_start >= 25u);
@@ -389,18 +461,21 @@ int main(void)
                 if (dose_measurement_seconds < UINT32_MAX) {
                     ++dose_measurement_seconds;
                 }
-                dose_fraction += rate_thousandths;
-                dose_thousandths += dose_fraction / 3600u;
-                dose_fraction %= 3600u;
+                dose_from_pulse_count(today_pulse_count,
+                    &dose_thousandths, &dose_fraction);
                 board_display_set_dose(dose_thousandths, dose_fraction,
                                        dose_measurement_seconds);
+                session_dose_fraction += rate_thousandths;
+                session_dose_thousandths += session_dose_fraction / 3600u;
+                session_dose_fraction %= 3600u;
                 } else {
                     log_storage_alert_sample(0u, 0u,
                         board_uptime_seconds_get(), false);
                 }
                 if (session_elapsed_seconds != 0u) {
                     const uint64_t integrated_rate =
-                        (uint64_t)dose_thousandths * 3600u + dose_fraction;
+                        (uint64_t)session_dose_thousandths * 3600u +
+                        session_dose_fraction;
                     const uint64_t average_rate_wide = integrated_rate /
                         session_elapsed_seconds;
                     const uint64_t average_cpm_wide =
