@@ -1,6 +1,7 @@
 #include "board.h"
 #include "cpm_history.h"
 #include "log_storage.h"
+#include "protocol_v1.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -62,6 +63,9 @@ int main(void)
     uint32_t next_minute_tick;
     uint32_t next_cpm_history_tick;
     uint32_t latest_cpm = 0u;
+    uint16_t battery_adc_raw = 0u;
+    uint16_t solar_adc_raw = 0u;
+    uint16_t usb_adc_raw = 0u;
     uint8_t minute_head = 0u;
     uint32_t led_blink_deadline = 0u;
     uint32_t high_speed_deadline = 0u;
@@ -144,6 +148,7 @@ int main(void)
     inactivity_deadline = board_millis + screen_timeout_ms;
 
     for (;;) {
+        protocol_v1_service();
         uint32_t now = board_millis;
         const uint8_t button_wakeup_mask =
             board_take_button_wakeup_request();
@@ -631,9 +636,11 @@ int main(void)
                     (void)board_set_idle_clock(false);
                     idle_clock_active = false;
                 }
-                board_adc_read_selected(battery_due,
-                    battery_due && backlight_on, read_solar,
+                board_adc_read_selected(battery_due, battery_due, read_solar,
                     &channel2, &channel8, &channel9);
+                if (channel2 != UINT16_MAX) battery_adc_raw = channel2;
+                if (channel8 != UINT16_MAX) usb_adc_raw = channel8;
+                if (channel9 != UINT16_MAX) solar_adc_raw = channel9;
                 board_display_set_adc(channel2, channel8, channel9);
                 const uint32_t sampled_at = board_millis;
                 if (read_solar) {
@@ -666,6 +673,7 @@ int main(void)
             const bool high_speed_needed = backlight_on ||
                 board_display_busy() || startup_led_active || event_led_on ||
                 light_alarm_active || sound_alarm_active ||
+                board_display_usb_connected() ||
                 (int32_t)(now - high_speed_deadline) < 0;
             if (high_speed_needed && idle_clock_active) {
                 (void)board_set_idle_clock(false);
@@ -674,6 +682,21 @@ int main(void)
                 idle_clock_active = board_set_idle_clock(true);
             }
         }
+
+        {
+            protocol_v1_status_t status;
+            status.uptime_seconds = board_uptime_seconds_get();
+            status.count_today = today_pulse_count;
+            status.rate_cpm = latest_cpm;
+            status.dose_nsv = dose_thousandths;
+            status.battery_raw = battery_adc_raw;
+            status.solar_raw = solar_adc_raw;
+            status.usb_raw = usb_adc_raw;
+            status.flags = (hv_enabled ? 1u : 0u) |
+                (board_display_usb_connected() ? 2u : 0u);
+            protocol_v1_set_status(&status);
+        }
+        protocol_v1_service();
 
         /* Keep clocks and interrupt-driven pulse counting alive while the CPU
          * waits for the next SysTick, detector, RTC, DMA, or button interrupt. */

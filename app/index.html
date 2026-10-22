@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1115">
+  <title>Device Monitor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="toolbar">
+      <nav class="tabs" aria-label="Pages">
+        <button class="tab active" id="overview-tab" type="button" aria-selected="true">Overview</button>
+        <button class="tab" id="debug-tab" type="button" aria-selected="false">Debug</button>
+      </nav>
+      <div id="connection" class="connection" data-state="disconnected">
+        <span class="connection-dot"></span><span id="connection-label">Disconnected</span>
+      </div>
+      <div class="actions">
+        <button id="connect-button" class="button button-primary" type="button">Connect</button>
+        <button id="disconnect-button" class="button button-quiet" type="button" disabled>Disconnect</button>
+      </div>
+    </section>
+
+    <section class="notice" id="notice" role="status" aria-live="polite">
+      <p>Connect over Web Serial from localhost or HTTPS. Opening the port may restart the device.</p>
+    </section>
+
+    <section id="overview-page" class="page">
+      <section class="device-header" aria-label="Device header">
+        <div class="header-reading"><span>TIME</span><strong id="local-time">--:--</strong></div>
+        <div class="header-reading"><span>SOLAR</span><strong id="solar-percent">—%</strong></div>
+        <div class="header-reading"><span>BATTERY</span><strong id="battery-percent">—%</strong></div>
+      </section>
+      <section class="metrics" aria-label="Live readings">
+        <article class="metric metric-primary">
+          <div class="metric-label">RATE · CALCULATED</div>
+          <div class="metric-value"><span id="rate-dose">—</span><small>µSv/h</small></div>
+          <p class="metric-foot"><span id="rate">—</span> CPM</p>
+        </article>
+        <article class="metric">
+          <div class="metric-label">DOSE TODAY</div>
+          <div class="metric-value"><span id="dose">—</span><small>µSv</small></div>
+          <p class="metric-foot"><span id="count">—</span> counts</p>
+        </article>
+      </section>
+      <section class="chart-panel" aria-label="Recent rate history">
+        <canvas id="rate-chart" aria-label="Rate over the latest 60 readings"></canvas>
+      </section>
+    </section>
+
+    <section id="debug-page" class="page" hidden>
+      <section class="details-panel">
+        <div class="panel-heading"><h2>Debug</h2><span id="last-update">No data</span></div>
+        <div class="detail-grid">
+          <div class="detail"><span>Battery ADC</span><strong id="battery">—</strong></div>
+          <div class="detail"><span>Solar ADC</span><strong id="solar">—</strong></div>
+          <div class="detail"><span>USB ADC</span><strong id="usb-raw">—</strong></div>
+          <div class="detail"><span>High voltage</span><strong id="hv-state">—</strong></div>
+          <div class="detail"><span>USB power</span><strong id="usb-state">—</strong></div>
+          <div class="detail"><span>Protocol</span><strong id="device-info">—</strong></div>
+          <div class="detail"><span>Uptime</span><strong id="uptime">—</strong></div>
+        </div>
+      </section>
+    </section>
+
+    <footer>Protocol V1</footer>
+  </main>
+  <script defer src="app.js"></script>
+</body>
+</html>

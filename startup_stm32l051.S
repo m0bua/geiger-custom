@@ -25,7 +25,11 @@ g_pfnVectors:
     .word Default_Handler
     .endr
     .word EXTI4_15_IRQHandler
-    .rept 24
+    .rept 19
+    .word Default_Handler
+    .endr
+    .word USART1_IRQHandler
+    .rept 4
     .word Default_Handler
     .endr
 

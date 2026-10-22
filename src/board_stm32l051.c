@@ -5,6 +5,7 @@
 #include "font_large.h"
 #include "font_small.h"
 #include "log_storage.h"
+#include "protocol_v1.h"
 #include "spi_nor.h"
 
 #include <stdbool.h>
@@ -6666,6 +6667,7 @@ void board_init(void)
     RCC_AHBENR |= 1u; /* DMA1 clock */
     RCC_IOPENR |= 3u; /* GPIOA and GPIOB clocks */
     (void)RCC_IOPENR;
+    protocol_v1_transport_init();
 
     /* PB8 controls the flashlight; preload OFF before enabling output mode. */
     REG32(GPIOB_BASE + GPIO_BSRR) = 1u << (16u + FLASHLIGHT_PIN);

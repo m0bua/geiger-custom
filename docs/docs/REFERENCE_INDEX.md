@@ -22,5 +22,9 @@
 - [GEIGER2_FONT_MAP.md](../reference/stock-analysis/GEIGER2_FONT_MAP.md) — карта шрифтів експериментальних/модифікованих збірок; не є повною картою стоку.
 - [font-renderer-call-inventory-v9.md](../reference/stock-analysis/font-renderer-call-inventory-v9.md) — call-site інвентаризація певної версії шрифтового рендерера.
 
+## Звіти про застосунок і протокол
+
+- [GEIGER2_STOCK_APP_WEB_SERIAL_AND_CUSTOM_PROTOCOL_2026-10-21.md](GEIGER2_STOCK_APP_WEB_SERIAL_AND_CUSTOM_PROTOCOL_2026-10-21.md) — аналіз MilerdPort/стокового UART, кастомного протоколу та фізичних тестів Web Serial і native Windows на COM3.
+
 Попередній SPI BIN не знайдений у доступних матеріалах під час складання цього пакета; його розмір і SHA-256 записані в STOCK_FIRMWARE.md за результатом попереднього аудиту. Не робити нових висновків про вільні адреси без самого дампу.
 
