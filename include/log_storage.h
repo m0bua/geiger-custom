@@ -41,6 +41,12 @@ void log_storage_log_counts(uint16_t *minutes, uint16_t *hours,
                             uint16_t *days);
 /* Physical SPI alert records (snapshots), not distinct alarm episodes. */
 uint16_t log_storage_alert_record_count(void);
+/* Loads distinct alert episodes newest-first. */
+uint8_t log_storage_alert_recent(uint32_t *start_calendar,
+                                 uint32_t *duration_seconds,
+                                 uint32_t *dose_pulses,
+                                 uint32_t *maximum_cpm,
+                                 uint8_t capacity);
 /* Loads the current RAM period first, followed by persisted history newest
  * first. LIVE checkpoints are excluded. Rates are packed as two 18-bit CPM
  * values in five bytes per entry: minimum followed by maximum. */

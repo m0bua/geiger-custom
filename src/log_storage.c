@@ -33,7 +33,7 @@
 #define NOR_SECTOR_HEADER_SIZE 16u
 #define NOR_MINUTE_RECORD_SIZE 11u
 #define NOR_HOUR_RECORD_SIZE 11u
-#define NOR_ALERT_RECORD_SIZE 22u
+#define NOR_ALERT_RECORD_SIZE 28u
 #define NOR_MINUTE_SECTORS 117u
 #define NOR_ALERT_SECTORS 55u
 /* Four formerly-unused cutoff sectors now hold wear-levelled RAM snapshots. */
@@ -47,7 +47,7 @@
 
 #define NOR_RING_MINUTE 1u
 #define NOR_RING_HOUR 2u
-#define NOR_RING_ALERT 4u
+#define NOR_RING_ALERT 3u
 #define NOR_RING_LIVE_MINUTE 5u
 #define NOR_RING_LIVE_HOUR 6u
 
@@ -94,8 +94,9 @@ static uint16_t day_calendar_key = EEPROM_DAY_UNKNOWN_KEY;
 static bool day_calendar_key_valid;
 static uint16_t alert_run_id;
 static uint32_t alert_start_uptime;
-static uint32_t alert_end_uptime;
-static uint32_t alert_dose;
+static uint32_t alert_start_calendar;
+static uint32_t alert_duration_seconds;
+static uint32_t alert_dose_pulses;
 static uint32_t alert_max_cpm;
 static uint32_t alert_seconds_since_save;
 static bool alert_active;
@@ -191,34 +192,36 @@ static bool decode_hour(const uint8_t record[NOR_HOUR_RECORD_SIZE],
 
 static void encode_alert(uint8_t record[NOR_ALERT_RECORD_SIZE],
                          uint16_t sequence, uint16_t run_id,
-                         uint32_t start_uptime, uint32_t end_uptime,
-                         uint32_t dose, uint32_t max_cpm,
+                         uint32_t start_uptime, uint32_t start_calendar,
+                         uint32_t duration_seconds, uint32_t dose_pulses,
+                         uint32_t max_cpm,
                          bool active, bool interrupted)
 {
     for (uint8_t i = 0u; i < NOR_ALERT_RECORD_SIZE; ++i) record[i] = 0u;
     record[0] = (uint8_t)sequence;
     record[1] = (uint8_t)(sequence >> 8u);
-    record[2] = (uint8_t)run_id;
-    record[3] = (uint8_t)(run_id >> 8u);
     for (uint8_t i = 0u; i < 4u; ++i) {
-        record[4u + i] = (uint8_t)(start_uptime >> (i * 8u));
-        record[8u + i] = (uint8_t)(end_uptime >> (i * 8u));
-        record[12u + i] = (uint8_t)(dose >> (i * 8u));
+        record[2u + i] = (uint8_t)(start_uptime >> (i * 8u));
+        record[6u + i] = (uint8_t)(start_calendar >> (i * 8u));
+        record[10u + i] = (uint8_t)(duration_seconds >> (i * 8u));
+        record[14u + i] = (uint8_t)(dose_pulses >> (i * 8u));
     }
-    record[16] = (uint8_t)max_cpm;
-    record[17] = (uint8_t)(max_cpm >> 8u);
-    record[18] = (uint8_t)((max_cpm >> 16u) & 0x03u);
+    record[18] = (uint8_t)max_cpm;
+    record[19] = (uint8_t)(max_cpm >> 8u);
+    record[20] = (uint8_t)((max_cpm >> 16u) & 0x03u);
     /* Severity is derived later from max_cpm; do not duplicate it on media. */
-    record[19] = (uint8_t)((active ? 0x04u : 0u) |
+    record[21] = (uint8_t)((active ? 0x04u : 0u) |
         (interrupted ? 0x08u : 0u));
-    record[20] = crc8(record, 20u);
-    record[21] = 0xA2u;
+    record[22] = (uint8_t)run_id;
+    record[23] = (uint8_t)(run_id >> 8u);
+    record[26] = crc8(record, 26u);
+    record[27] = 0xA3u;
 }
 
 static bool decode_alert(const uint8_t record[NOR_ALERT_RECORD_SIZE],
                          uint16_t *sequence)
 {
-    if (record[21] != 0xA2u || record[20] != crc8(record, 20u)) {
+    if (record[27] != 0xA3u || record[26] != crc8(record, 26u)) {
         return false;
     }
     *sequence = (uint16_t)record[0] | ((uint16_t)record[1] << 8u);
@@ -356,6 +359,31 @@ static bool ring_read_record(const nor_ring_t *ring, uint16_t slot,
         ring->active_sector) * NOR_SECTOR_SIZE + NOR_SECTOR_HEADER_SIZE +
         (uint32_t)slot * ring->record_size;
     return spi_nor_read(address, record, ring->record_size);
+}
+
+static bool ring_read_newest_offset(const nor_ring_t *ring, uint32_t offset,
+                                    uint8_t *record)
+{
+    uint32_t sectors_back;
+    uint16_t slot;
+    uint16_t sector;
+    if (!ring->initialized || offset >= ring->total_records ||
+        ring->records_per_sector == 0u) return false;
+    if (offset < ring->next_slot) {
+        sectors_back = 0u;
+        slot = (uint16_t)(ring->next_slot - 1u - offset);
+    } else {
+        const uint32_t previous_offset = offset - ring->next_slot;
+        sectors_back = 1u + previous_offset / ring->records_per_sector;
+        slot = (uint16_t)(ring->records_per_sector - 1u -
+            previous_offset % ring->records_per_sector);
+    }
+    if (sectors_back >= ring->sector_count) return false;
+    sector = (uint16_t)((ring->active_sector + ring->sector_count -
+        sectors_back) % ring->sector_count);
+    return spi_nor_read((uint32_t)(ring->base_sector + sector) *
+        NOR_SECTOR_SIZE + NOR_SECTOR_HEADER_SIZE +
+        (uint32_t)slot * ring->record_size, record, ring->record_size);
 }
 
 static bool ring_record_valid(const nor_ring_t *ring, const uint8_t *record,
@@ -952,26 +980,31 @@ void log_storage_init(bool use_spi)
         storage_spi = init_nor_rings();
         if (storage_spi) {
             uint8_t record[NOR_ALERT_RECORD_SIZE];
-            if (ring_find_latest(&alert_ring, record) && (record[19] & 0x04u) != 0u) {
-                const uint32_t start = (uint32_t)record[4] |
-                    ((uint32_t)record[5] << 8u) |
-                    ((uint32_t)record[6] << 16u) |
-                    ((uint32_t)record[7] << 24u);
-                const uint32_t end = (uint32_t)record[8] |
-                    ((uint32_t)record[9] << 8u) |
-                    ((uint32_t)record[10] << 16u) |
-                    ((uint32_t)record[11] << 24u);
-                const uint32_t dose = (uint32_t)record[12] |
-                    ((uint32_t)record[13] << 8u) |
-                    ((uint32_t)record[14] << 16u) |
-                    ((uint32_t)record[15] << 24u);
-                const uint32_t maximum = (uint32_t)record[16] |
-                    ((uint32_t)record[17] << 8u) |
-                    ((uint32_t)(record[18] & 0x03u) << 16u);
+            if (ring_find_latest(&alert_ring, record) &&
+                (record[21] & 0x04u) != 0u) {
+                const uint32_t start = (uint32_t)record[2] |
+                    ((uint32_t)record[3] << 8u) |
+                    ((uint32_t)record[4] << 16u) |
+                    ((uint32_t)record[5] << 24u);
+                const uint32_t calendar = (uint32_t)record[6] |
+                    ((uint32_t)record[7] << 8u) |
+                    ((uint32_t)record[8] << 16u) |
+                    ((uint32_t)record[9] << 24u);
+                const uint32_t duration = (uint32_t)record[10] |
+                    ((uint32_t)record[11] << 8u) |
+                    ((uint32_t)record[12] << 16u) |
+                    ((uint32_t)record[13] << 24u);
+                const uint32_t dose = (uint32_t)record[14] |
+                    ((uint32_t)record[15] << 8u) |
+                    ((uint32_t)record[16] << 16u) |
+                    ((uint32_t)record[17] << 24u);
+                const uint32_t maximum = (uint32_t)record[18] |
+                    ((uint32_t)record[19] << 8u) |
+                    ((uint32_t)(record[20] & 0x03u) << 16u);
                 uint8_t interrupted[NOR_ALERT_RECORD_SIZE];
                 encode_alert(interrupted, alert_ring.record_sequence,
-                    (uint16_t)record[2] | ((uint16_t)record[3] << 8u),
-                    start, end, dose, maximum, false, true);
+                    (uint16_t)record[22] | ((uint16_t)record[23] << 8u),
+                    start, calendar, duration, dose, maximum, false, true);
                 if (!ring_append(&alert_ring, interrupted)) {
                     storage_spi = false;
                 }
@@ -1291,7 +1324,8 @@ static bool alert_append(bool active, bool interrupted)
 {
     uint8_t record[NOR_ALERT_RECORD_SIZE];
     encode_alert(record, alert_ring.record_sequence, alert_run_id,
-        alert_start_uptime, alert_end_uptime, alert_dose, alert_max_cpm,
+        alert_start_uptime, alert_start_calendar, alert_duration_seconds,
+        alert_dose_pulses, alert_max_cpm,
         active, interrupted);
     if (!ring_append(&alert_ring, record)) {
         storage_spi = false;
@@ -1312,16 +1346,25 @@ void log_storage_alert_sample(uint32_t cpm, uint32_t pulse_count,
         if (!above_alert_threshold) return;
         alert_active = true;
         alert_start_uptime = uptime_seconds;
-        alert_end_uptime = uptime_seconds;
-        alert_dose = pulse_count;
+        alert_duration_seconds = 0u;
+        alert_dose_pulses = pulse_count;
+        bool calendar_valid = false;
+        uint32_t calendar_uptime = 0u;
+        if (!board_rtc_log_time(&calendar_uptime, &alert_start_calendar,
+                &calendar_valid) || !calendar_valid) {
+            alert_start_calendar = UINT32_MAX;
+        }
+        (void)calendar_uptime;
         alert_max_cpm = cpm;
         alert_seconds_since_save = 0u;
         (void)alert_append(true, false);
         return;
     }
 
-    alert_end_uptime = uptime_seconds;
-    alert_dose = add_saturated(alert_dose, pulse_count, UINT32_MAX);
+    alert_duration_seconds = uptime_seconds >= alert_start_uptime ?
+        uptime_seconds - alert_start_uptime : 0u;
+    alert_dose_pulses = add_saturated(alert_dose_pulses, pulse_count,
+        UINT32_MAX);
     if (cpm > alert_max_cpm) alert_max_cpm = cpm;
     if (alert_seconds_since_save < UINT32_MAX) ++alert_seconds_since_save;
 
@@ -1362,6 +1405,58 @@ uint16_t log_storage_alert_record_count(void)
     if (!storage_spi_requested || !alert_ring.initialized) return 0u;
     return alert_ring.total_records > UINT16_MAX ? UINT16_MAX :
         (uint16_t)alert_ring.total_records;
+}
+
+uint8_t log_storage_alert_recent(uint32_t *start_calendar,
+                                 uint32_t *duration_seconds,
+                                 uint32_t *dose_pulses,
+                                 uint32_t *maximum_cpm,
+                                 uint8_t capacity)
+{
+    uint8_t record[NOR_ALERT_RECORD_SIZE];
+    uint8_t count = 0u;
+    uint16_t previous_run = 0u;
+    uint32_t previous_start = 0u;
+    bool have_previous = false;
+    if (!storage_spi || !alert_ring.initialized || start_calendar == NULL ||
+        duration_seconds == NULL || dose_pulses == NULL ||
+        maximum_cpm == NULL) return 0u;
+    for (uint32_t offset = 0u;
+         offset < alert_ring.total_records && count < capacity; ++offset) {
+        uint16_t sequence;
+        if (!ring_read_newest_offset(&alert_ring, offset, record) ||
+            !decode_alert(record, &sequence)) continue;
+        (void)sequence;
+        const uint16_t run = (uint16_t)record[22] |
+            ((uint16_t)record[23] << 8u);
+        const uint32_t start = (uint32_t)record[2] |
+            ((uint32_t)record[3] << 8u) |
+            ((uint32_t)record[4] << 16u) |
+            ((uint32_t)record[5] << 24u);
+        if (have_previous && run == previous_run && start == previous_start) {
+            continue;
+        }
+        previous_run = run;
+        previous_start = start;
+        have_previous = true;
+        start_calendar[count] = (uint32_t)record[6] |
+            ((uint32_t)record[7] << 8u) |
+            ((uint32_t)record[8] << 16u) |
+            ((uint32_t)record[9] << 24u);
+        duration_seconds[count] = (uint32_t)record[10] |
+            ((uint32_t)record[11] << 8u) |
+            ((uint32_t)record[12] << 16u) |
+            ((uint32_t)record[13] << 24u);
+        dose_pulses[count] = (uint32_t)record[14] |
+            ((uint32_t)record[15] << 8u) |
+            ((uint32_t)record[16] << 16u) |
+            ((uint32_t)record[17] << 24u);
+        maximum_cpm[count] = (uint32_t)record[18] |
+            ((uint32_t)record[19] << 8u) |
+            ((uint32_t)(record[20] & 0x03u) << 16u);
+        ++count;
+    }
+    return count;
 }
 
 
