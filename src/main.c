@@ -27,8 +27,7 @@ static void dose_from_pulse_count(uint32_t pulse_count,
 
 static void screen_backlight_wake(void)
 {
-    /* Avoid a stale ambient-light level flashing before the fresh ADC sample. */
-    board_lcd_backlight_set_brightness(1u);
+    /* Keep the last PWM level; the rolling solar filter will ramp to target. */
     board_lcd_backlight_set(true);
 }
 
@@ -77,8 +76,12 @@ int main(void)
     bool idle_clock_active = false;
     bool adc_screen_was_on = false;
     bool hv_enabled;
-    bool left_long_handled = false;
-    bool right_long_handled = false;
+    bool left_long_repeat_navigation = false;
+    bool right_long_repeat_navigation = false;
+    bool left_long_seen = false;
+    bool right_long_seen = false;
+    bool left_long_repeat_pending = false;
+    bool right_long_repeat_pending = false;
 
     board_init();
     board_adc_init();
@@ -215,30 +218,59 @@ int main(void)
                 inactivity_deadline = now + screen_timeout_ms;
             }
             if ((events & BOARD_BUTTON_LEFT_DOWN) != 0u) {
-                left_long_handled = false;
+                left_long_repeat_navigation = false;
+                left_long_seen = false;
+                left_long_repeat_pending = false;
             }
             if ((events & BOARD_BUTTON_RIGHT_DOWN) != 0u) {
-                right_long_handled = false;
+                right_long_repeat_navigation = false;
+                right_long_seen = false;
+                right_long_repeat_pending = false;
             }
-            if ((events & BOARD_BUTTON_LEFT_LONG) != 0u &&
-                !left_long_handled) {
-                if (board_display_settings_list_active()) {
-                    board_display_settings_list_exit();
-                } else if (!board_display_rate_long_press()) {
-                    board_display_extra_exit();
+            if ((events & BOARD_BUTTON_LEFT_LONG) != 0u) {
+                if (!left_long_seen) {
+                    left_long_seen = true;
+                    if (board_display_settings_list_active()) {
+                        board_display_settings_list_exit();
+                    } else if (!board_display_rate_long_press()) {
+                        board_display_extra_exit();
+                    }
+                    left_long_repeat_navigation =
+                        board_display_settings_list_active() ||
+                        board_display_extra_active();
+                } else if (left_long_repeat_navigation) {
+                    /* Wait until the intermediate screen is fully drawn. */
+                    left_long_repeat_pending = true;
                 }
-                left_long_handled = true;
             }
-            if ((events & BOARD_BUTTON_RIGHT_LONG) != 0u &&
-                !right_long_handled) {
-                if (board_display_settings_list_active()) {
-                    board_display_settings_change();
-                } else if (board_display_extra_active()) {
-                    board_display_settings_list_activate();
-                } else if (!board_display_graph_enter()) {
-                    board_display_extra_enter();
+            if ((events & BOARD_BUTTON_RIGHT_LONG) != 0u) {
+                if (!right_long_seen) {
+                    right_long_seen = true;
+                    if (board_display_settings_list_active()) {
+                        board_display_settings_change();
+                    } else if (board_display_extra_active()) {
+                        board_display_settings_list_activate();
+                    } else if (board_display_graph_enter()) {
+                        right_long_repeat_navigation = false;
+                    } else {
+                        board_display_extra_enter();
+                        right_long_repeat_navigation =
+                            board_display_extra_active();
+                    }
+                } else if (right_long_repeat_navigation) {
+                    /* Wait until the intermediate screen is fully drawn. */
+                    right_long_repeat_pending = true;
                 }
-                right_long_handled = true;
+            }
+            if ((events & BOARD_BUTTON_LEFT_UP) != 0u) {
+                left_long_repeat_navigation = false;
+                left_long_repeat_pending = false;
+                left_long_seen = false;
+            }
+            if ((events & BOARD_BUTTON_RIGHT_UP) != 0u) {
+                right_long_repeat_navigation = false;
+                right_long_repeat_pending = false;
+                right_long_seen = false;
             }
             if ((events & BOARD_BUTTON_RIGHT) != 0u) {
                 if (board_display_settings_list_active()) {
@@ -522,6 +554,26 @@ int main(void)
             idle_clock_active = false;
         }
         board_display_service();
+        if (left_long_repeat_pending && !board_display_busy()) {
+            left_long_repeat_pending = false;
+            if (board_display_settings_list_active()) {
+                board_display_settings_list_exit();
+            } else if (board_display_extra_active()) {
+                board_display_extra_exit();
+            }
+            left_long_repeat_navigation =
+                board_display_settings_list_active() ||
+                board_display_extra_active();
+        }
+        if (right_long_repeat_pending && !board_display_busy()) {
+            right_long_repeat_pending = false;
+            if (board_display_extra_active() &&
+                !board_display_settings_list_active()) {
+                board_display_settings_list_activate();
+            }
+            /* Never repeat a value/edit action while held. */
+            right_long_repeat_navigation = false;
+        }
         if (board_display_take_cleanup_feedback_dismissed()) {
             inactivity_deadline = board_millis + screen_timeout_ms;
         }

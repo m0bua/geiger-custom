@@ -33,6 +33,8 @@ static uint8_t lcd_indication_mode = 1u;
 #define DETECTOR_EXTI_MASK (1u << DETECTOR_PIN)
 #define FLASHLIGHT_PIN     8u
 #define LCD_BATTERY_PERCENT_STABLE_MS 90000u
+#define LCD_SOLAR_BRIGHTNESS_SAMPLE_COUNT 34u
+#define LCD_BACKLIGHT_RAMP_INTERVAL_MS 200u
 
 #define REG32(address) (*(volatile uint32_t *)(uintptr_t)(address))
 
@@ -212,6 +214,7 @@ static void adc_wait_ms(uint32_t duration);
 static bool adc_enable(void);
 static void adc_disable(void);
 static void lcd_apply_brightness_settings(void);
+static void lcd_backlight_auto_ramp_service(void);
 static void lcd_format_dose(uint32_t dose_thousandths,
                             uint32_t dose_fraction);
 static bool button_pressed(uint32_t base, uint32_t pin);
@@ -268,8 +271,15 @@ static uint32_t lcd_battery_percent_candidate_since_ms;
 static bool lcd_battery_percent_initialized;
 static uint16_t lcd_displayed_solar_percent;
 static bool lcd_solar_sample_ready;
+static uint16_t lcd_solar_brightness_samples[
+    LCD_SOLAR_BRIGHTNESS_SAMPLE_COUNT];
+static uint8_t lcd_solar_brightness_sample_count;
+static uint8_t lcd_solar_brightness_sample_next;
+static uint8_t lcd_auto_backlight_target_percent = 1u;
+static uint32_t lcd_backlight_ramp_last_ms;
 static uint8_t lcd_screen_page;
 static uint8_t lcd_main_return_page;
+static uint8_t lcd_last_extra_page = 2u;
 static uint8_t lcd_graph_range_index = 1u;
 static uint8_t lcd_graph_column_y[LCD_WIDTH];
 static char lcd_graph_stat_values[3][5];
@@ -281,6 +291,8 @@ static uint8_t lcd_graph_minute_count;
 static uint32_t lcd_graph_refresh_deadline;
 static bool lcd_settings_list_active;
 static uint8_t lcd_settings_selected;
+static uint8_t lcd_time_selected;
+static uint8_t lcd_settings_menu_selected;
 static bool settings_spi_enabled;
 static bool lcd_cleanup_menu_active;
 static bool lcd_cleanup_confirm_pending;
@@ -1410,6 +1422,10 @@ static void lcd_send_controller_config(void)
 void board_lcd_backlight_set(bool enabled)
 {
     if (enabled) {
+        if (!backlight_requested_on) {
+            /* Keep the rolling solar average across screen-off intervals. */
+            lcd_backlight_ramp_last_ms = board_millis;
+        }
         backlight_requested_on = true;
         uint32_t compare = ((uint32_t)backlight_brightness_percent *
                             BACKLIGHT_PWM_PERIOD) / 100u;
@@ -3301,7 +3317,6 @@ bool board_display_graph_enter(void)
 
     lcd_main_return_page = 1u;
     lcd_screen_page = LCD_GRAPH_PAGE;
-    lcd_graph_range_index = 1u;
     lcd_graph_refresh_deadline = board_millis + 500u;
     lcd_graph_column_y[0] = UINT8_MAX;
     lcd_text_active = false;
@@ -3337,7 +3352,9 @@ void board_display_extra_enter(void)
         return;
     }
     lcd_main_return_page = lcd_screen_page;
-    lcd_screen_page = 2u;
+    lcd_screen_page = lcd_last_extra_page;
+    lcd_settings_selected = lcd_screen_page == 2u ? lcd_time_selected :
+        lcd_settings_menu_selected;
     lcd_settings_list_active = false;
     lcd_settings_editing = false;
     lcd_cleanup_menu_active = false;
@@ -3357,6 +3374,11 @@ void board_display_extra_step(bool forward)
     if (lcd_screen_page < 2u) {
         return;
     }
+    if (lcd_screen_page == 2u) {
+        lcd_time_selected = lcd_settings_selected;
+    } else if (lcd_screen_page == 3u) {
+        lcd_settings_menu_selected = lcd_settings_selected;
+    }
     if (forward) {
         lcd_screen_page = (uint8_t)(2u +
             ((lcd_screen_page - 2u + 1u) % LCD_EXTRA_SCREEN_COUNT));
@@ -3365,10 +3387,15 @@ void board_display_extra_step(bool forward)
             ((lcd_screen_page - 2u + LCD_EXTRA_SCREEN_COUNT - 1u) %
              LCD_EXTRA_SCREEN_COUNT));
     }
+    lcd_last_extra_page = lcd_screen_page;
+    if (lcd_screen_page == 2u) {
+        lcd_settings_selected = lcd_time_selected;
+    } else if (lcd_screen_page == 3u) {
+        lcd_settings_selected = lcd_settings_menu_selected;
+    }
     lcd_settings_list_active = false;
     lcd_settings_editing = false;
     lcd_cleanup_menu_active = false;
-    lcd_settings_selected = 0u;
     lcd_text_active = false;
     lcd_text_row_commands_queued = false;
     lcd_background_pending = true;
@@ -3380,11 +3407,18 @@ void board_display_extra_exit(void)
     if (lcd_screen_page < 2u) {
         return;
     }
+    if (lcd_screen_page == 2u) {
+        lcd_time_selected = lcd_settings_selected;
+    } else if (lcd_screen_page == 3u) {
+        lcd_settings_menu_selected = lcd_settings_selected;
+    }
+    if (lcd_screen_page < LCD_GRAPH_PAGE) {
+        lcd_last_extra_page = lcd_screen_page;
+    }
     lcd_screen_page = lcd_main_return_page;
     lcd_settings_list_active = false;
     lcd_settings_editing = false;
     lcd_cleanup_menu_active = false;
-    lcd_settings_selected = 0u;
     lcd_graph_column_y[0] = UINT8_MAX;
     if (lcd_screen_page == 0u) {
         lcd_format_rate_display(lcd_rate_value_thousandths);
@@ -4462,7 +4496,6 @@ void board_display_settings_list_activate(void)
     lcd_settings_list_active = true;
     lcd_cleanup_menu_active = false;
     if (lcd_screen_page == 2u) {
-        lcd_settings_selected = 0u;
         lcd_settings_editing = false;
         rtc_get_time_edit_base(&lcd_time_draft);
         lcd_time_draft_ready = true;
@@ -4882,20 +4915,61 @@ static void lcd_apply_brightness_settings(void)
         led_percent = levels[led_setting];
     }
     if (screen_setting == 0u) {
-        apply_screen = lcd_solar_sample_ready;
-        screen_percent = (uint8_t)lcd_displayed_solar_percent;
-        if (screen_percent < 1u) screen_percent = 1u;
-        if (lcd_adc_sun_raw >= 10u && screen_percent < 10u) {
-            screen_percent = 10u;
+        uint32_t raw_sum = 0u;
+        uint16_t raw_average = 0u;
+        apply_screen = lcd_solar_brightness_sample_count >=
+            LCD_SOLAR_BRIGHTNESS_SAMPLE_COUNT;
+        for (uint8_t i = 0u;
+             i < lcd_solar_brightness_sample_count; ++i) {
+            raw_sum += lcd_solar_brightness_samples[i];
         }
+        if (lcd_solar_brightness_sample_count != 0u) {
+            raw_average = (uint16_t)(raw_sum /
+                lcd_solar_brightness_sample_count);
+        }
+        if (raw_average < 10u) {
+            lcd_auto_backlight_target_percent = 1u;
+        } else {
+            uint16_t solar_percent = (uint16_t)(raw_average / 31u);
+            /* Preserve the existing RAW 10 / SOLAR 10% thresholds. */
+            if (solar_percent < 10u) solar_percent = 10u;
+            if (solar_percent > 100u) solar_percent = 100u;
+            lcd_auto_backlight_target_percent = (uint8_t)solar_percent;
+        }
+        screen_percent = lcd_auto_backlight_target_percent;
     } else {
         screen_percent = levels[screen_setting];
     }
     if (apply_led && rgb_brightness_percent != led_percent) {
         board_rgb_set_brightness(led_percent);
     }
-    if (apply_screen && backlight_brightness_percent != screen_percent) {
+    if (apply_screen && screen_setting != 0u &&
+        backlight_brightness_percent != screen_percent) {
         board_lcd_backlight_set_brightness(screen_percent);
+    }
+}
+
+static void lcd_backlight_auto_ramp_service(void)
+{
+    if (!backlight_requested_on || lcd_settings_value_index[6] != 0u ||
+        lcd_solar_brightness_sample_count <
+            LCD_SOLAR_BRIGHTNESS_SAMPLE_COUNT) {
+        lcd_backlight_ramp_last_ms = board_millis;
+        return;
+    }
+    if ((uint32_t)(board_millis - lcd_backlight_ramp_last_ms) <
+        LCD_BACKLIGHT_RAMP_INTERVAL_MS) {
+        return;
+    }
+
+    lcd_backlight_ramp_last_ms = board_millis;
+    if (backlight_brightness_percent < lcd_auto_backlight_target_percent) {
+        board_lcd_backlight_set_brightness(
+            (uint8_t)(backlight_brightness_percent + 1u));
+    } else if (backlight_brightness_percent >
+               lcd_auto_backlight_target_percent) {
+        board_lcd_backlight_set_brightness(
+            (uint8_t)(backlight_brightness_percent - 1u));
     }
 }
 
@@ -4955,6 +5029,22 @@ void board_display_set_adc(uint16_t channel2, uint16_t channel8,
         }
     }
     if (channel9 <= 4095u) {
+        if (lcd_solar_brightness_sample_count == 0u) {
+            /* Start responsively, then converge to a full 10 s average. */
+            for (uint8_t i = 0u;
+                 i < LCD_SOLAR_BRIGHTNESS_SAMPLE_COUNT; ++i) {
+                lcd_solar_brightness_samples[i] = channel9;
+            }
+            lcd_solar_brightness_sample_count =
+                LCD_SOLAR_BRIGHTNESS_SAMPLE_COUNT;
+            lcd_solar_brightness_sample_next = 0u;
+        } else {
+            lcd_solar_brightness_samples[lcd_solar_brightness_sample_next] =
+                channel9;
+            lcd_solar_brightness_sample_next = (uint8_t)(
+                (lcd_solar_brightness_sample_next + 1u) %
+                LCD_SOLAR_BRIGHTNESS_SAMPLE_COUNT);
+        }
         solar_percent = (uint16_t)(channel9 / 31u);
         if (solar_percent > 100u) solar_percent = 100u;
         lcd_solar_sample_ready = true;
@@ -5035,6 +5125,7 @@ void board_display_service(void)
     if (!lcd_started) {
         return;
     }
+    lcd_backlight_auto_ramp_service();
     lcd_spi_pump();
     if (lcd_init_state == LCD_INIT_FAILED || !lcd_spi_ready) {
         return;
