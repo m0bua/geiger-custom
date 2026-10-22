@@ -767,6 +767,101 @@ static void eeprom_cutoff_append(uint32_t uptime_seconds,
     }
 }
 
+static bool eeprom_cutoff_read_pair(uint8_t older[EEPROM_CUTOFF_SIZE],
+                                    uint8_t newer[EEPROM_CUTOFF_SIZE])
+{
+    uint8_t slot0[EEPROM_CUTOFF_SIZE];
+    uint8_t slot1[EEPROM_CUTOFF_SIZE];
+    uint16_t sequence0;
+    uint16_t sequence1;
+    const bool valid0 = eeprom_cutoff_read(EEPROM_CUTOFF_SLOT0_BASE,
+        slot0, &sequence0);
+    const bool valid1 = eeprom_cutoff_read(EEPROM_CUTOFF_SLOT1_BASE,
+        slot1, &sequence1);
+
+    if (!valid0 || !valid1) return false;
+    const uint8_t *first = sequence_newer(sequence0, sequence1) ?
+        slot1 : slot0;
+    const uint8_t *last = sequence_newer(sequence0, sequence1) ?
+        slot0 : slot1;
+    for (uint8_t i = 0u; i < EEPROM_CUTOFF_SIZE; ++i) {
+        older[i] = first[i];
+        newer[i] = last[i];
+    }
+    return true;
+}
+
+static uint64_t cutoff_ring_position(const nor_ring_t *ring,
+                                     const uint8_t *event,
+                                     uint8_t sequence_offset,
+                                     uint8_t slot_offset)
+{
+    const uint32_t sequence = read_le(&event[sequence_offset], 3u);
+    const uint16_t slot = (uint16_t)read_le(&event[slot_offset], 2u);
+    const uint64_t cycle = ((uint64_t)1u << 24u) *
+        ring->records_per_sector;
+    return ((uint64_t)sequence * ring->records_per_sector + slot) % cycle;
+}
+
+static uint32_t cutoff_ring_slots_between(const nor_ring_t *ring,
+                                          const uint8_t *from,
+                                          const uint8_t *to,
+                                          uint8_t sequence_offset,
+                                          uint8_t slot_offset,
+                                          bool to_is_current)
+{
+    const uint64_t cycle = ((uint64_t)1u << 24u) *
+        ring->records_per_sector;
+    const uint64_t start = cutoff_ring_position(ring, from,
+        sequence_offset, slot_offset);
+    const uint64_t end = to_is_current ?
+        (((uint64_t)(ring->sector_sequence & 0xFFFFFFu) *
+            ring->records_per_sector + ring->next_slot) % cycle) :
+        cutoff_ring_position(ring, to, sequence_offset, slot_offset);
+    const uint64_t distance = (end + cycle - start) % cycle;
+    const uint32_t ring_capacity = (uint32_t)ring->sector_count *
+        ring->records_per_sector;
+    return distance > ring_capacity ? UINT32_MAX : (uint32_t)distance;
+}
+
+static bool cutoff_previous_record_is_graph_bar(const nor_ring_t *ring,
+                                                 const uint8_t *event,
+                                                 log_graph_period_t period)
+{
+    const uint8_t sequence_offset = period == LOG_GRAPH_MINUTES ? 11u : 16u;
+    const uint8_t slot_offset = period == LOG_GRAPH_MINUTES ? 14u : 19u;
+    uint32_t sequence = read_le(&event[sequence_offset], 3u);
+    uint16_t slot = (uint16_t)read_le(&event[slot_offset], 2u);
+    if (slot == 0u) {
+        sequence = (sequence - 1u) & 0xFFFFFFu;
+        slot = ring->records_per_sector;
+    }
+    if (slot > ring->records_per_sector) return false;
+
+    const uint32_t sector_back = ((ring->sector_sequence & 0xFFFFFFu) -
+        sequence) & 0xFFFFFFu;
+    if (sector_back >= ring->sector_count) return false;
+    const uint16_t sector = (uint16_t)((ring->active_sector +
+        ring->sector_count - sector_back) % ring->sector_count);
+    const uint32_t address = (uint32_t)(ring->base_sector + sector) *
+        NOR_SECTOR_SIZE + NOR_SECTOR_HEADER_SIZE +
+        (uint32_t)(slot - 1u) * ring->record_size;
+    uint8_t record[NOR_HOUR_RECORD_SIZE];
+    uint16_t record_sequence;
+    if (!spi_nor_read(address, record, ring->record_size)) return false;
+    if (period == LOG_GRAPH_MINUTES) {
+        return decode_minute(record, &record_sequence) &&
+            (record[8] & 0xC0u) == 0x40u;
+    }
+    return decode_hour(record, &record_sequence) &&
+        (record[9] & 0xF0u) == 0xB0u;
+}
+
+static uint32_t calendar_day_boundaries(uint32_t start, uint32_t end)
+{
+    return end < start ? 0u : end / 86400u - start / 86400u;
+}
+
 static bool nor_append_minute(uint32_t dose, uint32_t minimum,
                               uint32_t maximum, bool complete)
 {
@@ -1438,6 +1533,99 @@ uint32_t log_storage_graph_current_seconds(log_graph_period_t period)
         return (uint32_t)hour_minutes * 60u + minute_seconds;
     }
     return day_seconds;
+}
+
+int32_t log_storage_graph_time_correction(log_graph_period_t period,
+                                         uint8_t index,
+                                         uint32_t current_period_start)
+{
+    uint8_t older[EEPROM_CUTOFF_SIZE];
+    uint8_t newer[EEPROM_CUTOFF_SIZE];
+    const nor_ring_t *ring;
+    uint8_t sequence_offset;
+    uint8_t slot_offset;
+    uint32_t period_seconds;
+    uint32_t after_event;
+    uint32_t between_events;
+    uint32_t previous_calendar;
+    uint32_t latest_calendar;
+    uint32_t previous_uptime;
+    uint32_t latest_uptime;
+    uint32_t old_timeline_end;
+    uint32_t day_markers;
+    uint16_t latest_event_type;
+    int64_t correction;
+
+    if (index == 0u || period == LOG_GRAPH_DAYS || !storage_spi) return 0;
+    if (period == LOG_GRAPH_MINUTES) {
+        ring = &minute_ring;
+        sequence_offset = 11u;
+        slot_offset = 14u;
+        period_seconds = 60u;
+    } else if (period == LOG_GRAPH_HOURS) {
+        ring = &hour_ring;
+        sequence_offset = 16u;
+        slot_offset = 19u;
+        period_seconds = 3600u;
+    } else {
+        return 0;
+    }
+    if (!ring->initialized || !eeprom_cutoff_read_pair(older, newer) ||
+        (older[10] & 0x80u) == 0u ||
+        (newer[10] & 0x80u) == 0u ||
+        (older[21] & 0x01u) == 0u ||
+        (newer[21] & 0x01u) == 0u) return 0;
+
+    latest_calendar = read_le(&newer[6], 4u);
+    previous_calendar = read_le(&older[6], 4u);
+    latest_event_type = newer[10] & 0x7Fu;
+    if (latest_event_type == LOG_CUTOFF_REASON_BOOT &&
+        current_period_start < latest_calendar &&
+        current_period_start / period_seconds ==
+            latest_calendar / period_seconds) return 0;
+    after_event = cutoff_ring_slots_between(ring, newer, NULL,
+        sequence_offset, slot_offset, true);
+    if (after_event == UINT32_MAX) return 0;
+    if (period == LOG_GRAPH_HOURS) {
+        const uint32_t markers = calendar_day_boundaries(latest_calendar,
+            current_period_start);
+        after_event = after_event > markers ? after_event - markers : 0u;
+    }
+    if (index <= after_event) return 0;
+
+    between_events = cutoff_ring_slots_between(ring, older, newer,
+        sequence_offset, slot_offset, false);
+    if (between_events == UINT32_MAX) return 0;
+    previous_uptime = read_le(&older[2], 4u);
+    latest_uptime = read_le(&newer[2], 4u);
+
+    if (latest_event_type == LOG_CUTOFF_REASON_CLOCK_SET) {
+        if (latest_uptime < previous_uptime) return 0;
+        old_timeline_end = previous_calendar +
+            (latest_uptime - previous_uptime);
+        if (!cutoff_previous_record_is_graph_bar(ring, newer, period) &&
+            between_events != 0u) --between_events;
+    } else if (latest_event_type == LOG_CUTOFF_REASON_BOOT) {
+        if (latest_calendar < previous_calendar) return 0;
+        if (period == LOG_GRAPH_MINUTES) {
+            old_timeline_end = previous_calendar +
+                between_events * period_seconds;
+        } else {
+            day_markers = calendar_day_boundaries(previous_calendar,
+                latest_calendar);
+            between_events = between_events > day_markers ?
+                between_events - day_markers : 0u;
+            old_timeline_end = previous_calendar +
+                between_events * period_seconds;
+        }
+    } else {
+        return 0;
+    }
+
+    correction = (int64_t)old_timeline_end - latest_calendar;
+    if (correction > INT32_MAX) return INT32_MAX;
+    if (correction < INT32_MIN) return INT32_MIN;
+    return (int32_t)correction;
 }
 
 static bool erase_nor_sectors(uint16_t first, uint16_t count)

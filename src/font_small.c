@@ -2,10 +2,10 @@
 
 /* First 13 entries are shared with the large font; remaining printable
  * glyphs are kept in predictable ASCII order, followed by icon glyphs. */
-#define SMALL_GLYPH_COUNT 55u
+#define SMALL_GLYPH_COUNT 56u
 
 static const char small_glyphs[SMALL_GLYPH_COUNT + 1u] =
-    "0123456789:. %+-/<>?ABCDEFGHIJKLMNOPQRSTUVWXYZhmnpsv\x01\x02\xB5";
+    "0123456789:. %+-/<>?ABCDEFGHIJKLMNOPQRSTUVWXYZdhmnpsv\x01\x02\xB5";
 
 static const uint8_t small_rows[SMALL_GLYPH_COUNT][7] = {
     { 14, 17, 19, 21, 25, 17, 14 }, /* 0 */
@@ -54,6 +54,7 @@ static const uint8_t small_rows[SMALL_GLYPH_COUNT][7] = {
     { 17, 17, 10, 4, 10, 17, 17 }, /* X */
     { 17, 17, 10, 4, 4, 4, 4 }, /* Y */
     { 31, 1, 2, 4, 8, 16, 31 }, /* Z */
+    { 0, 1, 1, 15, 17, 17, 15 }, /* d */
     { 0, 16, 16, 30, 17, 17, 17 }, /* h */
     { 0, 0, 26, 21, 21, 21, 21 }, /* m */
     { 0, 0, 30, 17, 17, 17, 17 }, /* n */

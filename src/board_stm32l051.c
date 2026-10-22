@@ -503,6 +503,33 @@ static uint32_t rtc_calendar_seconds_since_2000(const rtc_calendar_t *calendar)
         60u) + calendar->second;
 }
 
+static bool rtc_calendar_from_seconds_since_2000(uint32_t seconds,
+                                                  rtc_calendar_t *calendar)
+{
+    uint32_t days = seconds / 86400u;
+    uint32_t day_seconds = seconds % 86400u;
+    uint16_t year = 2000u;
+
+    while (days >= ((year % 4u) == 0u ? 366u : 365u)) {
+        days -= (year % 4u) == 0u ? 366u : 365u;
+        if (++year > 2099u) return false;
+    }
+    uint8_t month = 1u;
+    while (month <= 12u && days >= rtc_days_in_month(year, month)) {
+        days -= rtc_days_in_month(year, month);
+        ++month;
+    }
+    if (month > 12u) return false;
+
+    calendar->year = year;
+    calendar->month = month;
+    calendar->day = (uint8_t)(days + 1u);
+    calendar->hour = (uint8_t)(day_seconds / 3600u);
+    calendar->minute = (uint8_t)((day_seconds / 60u) % 60u);
+    calendar->second = 0u;
+    return true;
+}
+
 bool board_rtc_log_time(uint32_t *uptime_seconds, uint32_t *calendar_seconds,
                         bool *calendar_valid)
 {
@@ -2255,6 +2282,67 @@ static bool lcd_graph_load_log_mode(uint8_t mode)
     return loaded && lcd_graph_log_count != 0u;
 }
 
+static void lcd_graph_date_append_two(char *text, uint8_t *length,
+                                      uint8_t value)
+{
+    text[(*length)++] = (char)('0' + value / 10u);
+    text[(*length)++] = (char)('0' + value % 10u);
+}
+
+static bool lcd_graph_selected_date(char text[17], uint8_t *length)
+{
+    rtc_calendar_t now;
+    rtc_calendar_t selected;
+    uint32_t period_seconds;
+    uint32_t now_seconds;
+    uint32_t period_start;
+    uint32_t current_progress;
+    uint64_t offset;
+    int64_t selected_seconds;
+    uint8_t out = 0u;
+
+    *length = 0u;
+    if (!lcd_graph_selected_active || lcd_graph_range_index < 4u ||
+        lcd_graph_selected_index >= lcd_graph_log_count || !rtc_time_valid ||
+        !rtc_read_calendar(&now)) return false;
+
+    period_seconds = lcd_graph_range_index == 4u ? 60u :
+        (lcd_graph_range_index == 5u ? 3600u : 86400u);
+    now_seconds = rtc_calendar_seconds_since_2000(&now);
+    current_progress = log_storage_graph_current_seconds(
+        (log_graph_period_t)(lcd_graph_range_index - 4u));
+    if (current_progress > now_seconds) return false;
+    period_start = now_seconds - current_progress;
+    offset = (uint64_t)lcd_graph_selected_index * period_seconds;
+    selected_seconds = (int64_t)period_start - (int64_t)offset +
+        log_storage_graph_time_correction(
+            (log_graph_period_t)(lcd_graph_range_index - 4u),
+            lcd_graph_selected_index, period_start);
+    if (selected_seconds < 0 || selected_seconds > UINT32_MAX ||
+        !rtc_calendar_from_seconds_since_2000((uint32_t)selected_seconds,
+            &selected)) return false;
+
+    text[out++] = (char)('0' + (selected.year / 10u) % 10u);
+    text[out++] = (char)('0' + selected.year % 10u);
+    text[out++] = '-';
+    lcd_graph_date_append_two(text, &out, selected.month);
+    text[out++] = '-';
+    lcd_graph_date_append_two(text, &out, selected.day);
+    if (lcd_graph_range_index == 4u) {
+        text[out++] = ' ';
+        lcd_graph_date_append_two(text, &out, selected.hour);
+        text[out++] = ':';
+        lcd_graph_date_append_two(text, &out, selected.minute);
+    } else if (lcd_graph_range_index == 5u) {
+        text[out++] = ' ';
+        lcd_graph_date_append_two(text, &out, selected.hour);
+        text[out++] = 'h';
+    }
+    text[out] = '\0';
+    *length = out;
+    return true;
+}
+
 static void lcd_graph_build_log_series(void)
 {
     uint64_t total_dose = 0u;
@@ -2507,45 +2595,53 @@ static bool lcd_graph_prepare_glyph(void)
         static const char *const log_options[3] = {
             "MIN", "HOUR", "DAY"
         };
-        char range_label[24];
-        uint8_t option_start[4];
-        uint8_t option_end[4];
-        uint8_t option_code[4];
-        uint8_t option_count = 0u;
-        uint8_t length = 0u;
-        if (lcd_graph_range_index < 4u) {
-            for (uint8_t option = 0u; option < 4u; ++option) {
-                const char *label = current_options[option];
-                if (option != 0u) range_label[length++] = '/';
-                option_start[option_count] = length;
-                while (*label != '\0') range_label[length++] = *label++;
-                option_end[option_count] = length;
-                option_code[option_count] = option;
-                ++option_count;
-            }
-        } else {
-            const bool spi_history = settings_spi_enabled;
-            for (uint8_t log_mode = 0u; log_mode < 3u; ++log_mode) {
-                if (log_mode < 2u && !spi_history) continue;
-                const char *label = log_options[log_mode];
-                if (option_count != 0u) range_label[length++] = '/';
-                option_start[option_count] = length;
-                while (*label != '\0') range_label[length++] = *label++;
-                option_end[option_count] = length;
-                option_code[option_count] = (uint8_t)(log_mode + 4u);
-                ++option_count;
-            }
+        const char *title = lcd_graph_range_index < 4u ?
+            current_options[lcd_graph_range_index] :
+            log_options[lcd_graph_range_index - 4u];
+        char selected_date[17];
+        char range_label[9];
+        uint8_t title_length = 0u;
+        uint8_t selected_date_length = 0u;
+        const uint8_t title_area_width = 4u;
+        const uint8_t length = (uint8_t)(title_area_width + 4u);
+        uint8_t title_start;
+
+        while (title[title_length] != '\0') ++title_length;
+        title_start = (uint8_t)(2u +
+            (title_area_width - title_length) / 2u);
+        range_label[0] = '<';
+        range_label[1] = ' ';
+        for (uint8_t i = 0u; i < title_area_width; ++i) {
+            range_label[2u + i] = ' ';
         }
+        for (uint8_t i = 0u; i < title_length; ++i) {
+            range_label[title_start + i] = title[i];
+        }
+        range_label[6] = ' ';
+        range_label[7] = '>';
         range_label[length] = '\0';
+
+        if (lcd_graph_range_index < 4u) {
+            lcd_graph_build_series((uint8_t)(range_seconds[
+                lcd_graph_range_index] * 2u));
+        } else {
+            lcd_graph_build_log_series();
+        }
+        (void)lcd_graph_selected_date(selected_date,
+            &selected_date_length);
         const uint16_t text_width = (uint16_t)(length *
             (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP) -
             LCD_SMALL_TEXT_GAP);
         const uint16_t x_start = text_width < LCD_WIDTH ?
-            (uint16_t)((LCD_WIDTH - text_width) / 2u) : 0u;
+            (uint16_t)(LCD_WIDTH - text_width) : 0u;
         lcd_text_glyph_pixels = LCD_TOP_ROW_PIXELS;
         for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
             for (uint16_t x = 0u; x < LCD_WIDTH; ++x) {
                 const uint16_t pixel = (uint16_t)y * LCD_WIDTH + x;
+                const uint8_t date_column = (uint8_t)(x /
+                    (FONT_SMALL_CELL_WIDTH - 1u));
+                const uint8_t date_glyph_x = (uint8_t)(x %
+                    (FONT_SMALL_CELL_WIDTH - 1u));
                 const uint16_t relative_x = x >= x_start ?
                     (uint16_t)(x - x_start) : UINT16_MAX;
                 const uint8_t column = relative_x == UINT16_MAX ? length :
@@ -2554,28 +2650,21 @@ static bool lcd_graph_prepare_glyph(void)
                 const uint8_t glyph_x = relative_x == UINT16_MAX ? 0u :
                     (uint8_t)(relative_x %
                         (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
-                bool selected = false;
-                for (uint8_t option = 0u; option < option_count; ++option) {
-                    if (column >= option_start[option] &&
-                        column < option_end[option] &&
-                        option_code[option] == lcd_graph_range_index) {
-                        selected = true;
-                        break;
-                    }
-                }
-                const uint16_t color = selected ? LCD_COUNTER_GREEN :
-                    LCD_TEXT_FOREGROUND;
-                lcd_text_glyph[pixel] = column < length &&
+                const bool title_column = column >= title_start &&
+                    column < (uint8_t)(title_start + title_length);
+                const uint16_t color = title_column &&
+                    !lcd_graph_selected_active ? LCD_COUNTER_GREEN :
+                        LCD_TEXT_FOREGROUND;
+                const bool date_pixel = date_column < selected_date_length &&
+                    font_small_pixel(selected_date[date_column],
+                        date_glyph_x, y);
+                const bool title_pixel = column < length &&
                     glyph_x < FONT_SMALL_CELL_WIDTH &&
-                    font_small_pixel(range_label[column], glyph_x, y) ?
-                        color : LCD_TEXT_BACKGROUND;
+                    font_small_pixel(range_label[column], glyph_x, y);
+                lcd_text_glyph[pixel] = date_pixel || title_pixel ?
+                    (date_pixel ? LCD_TEXT_FOREGROUND : color) :
+                    LCD_TEXT_BACKGROUND;
             }
-        }
-        if (lcd_graph_range_index < 4u) {
-            lcd_graph_build_series((uint8_t)(range_seconds[
-                lcd_graph_range_index] * 2u));
-        } else {
-            lcd_graph_build_log_series();
         }
         y_window[1] = LCD_Y_OFFSET;
         y_window[3] = (uint8_t)(LCD_Y_OFFSET + FONT_SMALL_CELL_HEIGHT - 1u);
