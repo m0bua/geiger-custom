@@ -93,7 +93,8 @@ bool font_small_pixel(char glyph, uint8_t x, uint8_t y)
         return false;
     }
     if (glyph == (char)0xB5u) {
-        return (micro_rows[y - 1u] & (uint8_t)(1u << (5u - x))) != 0u;
+        return y <= sizeof(micro_rows) &&
+            (micro_rows[y - 1u] & (uint8_t)(1u << (5u - x))) != 0u;
     }
     /* The micro sign alone uses the eighth bitmap row as a descender. */
     if (y >= 8u) {

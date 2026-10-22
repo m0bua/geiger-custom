@@ -63,7 +63,7 @@ class Firmware:
             self.eeprom[a] = b & 255
             if 205 <= a < 1405:
                 self.eeprom_log_area_writes += 1
-            if 1806 <= a < 1942:
+            if 1406 <= a < 1566:
                 self.eeprom_checkpoint_writes += 1
             if 140 <= a < 164 or 181 <= a < 205:
                 self.eeprom_cutoff_writes += 1
@@ -211,16 +211,16 @@ def test_logs():
     assert fw.eeprom_checkpoint_writes == 0, \
         'EEPROM checkpoint was written before an hour elapsed'
     fw.minute()
-    assert fw.eeprom_checkpoint_writes == 18, \
-        'Expected one 17-byte EEPROM checkpoint at the hourly boundary'
+    assert fw.eeprom_checkpoint_writes == 0, \
+        'Hour rollover must not bypass the DAY checkpoint scheduler'
     assert fw.log_counts() == (60, 1, 0), \
         'SPI storage must retain 60 minute records and one hour, no days yet'
     assert fw.eeprom_log_area_writes == 0, \
         'SPI hourly rollover wrote a day log before the calendar boundary'
     fw.minute()
-    assert fw.eeprom_checkpoint_writes == 18, \
-        'EEPROM checkpoint was written more than once per hour'
-    print('PASS: hourly SPI rollover, EEPROM checkpoint only')
+    assert fw.eeprom_checkpoint_writes == 0, \
+        'Closing SPI minutes must not write EEPROM checkpoints'
+    print('PASS: hourly SPI rollover leaves EEPROM writes to its scheduler')
 
     fw = Firmware()
     fw.call('log_storage_init', 0)

@@ -36,15 +36,11 @@ void log_storage_flush(void);
 void log_storage_alert_sample(uint32_t cpm, uint32_t pulse_count,
                               uint32_t uptime_seconds, bool rate_valid);
 bool log_storage_spi_available(void);
-uint16_t log_storage_minute_records_in_sector(void);
 /* Persisted history only: SPI MIN/HOUR and EEPROM DAY, excluding RAM/LIVE. */
 void log_storage_log_counts(uint16_t *minutes, uint16_t *hours,
                             uint16_t *days);
 /* Physical SPI alert records (snapshots), not distinct alarm episodes. */
 uint16_t log_storage_alert_record_count(void);
-/* Loads up to capacity completed minute CPM values, oldest first. */
-bool log_storage_minute_history_load(uint32_t *cpm, uint8_t capacity,
-                                     uint8_t *count);
 /* Loads the current RAM period first, followed by persisted history newest
  * first. LIVE checkpoints are excluded. Rates are packed as two 18-bit CPM
  * values in five bytes per entry: minimum followed by maximum. */
