@@ -2407,7 +2407,17 @@ static void lcd_graph_build_log_series(void)
     lcd_graph_yellow_threshold_y = UINT8_MAX;
     lcd_graph_red_threshold_y = UINT8_MAX;
 
-    for (uint8_t i = 0u; i < lcd_graph_log_count; ++i) {
+    {
+        const uint8_t visible_capacity = (uint8_t)(1u +
+            (LCD_GRAPH_PLOT_WIDTH - LCD_GRAPH_LOG_BAR_WIDTH) /
+                LCD_GRAPH_LOG_BAR_STEP);
+        lcd_graph_log_visible_count = lcd_graph_log_count < visible_capacity ?
+            lcd_graph_log_count : visible_capacity;
+        lcd_graph_log_visible_start = 0u;
+    }
+    for (uint8_t i = lcd_graph_log_visible_start;
+         i < (uint8_t)(lcd_graph_log_visible_start +
+             lcd_graph_log_visible_count); ++i) {
         const uint32_t dose = lcd_graph_log_dose[i];
         const uint32_t minimum = lcd_graph_log_rate(i, false);
         const uint32_t maximum = lcd_graph_log_rate(i, true);
@@ -2416,9 +2426,11 @@ static void lcd_graph_build_log_series(void)
         if (minimum < minimum_cpm) minimum_cpm = minimum;
         if (maximum > maximum_cpm) maximum_cpm = maximum;
     }
-    if (lcd_graph_log_count != 0u) {
-        total_seconds = (uint64_t)(lcd_graph_log_count - 1u) *
-            period_minutes * 60u + current_seconds;
+    if (lcd_graph_log_visible_count != 0u) {
+        total_seconds = (uint64_t)(lcd_graph_log_visible_count - 1u) *
+            period_minutes * 60u +
+            (lcd_graph_log_visible_start == 0u ? current_seconds :
+                period_minutes * 60u);
         if (total_seconds != 0u) {
             average_cpm = (uint32_t)((total_dose * 60u + total_seconds / 2u) /
                 total_seconds);
@@ -2427,14 +2439,25 @@ static void lcd_graph_build_log_series(void)
     if (minimum_cpm == UINT32_MAX) minimum_cpm = 0u;
 
     dose_value = lcd_graph_selected_active &&
-        lcd_graph_selected_index < lcd_graph_log_count ?
+        lcd_graph_selected_index >= lcd_graph_log_visible_start &&
+        lcd_graph_selected_index < (uint8_t)(lcd_graph_log_visible_start +
+            lcd_graph_log_visible_count) ?
         lcd_graph_log_dose[lcd_graph_selected_index] :
         (total_dose > UINT32_MAX ? UINT32_MAX : (uint32_t)total_dose);
-    min_value = lcd_graph_selected_active ?
+    min_value = lcd_graph_selected_active &&
+        lcd_graph_selected_index >= lcd_graph_log_visible_start &&
+        lcd_graph_selected_index < (uint8_t)(lcd_graph_log_visible_start +
+            lcd_graph_log_visible_count) ?
         lcd_graph_log_rate(lcd_graph_selected_index, false) : minimum_cpm;
-    max_value = lcd_graph_selected_active ?
+    max_value = lcd_graph_selected_active &&
+        lcd_graph_selected_index >= lcd_graph_log_visible_start &&
+        lcd_graph_selected_index < (uint8_t)(lcd_graph_log_visible_start +
+            lcd_graph_log_visible_count) ?
         lcd_graph_log_rate(lcd_graph_selected_index, true) : maximum_cpm;
-    if (lcd_graph_selected_active && lcd_graph_log_count != 0u) {
+    if (lcd_graph_selected_active && lcd_graph_log_visible_count != 0u &&
+        lcd_graph_selected_index >= lcd_graph_log_visible_start &&
+        lcd_graph_selected_index < (uint8_t)(lcd_graph_log_visible_start +
+            lcd_graph_log_visible_count)) {
         const uint32_t seconds = lcd_graph_selected_index == 0u ?
             current_seconds : period_minutes * 60u;
         average_cpm = seconds == 0u ? 0u : (uint32_t)(
@@ -2455,22 +2478,16 @@ static void lcd_graph_build_log_series(void)
     }
 
     if (lcd_graph_log_count == 0u) {
-        lcd_graph_log_visible_start = 0u;
-        lcd_graph_log_visible_count = 0u;
         lcd_graph_selected_active = false;
         return;
     }
     if (maximum_dose == 0u) maximum_dose = 1u;
     {
-        const uint8_t visible_capacity = (uint8_t)(1u +
-            (LCD_GRAPH_PLOT_WIDTH - LCD_GRAPH_LOG_BAR_WIDTH) /
-                LCD_GRAPH_LOG_BAR_STEP);
-        lcd_graph_log_visible_count = lcd_graph_log_count < visible_capacity ?
-            lcd_graph_log_count : visible_capacity;
-        lcd_graph_log_visible_start = 0u;
         if (lcd_graph_selected_active &&
             (lcd_graph_selected_index < lcd_graph_log_visible_start ||
-             lcd_graph_selected_index >= lcd_graph_log_count)) {
+             lcd_graph_selected_index >= (uint8_t)(
+                 lcd_graph_log_visible_start +
+                 lcd_graph_log_visible_count))) {
             lcd_graph_selected_index = lcd_graph_log_visible_start;
         }
         for (uint8_t i = 0u; i < lcd_graph_log_visible_count; ++i) {
