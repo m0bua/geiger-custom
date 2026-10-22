@@ -67,6 +67,7 @@ uint8_t board_display_rate_led_mask(void);
 void board_display_set_rate_led(void);
 void board_display_set_dose(uint32_t dose_thousandths,
                             uint32_t dose_fraction,
+                            uint32_t daily_pulse_count,
                             uint32_t measurement_seconds);
 void board_display_set_session_rates(uint32_t average_rate_thousandths,
                                      uint32_t maximum_rate_thousandths,

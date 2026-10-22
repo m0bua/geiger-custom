@@ -14,14 +14,17 @@ static void dose_from_pulse_count(uint32_t pulse_count,
                                   uint32_t *dose_thousandths,
                                   uint32_t *dose_fraction)
 {
-    const uint64_t scaled = (uint64_t)pulse_count * 666u;
-    const uint64_t whole = scaled / 100u;
+    /* 0.00666 uSv/h per CPM means 0.000111 uSv per pulse.
+     * Store dose in nSv plus a 1/3600 nSv remainder: one pulse is
+     * 0.111 nSv ~= 400/3600 nSv. */
+    const uint64_t scaled = (uint64_t)pulse_count * 400u;
+    const uint64_t whole = scaled / 3600u;
     if (whole > UINT32_MAX) {
         *dose_thousandths = UINT32_MAX;
         *dose_fraction = 0u;
     } else {
         *dose_thousandths = (uint32_t)whole;
-        *dose_fraction = (uint32_t)(scaled % 100u) * 36u;
+        *dose_fraction = (uint32_t)(scaled % 3600u);
     }
 }
 
@@ -119,6 +122,7 @@ int main(void)
         }
     }
     board_display_set_dose(dose_thousandths, dose_fraction,
+                           today_pulse_count,
                            dose_measurement_seconds);
     screen_alarm_active = board_display_screen_alarm_active();
     sound_alarm_active = board_display_sound_alarm_active();
@@ -441,7 +445,8 @@ int main(void)
                             dose_from_pulse_count(today_pulse_count,
                                 &dose_thousandths, &dose_fraction);
                             board_display_set_dose(dose_thousandths,
-                                dose_fraction, dose_measurement_seconds);
+                                dose_fraction, today_pulse_count,
+                                dose_measurement_seconds);
                         }
                     }
                 }
@@ -496,6 +501,7 @@ int main(void)
                 dose_from_pulse_count(today_pulse_count,
                     &dose_thousandths, &dose_fraction);
                 board_display_set_dose(dose_thousandths, dose_fraction,
+                                       today_pulse_count,
                                        dose_measurement_seconds);
                 session_dose_fraction += rate_thousandths;
                 session_dose_thousandths += session_dose_fraction / 3600u;

@@ -159,7 +159,7 @@ static uint8_t lcd_indication_mode = 1u;
 #define LCD_GRAPH_TOP (FONT_SMALL_CELL_HEIGHT + \
     (FONT_SMALL_CELL_HEIGHT / 2u))
 #define LCD_GRAPH_HEIGHT (LCD_HEIGHT - LCD_GRAPH_TOP)
-#define LCD_GRAPH_STATS_WIDTH (7u * 7u)
+#define LCD_GRAPH_STATS_WIDTH ((7u * 7u) + 4u)
 #define LCD_GRAPH_PLOT_WIDTH (LCD_WIDTH - LCD_GRAPH_STATS_WIDTH)
 #define LCD_GRAPH_CHUNK_HEIGHT FONT_SMALL_CELL_HEIGHT
 #define LCD_GRAPH_CHUNK_COUNT ((LCD_GRAPH_HEIGHT + \
@@ -280,7 +280,7 @@ static uint32_t lcd_backlight_ramp_last_ms;
 static uint8_t lcd_screen_page;
 static uint8_t lcd_main_return_page;
 static uint8_t lcd_last_extra_page = 2u;
-static uint8_t lcd_graph_range_index = 1u;
+static uint8_t lcd_graph_range_index = 3u;
 static uint8_t lcd_graph_column_y[LCD_WIDTH];
 static char lcd_graph_stat_values[3][5];
 static uint32_t lcd_graph_stat_min;
@@ -380,6 +380,7 @@ static uint32_t lcd_warmup_pulses;
 static bool lcd_rate_window_ready;
 static bool lcd_warmup_box_visible;
 static uint32_t lcd_count_total;
+static uint32_t lcd_daily_pulse_count;
 static uint8_t lcd_settings_sequence;
 static uint8_t lcd_timer_sequence;
 static uint8_t lcd_alarm_sequence;
@@ -1074,7 +1075,7 @@ static void lcd_format_dose(uint32_t dose_thousandths,
                             uint32_t dose_fraction)
 {
     if (lcd_settings_value_index[9] == 1u) {
-        lcd_format_count_value(lcd_count_total, "CNT  ");
+        lcd_format_count_value(lcd_daily_pulse_count, "CNT  ");
         return;
     }
     /* The whole part is in nSv; the remainder is in 1/3600 nSv.
@@ -1944,6 +1945,8 @@ static uint8_t lcd_graph_stat_unit(uint32_t maximum_cpm)
     bool has_fallback = false;
     const uint8_t selected = lcd_settings_value_index[10];
 
+    /* In count mode graph samples are CPM, not a dose-rate unit. */
+    if (lcd_settings_value_index[9] == 1u) return 4u;
     if (selected < 3u) return selected;
     const uint64_t rate = lcd_graph_stat_rate(maximum_cpm);
     for (uint8_t unit = 0u; unit < 4u; ++unit) {
@@ -1959,6 +1962,28 @@ static uint8_t lcd_graph_stat_unit(uint32_t maximum_cpm)
 
 static void lcd_graph_format_stat(uint32_t cpm, uint8_t unit, char text[5])
 {
+    if (lcd_settings_value_index[9] == 1u) {
+        char reversed[5];
+        uint8_t digits = 0u;
+        uint8_t out = 0u;
+
+        if (cpm > 99999u) {
+            text[0] = '>';
+            text[1] = '9';
+            text[2] = '9';
+            text[3] = '9';
+            text[4] = '9';
+            return;
+        }
+        do {
+            reversed[digits++] = (char)('0' + cpm % 10u);
+            cpm /= 10u;
+        } while (cpm != 0u && digits < sizeof(reversed));
+        while (digits != 0u) text[out++] = reversed[--digits];
+        while (out < 5u) text[out++] = ' ';
+        return;
+    }
+
     uint64_t numerator = lcd_graph_stat_rate(cpm);
     uint64_t denominator = 1u;
     uint64_t whole;
@@ -4722,22 +4747,27 @@ void board_display_settings_list_exit(void)
 
 void board_display_set_dose(uint32_t dose_thousandths,
                             uint32_t dose_fraction,
+                            uint32_t daily_pulse_count,
                             uint32_t measurement_seconds)
 {
     static uint32_t previous_dose_thousandths = UINT32_MAX;
     static uint32_t previous_dose_fraction = UINT32_MAX;
+    static uint32_t previous_daily_pulse_count = UINT32_MAX;
 
     lcd_dose_value_thousandths = dose_thousandths;
     lcd_dose_fraction = dose_fraction;
+    lcd_daily_pulse_count = daily_pulse_count;
     lcd_dose_measurement_seconds = measurement_seconds;
     if (dose_thousandths != 0u || dose_fraction != 0u ||
-        (lcd_settings_value_index[9] == 1u && lcd_count_total != 0u)) {
+        (lcd_settings_value_index[9] == 1u && daily_pulse_count != 0u)) {
         lcd_dose_has_measurement = true;
     }
     if (dose_thousandths != previous_dose_thousandths ||
-        dose_fraction != previous_dose_fraction) {
+        dose_fraction != previous_dose_fraction ||
+        daily_pulse_count != previous_daily_pulse_count) {
         previous_dose_thousandths = dose_thousandths;
         previous_dose_fraction = dose_fraction;
+        previous_daily_pulse_count = daily_pulse_count;
         if (lcd_screen_page == 1u) {
             lcd_format_dose_display(dose_thousandths, dose_fraction);
             lcd_cpm_redraw_pending = true;
