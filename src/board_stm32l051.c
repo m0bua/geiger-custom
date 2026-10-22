@@ -2218,8 +2218,8 @@ static void lcd_graph_compact_stat(uint32_t cpm, uint8_t unit, char text[5])
 {
     static const char prefixes[] = { 'm', (char)0xB5u, 'n', 'p', 'C' };
     const uint8_t selected = lcd_settings_value_index[SETTING_RATE_PREFIX];
-    const bool show_prefix = unit == 4u || selected == 3u ||
-        (selected < 3u && selected != unit);
+    const bool show_prefix = unit != 4u && (selected == 3u ||
+        (selected < 3u && selected != unit));
     char full[5];
     lcd_graph_format_stat(cpm, unit, full);
     text[0] = full[0];
@@ -2256,7 +2256,7 @@ static void lcd_graph_format_log_dose(uint32_t dose, char text[5])
             reversed[digits++] = (char)('0' + dose % 10u);
             dose /= 10u;
         } while (dose != 0u && digits < sizeof(reversed));
-        while (out < 4u && out < digits) {
+        while (out < 5u && out < digits) {
             text[out] = reversed[digits - 1u - out];
             ++out;
         }
@@ -2277,7 +2277,7 @@ static void lcd_graph_format_log_dose(uint32_t dose, char text[5])
          lcd_display_unit_prefix !=
             (const char[]){ 'm', (char)0xB5u, 'n', 'p' }[
                 lcd_settings_value_index[SETTING_DOSE_PREFIX]]);
-    const uint8_t value_limit = show_prefix ? 3u : 4u;
+    const uint8_t value_limit = show_prefix ? 3u : 5u;
     for (uint8_t i = 0u; i < lcd_rate_glyph_count && i < value_limit; ++i) {
         text[i] = lcd_rate_glyphs[i];
     }
@@ -2431,6 +2431,16 @@ static void lcd_graph_build_log_series(void)
             period_minutes * 60u +
             (lcd_graph_log_visible_start == 0u ? current_seconds :
                 period_minutes * 60u);
+        /* If the visible hour records reach today's marker, use the same
+         * elapsed interval as DAY so both partial-day averages agree. */
+        if (lcd_graph_range_index == 5u &&
+            lcd_graph_log_visible_start == 0u &&
+            lcd_graph_log_visible_count == lcd_graph_log_count &&
+            log_storage_graph_hours_cover_current_day()) {
+            const uint32_t day_seconds =
+                log_storage_graph_current_seconds(LOG_GRAPH_DAYS);
+            if (day_seconds != 0u) total_seconds = day_seconds;
+        }
         if (total_seconds != 0u) {
             average_cpm = (uint32_t)((total_dose * 60u + total_seconds / 2u) /
                 total_seconds);
@@ -2696,8 +2706,8 @@ static void lcd_alert_make_rate(char text[10], char label, uint32_t cpm,
 {
     static const char prefixes[] = { 'm', (char)0xB5u, 'n', 'p', 'C' };
     const uint8_t selected = lcd_settings_value_index[SETTING_RATE_PREFIX];
-    const bool show_prefix = unit == 4u || selected == 3u ||
-        (selected < 3u && selected != unit);
+    const bool show_prefix = unit != 4u && (selected == 3u ||
+        (selected < 3u && selected != unit));
     char value[5];
     lcd_graph_format_stat(cpm, unit, value);
     text[0] = label;

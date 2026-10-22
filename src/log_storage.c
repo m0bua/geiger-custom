@@ -101,6 +101,7 @@ static uint32_t alert_max_cpm;
 static uint32_t alert_seconds_since_save;
 static bool alert_active;
 static uint32_t last_live_minute_save;
+static bool graph_hours_cover_current_day;
 static uint32_t last_live_day_save;
 
 static uint8_t crc8(const uint8_t *data, uint16_t length)
@@ -1476,6 +1477,7 @@ bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
 {
     uint8_t used = 0u;
     uint8_t record[EEPROM_DAY_SIZE];
+    graph_hours_cover_current_day = false;
 
     if (count != NULL) *count = 0u;
     if (!storage_ready || dose == NULL || packed_min_max_cpm == NULL ||
@@ -1553,7 +1555,8 @@ bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
             return true;
         }
         uint8_t header[NOR_SECTOR_HEADER_SIZE];
-        for (uint8_t back = 0u; back < 2u && used < capacity; ++back) {
+        for (uint8_t back = 0u; back < 2u && used < capacity &&
+             !graph_hours_cover_current_day; ++back) {
             const uint16_t sector = (uint16_t)((hour_ring.active_sector +
                 hour_ring.sector_count - back) % hour_ring.sector_count);
             const uint32_t base = (uint32_t)(hour_ring.base_sector + sector) *
@@ -1573,7 +1576,14 @@ bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
                 if (!spi_nor_read(address, record, NOR_HOUR_RECORD_SIZE)) {
                     return false;
                 }
-                if (!decode_hour(record, &sequence) ||
+                if (!decode_hour(record, &sequence)) continue;
+                if ((record[9] & 0xF0u) == 0xC0u) {
+                    graph_hours_cover_current_day = true;
+                    break;
+                }
+                /* A0 holds a partial hour closed by reboot/time change. It
+                 * still contributes to today's dose and graph statistics. */
+                if ((record[9] & 0xF0u) != 0xA0u &&
                     (record[9] & 0xF0u) != 0xB0u) continue;
                 dose[used] = get_bits(record, 16u, 24u);
                 graph_pack_min_max(
@@ -1628,6 +1638,11 @@ uint32_t log_storage_graph_current_seconds(log_graph_period_t period)
         return (uint32_t)hour_minutes * 60u + minute_seconds;
     }
     return day_seconds;
+}
+
+bool log_storage_graph_hours_cover_current_day(void)
+{
+    return graph_hours_cover_current_day;
 }
 
 int32_t log_storage_graph_time_correction(log_graph_period_t period,
