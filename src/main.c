@@ -694,6 +694,7 @@ int main(void)
             status.usb_raw = usb_adc_raw;
             status.flags = (hv_enabled ? 1u : 0u) |
                 (board_display_usb_connected() ? 2u : 0u);
+            status.count_total = board_detector_count();
             protocol_v1_set_status(&status);
         }
         protocol_v1_service();

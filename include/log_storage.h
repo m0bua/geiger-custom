@@ -41,22 +41,30 @@ void log_storage_log_counts(uint16_t *minutes, uint16_t *hours,
                             uint16_t *days);
 /* Physical SPI alert records (snapshots), not distinct alarm episodes. */
 uint16_t log_storage_alert_record_count(void);
+uint16_t log_storage_alert_episode_count(void);
 /* Loads distinct alert episodes newest-first. */
 uint8_t log_storage_alert_recent(uint32_t *start_calendar,
                                  uint32_t *duration_seconds,
                                  uint32_t *dose_pulses,
                                  uint32_t *maximum_cpm,
                                  uint8_t capacity);
+uint8_t log_storage_alert_page(uint16_t offset, uint32_t *start_calendar,
+                               uint32_t *duration_seconds,
+                               uint32_t *dose_pulses,
+                               uint32_t *maximum_cpm, uint8_t capacity);
 /* Loads the current RAM period first, followed by persisted history newest
  * first. LIVE checkpoints are excluded. Rates are packed as two 18-bit CPM
  * values in five bytes per entry: minimum followed by maximum. */
 bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
                             uint8_t *packed_min_max_cpm, uint8_t capacity,
                             uint8_t *count);
+bool log_storage_graph_page(log_graph_period_t period, uint16_t offset,
+                            uint32_t *dose, uint8_t *packed_min_max_cpm,
+                            uint8_t capacity, uint8_t *count);
 uint32_t log_storage_graph_current_seconds(log_graph_period_t period);
 bool log_storage_graph_hours_cover_current_day(void);
 int32_t log_storage_graph_time_correction(log_graph_period_t period,
-                                         uint8_t index,
+                                         uint16_t index,
                                          uint32_t current_period_start);
 bool log_storage_clear(log_clear_target_t target);
 void log_storage_time_cutoff(uint32_t uptime_seconds, uint32_t calendar_seconds,

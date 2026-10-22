@@ -5,9 +5,12 @@ const OP_HELLO = 1;
 const OP_GET_STATUS = 2;
 const OP_GET_SETTINGS = 3;
 const OP_SET_SETTING = 4;
+const OP_GET_LOG_INFO = 5;
+const OP_GET_LOG_PAGE = 6;
 const CAP_GET_SETTINGS = 1 << 1;
 const CAP_SET_SETTING = 1 << 2;
 const MAX_PAYLOAD = 64;
+const LOG_BATCH_SIZE = 6;
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -19,7 +22,9 @@ const elements = {
   connectionLabel: document.querySelector('#connection-label'),
   notice: document.querySelector('#notice'),
   rateChart: document.querySelector('#rate-chart'),
-  localTime: document.querySelector('#local-time'),
+  deviceDate: document.querySelector('#device-date'),
+  deviceTime: document.querySelector('#device-time'),
+  overviewUptime: document.querySelector('#overview-uptime'),
   solarPercent: document.querySelector('#solar-percent'),
   batteryPercent: document.querySelector('#battery-percent'),
   overviewTab: document.querySelector('#overview-tab'),
@@ -27,11 +32,19 @@ const elements = {
   settingsTab: document.querySelector('#settings-tab'),
   logsTab: document.querySelector('#logs-tab'),
   firmwareTab: document.querySelector('#firmware-tab'),
+  instructionsTab: document.querySelector('#instructions-tab'),
   overviewPage: document.querySelector('#overview-page'),
   debugPage: document.querySelector('#debug-page'),
   settingsPage: document.querySelector('#settings-page'),
   logsPage: document.querySelector('#logs-page'),
+  logTabs: document.querySelector('#log-tabs'),
+  logContent: document.querySelector('#log-content'),
+  logDate: document.querySelector('#log-date'),
+  loadLogDate: document.querySelector('#load-log-date'),
+  logsStatus: document.querySelector('#logs-status'),
+  loadMoreLogs: document.querySelector('#load-more-logs'),
   firmwarePage: document.querySelector('#firmware-page'),
+  instructionsPage: document.querySelector('#instructions-page'),
   settingsStatus: document.querySelector('#settings-status'),
   settingsList: document.querySelector('#settings-list'),
   rate: document.querySelector('#rate'),
@@ -44,13 +57,19 @@ const elements = {
   count: document.querySelector('#count'),
   doseFoot: document.querySelector('#dose-foot'),
   uptime: document.querySelector('#uptime'),
-  battery: document.querySelector('#battery'),
-  solar: document.querySelector('#solar'),
-  usbRaw: document.querySelector('#usb-raw'),
-  hv: document.querySelector('#hv-state'),
-  usb: document.querySelector('#usb-state'),
-  device: document.querySelector('#device-info'),
-  updated: document.querySelector('#last-update'),
+  debugBattery: document.querySelector('#debug-battery'),
+  debugSolar: document.querySelector('#debug-solar'),
+  debugUsb: document.querySelector('#debug-usb'),
+  debugCount: document.querySelector('#debug-count'),
+  debugRtc: document.querySelector('#debug-rtc'),
+  debugClock: document.querySelector('#debug-clock'),
+  debugMinutes: document.querySelector('#debug-minutes'),
+  debugHours: document.querySelector('#debug-hours'),
+  debugDays: document.querySelector('#debug-days'),
+  debugAlerts: document.querySelector('#debug-alerts'),
+  memorySpi: document.querySelector('#memory-spi'),
+  memoryJedec: document.querySelector('#memory-jedec'),
+  debugHeading: document.querySelector('#debug-heading'),
 };
 
 class ProtocolError extends Error {}
@@ -277,6 +296,18 @@ let pollTimer = 0;
 let polling = false;
 let protocolCapabilities = 0;
 let deviceSettings = null;
+let logInfo = null;
+let selectedLogType = 'days';
+let logRecords = [];
+let logStartOffset = 0;
+let selectedDebugPage = 'main';
+let rateHistoryUnit = 'CPM';
+let rateLevel = 'blue';
+let logPageTotal = 0;
+let logPageLoading = false;
+let logPageReloadPending = false;
+let logPageGeneration = 0;
+let logInfoLoading = false;
 const rateHistory = [];
 
 const remoteSettings = [
@@ -299,16 +330,10 @@ const remoteSettings = [
   { id: 20, label: 'TONE', options: ['STOCK', 'CLASSIC', 'MODERN'] },
 ];
 
-function updateLocalTime() {
-  elements.localTime.textContent = new Intl.DateTimeFormat('en-GB', {
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(new Date());
-}
-
 function percentFromAdc(raw, empty, full) {
   if (raw <= empty) return 0;
   if (raw >= full) return 100;
-  return Math.round(((raw - empty) * 100) / (full - empty));
+  return 100 - Math.floor(((full - raw) * 100) / (full - empty));
 }
 
 function formatRadiation(valueUsv, prefixSetting, symbol, perHour) {
@@ -330,7 +355,9 @@ function formatRadiation(valueUsv, prefixSetting, symbol, perHour) {
   const selected = prefixes[Math.min(prefix, prefixes.length - 1)];
   const value = valueUsv * selected.factor;
   const integerDigits = Math.max(0, Math.floor(Math.log10(Math.abs(value))) + 1);
-  const digits = value === 0 ? 0 : Math.max(0, Math.min(5, 5 - integerDigits));
+  const maxDecimals = perHour ? 3 : 5;
+  const digits = value === 0 ? 0 : Math.max(0,
+    Math.min(maxDecimals, 5 - integerDigits));
   const text = value.toFixed(digits).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
   return { value: text, unit: `${selected.name}${symbol}${perHour ? '/h' : ''}` };
 }
@@ -351,7 +378,15 @@ function drawRateChart() {
   const w = rect.width;
   const h = rect.height;
   context.clearRect(0, 0, w, h);
+  context.fillStyle = '#819096';
+  context.font = '10px "DM Mono", Consolas, monospace';
+  context.fillText(rateHistoryUnit, 4, 12);
   if (rateHistory.length < 2) return;
+
+  const levelColors = {
+    blue: '#287bff', green: '#00e58b', yellow: '#f0d35e', red: '#ff6666',
+  };
+  const levelColor = levelColors[rateLevel];
 
   const peak = Math.max(...rateHistory, 0.01) * 1.12;
   const points = rateHistory.map((value, index) => ({
@@ -371,11 +406,11 @@ function drawRateChart() {
   context.lineTo(w, h);
   context.lineTo(0, h);
   context.closePath();
-  context.fillStyle = 'rgba(0,229,139,.08)';
+  context.fillStyle = `${levelColor}18`;
   context.fill();
   context.beginPath();
   points.forEach((point, index) => index ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y));
-  context.strokeStyle = '#00e58b';
+  context.strokeStyle = levelColor;
   context.lineWidth = 1.8;
   context.lineJoin = 'round';
   context.lineCap = 'round';
@@ -388,7 +423,7 @@ function showNotice(message, kind = '') {
 }
 
 function selectPage(page) {
-  const pages = ['overview', 'debug', 'settings', 'logs', 'firmware'];
+  const pages = ['overview', 'debug', 'settings', 'logs', 'instructions', 'firmware'];
   for (const name of pages) {
     const active = name === page;
     elements[`${name}Page`].hidden = !active;
@@ -397,6 +432,338 @@ function selectPage(page) {
   }
   if (page === 'overview') drawRateChart();
   if (page === 'settings' && serial && deviceSettings === null) loadSettings();
+  if (page === 'logs' && serial && logInfo === null) loadLogInfo();
+  else if (page === 'logs' && serial && logInfo && logRecords.length === 0) loadLogPage(true);
+}
+
+function selectDebugPage(name) {
+  selectedDebugPage = name;
+  elements.debugHeading.textContent = {
+    main: 'DEBUG', memory: 'DEBUG MEM', logs: 'DEBUG LOGS', voltage: 'DEBUG VOLT',
+  }[name];
+  document.querySelectorAll('[data-debug-panel]').forEach((panel) => {
+    panel.hidden = panel.dataset.debugPanel !== name;
+  });
+  document.querySelectorAll('[data-debug-page]').forEach((button) => {
+    const active = button.dataset.debugPage === name;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+}
+
+function renderDebugLogInfo() {
+  if (!logInfo) return;
+  elements.debugRtc.textContent = logInfo.rtcStatus ||
+    (logInfo.calendarValid ? 'SET' : 'NOT SET');
+  elements.debugClock.textContent = logInfo.clockSource || '—';
+  elements.debugMinutes.textContent = logInfo.minutes.toLocaleString('en-US');
+  elements.debugHours.textContent = logInfo.hours.toLocaleString('en-US');
+  elements.debugDays.textContent = logInfo.days.toLocaleString('en-US');
+  elements.debugAlerts.textContent = logInfo.alerts.toLocaleString('en-US');
+  elements.memorySpi.textContent = logInfo.spiSizeMb === null ? '—' :
+    `${logInfo.spiSizeMb}MB`;
+  elements.memorySpi.classList.toggle('state-error', logInfo.spi && !logInfo.spiReady);
+  elements.memoryJedec.textContent = logInfo.jedec ? logInfo.jedec : '—';
+}
+
+const logTypes = [
+  { id: 'days', label: 'DAYS', countKey: 'days' },
+  { id: 'minutes', label: 'MINUTES', countKey: 'minutes', spi: true },
+  { id: 'hours', label: 'HOURS', countKey: 'hours', spi: true },
+  { id: 'alerts', label: 'ALERTS', countKey: 'alerts', spi: true },
+];
+
+function renderLogTabs() {
+  elements.logTabs.replaceChildren();
+  if (!logInfo) return;
+  const enabled = logTypes.filter((type) => !type.spi || logInfo.spi);
+  if (!enabled.some((type) => type.id === selectedLogType)) selectedLogType = 'days';
+  for (const type of enabled) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `log-tab${type.id === selectedLogType ? ' active' : ''}`;
+    button.textContent = `${type.label} (${logInfo[type.countKey].toLocaleString('en-US')})`;
+    button.setAttribute('aria-selected', String(type.id === selectedLogType));
+    button.addEventListener('click', () => {
+      selectedLogType = type.id;
+      logRecords = [];
+      logPageTotal = 0;
+      logStartOffset = 0;
+      renderLogTabs();
+      loadLogPage(true);
+    });
+    elements.logTabs.append(button);
+  }
+  renderLogSummary();
+}
+
+function renderLogSummary() {
+  elements.logContent.replaceChildren();
+  elements.logDate.disabled = !logInfo || selectedLogType === 'alerts';
+  elements.loadLogDate.disabled = elements.logDate.disabled;
+  elements.loadMoreLogs.hidden = !logInfo || logPageLoading ||
+    logStartOffset + logRecords.length >= logPageTotal || logPageTotal === 0;
+  if (!logInfo) return;
+  const type = logTypes.find((item) => item.id === selectedLogType) || logTypes[0];
+  if (logPageTotal === 0) {
+    elements.logContent.textContent = 'No records stored.';
+    return;
+  }
+  elements.logsStatus.textContent = `${(logStartOffset + logRecords.length).toLocaleString('en-US')} of ${logPageTotal.toLocaleString('en-US')} records`;
+  const maxDose = Math.max(1, logRecords.reduce((maximum, record) =>
+    Math.max(maximum, record.dose), 0));
+  const header = document.createElement('div');
+  header.className = 'log-grid log-grid-header';
+  header.innerHTML = selectedLogType === 'alerts' ?
+    '<span>Date</span><span>Duration</span><span>Dose</span><span>Average</span><span>Maximum</span>' :
+    '<span>Date</span><span>Dose</span><span>Minimum</span><span>Average</span><span>Maximum</span>';
+  elements.logContent.append(header);
+  logRecords.forEach((record, index) => {
+    const row = document.createElement('div');
+    const severity = record.maximum >= 136 ? 'red' : (record.maximum >= 61 ? 'yellow' : 'normal');
+    row.className = `log-grid log-record severity-${severity}`;
+    row.style.setProperty('--bar-width', `${Math.min(100, record.dose * 100 / maxDose)}%`);
+    const cells = [formatLogDate(record.timestamp, selectedLogType),
+      ...logValueCells(record, logStartOffset + index)];
+    cells.forEach((value) => {
+      const cell = document.createElement('span');
+      cell.textContent = value;
+      row.append(cell);
+    });
+    elements.logContent.append(row);
+  });
+  elements.loadMoreLogs.hidden = logPageLoading || logStartOffset + logRecords.length >= logPageTotal;
+}
+
+function logValueCells(record, index) {
+  const isCount = (deviceSettings?.[9] ?? 0) === 1;
+  if (selectedLogType === 'alerts') {
+    const seconds = record.duration;
+    const duration = seconds < 600 ? `${seconds}s` :
+      (seconds < 3600 ? `${Math.max(1, Math.round(seconds / 60))}m` :
+        `${(seconds / 3600).toFixed(1)}h`);
+    const averageCpm = Math.round(record.dose * 60 / Math.max(1, seconds));
+    if (isCount) return [duration, `${record.dose.toLocaleString('en-US')} CNT`,
+      `${averageCpm} CPM`, `${record.maximum} CPM`];
+    const dose = formatLogRadiation(record.dose * 0.000111);
+    const average = formatLogRadiation(averageCpm * 0.00666, true);
+    const maximum = formatLogRadiation(record.maximum * 0.00666, true);
+    return [duration, `${dose.value} ${dose.unit}`, `${average.value} ${average.unit}`,
+      `${maximum.value} ${maximum.unit}`];
+  }
+  const periodSeconds = selectedLogType === 'minutes' ? 60 :
+    (selectedLogType === 'hours' ? 3600 : 86400);
+  const seconds = index === 0 && logInfo?.calendarValid ?
+    (logInfo.calendarSeconds % periodSeconds || periodSeconds) : periodSeconds;
+  const averageCpm = Math.round(record.dose * 60 / seconds);
+  if (isCount) return [`${record.dose.toLocaleString('en-US')} CNT`,
+    `${record.minimum} CPM`, `${averageCpm} CPM`, `${record.maximum} CPM`];
+  const dose = formatLogRadiation(record.dose * 0.000111);
+  const minimum = formatLogRadiation(record.minimum * 0.00666, true);
+  const average = formatLogRadiation(averageCpm * 0.00666, true);
+  const maximum = formatLogRadiation(record.maximum * 0.00666, true);
+  return [`${dose.value} ${dose.unit}`, `${minimum.value} ${minimum.unit}`,
+    `${average.value} ${average.unit}`, `${maximum.value} ${maximum.unit}`];
+}
+
+function loadLogNearDate() {
+  if (!logInfo?.calendarValid || !elements.logDate.value || selectedLogType === 'alerts') return;
+  const dateSeconds = new Date(`${elements.logDate.value}T00:00:00Z`).getTime() / 1000;
+  const periodSeconds = selectedLogType === 'minutes' ? 60 :
+    (selectedLogType === 'hours' ? 3600 : 86400);
+  const physicalCount = selectedLogType === 'minutes' ? logInfo.minutes :
+    (selectedLogType === 'hours' ? logInfo.hours : logInfo.days);
+  const total = physicalCount + 1;
+  logStartOffset = Math.min(total - 1, Math.max(0,
+    Math.floor((logInfo.calendarSeconds - dateSeconds) / periodSeconds)));
+  logRecords = [];
+  logPageTotal = 0;
+  loadLogPage(true);
+}
+
+function formatLogDate(seconds, type) {
+  if (!seconds) return 'Time unavailable';
+  const date = new Date(Date.UTC(2000, 0, 1) + seconds * 1000);
+  const datePart = [String(date.getUTCFullYear()).slice(-2),
+    String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0')].join('-');
+  if (type === 'days') return datePart;
+  const timePart = `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
+  return type === 'hours' ? `${datePart} ${timePart.slice(0, 2)}h` : `${datePart} ${timePart}`;
+}
+
+function formatLogRadiation(valueUsv, isRate = false) {
+  const prefixSetting = deviceSettings?.[isRate ? 10 : 11] ?? 1;
+  const symbol = (deviceSettings?.[9] ?? 0) === 2 ? 'R' : 'Sv';
+  return formatRadiation(valueUsv * (symbol === 'R' ? 100 : 1), prefixSetting,
+    symbol, isRate);
+}
+
+function formatAggregateCells(record, index) {
+  const periodSeconds = selectedLogType === 'minutes' ? 60 :
+    (selectedLogType === 'hours' ? 3600 : 86400);
+  let seconds = periodSeconds;
+  if (index === 0 && logInfo?.calendarValid) {
+    seconds = logInfo.calendarSeconds % periodSeconds || periodSeconds;
+  }
+  const averageCpm = Math.round(record.dose * 60 / seconds);
+  if ((deviceSettings?.[9] ?? 0) === 1) {
+    return `D ${record.dose.toLocaleString('en-US')} CNT · MIN ${record.minimum} · AVG ${averageCpm} · MAX ${record.maximum} CPM`;
+  }
+  const dose = formatLogRadiation(record.dose * 0.000111);
+  const minimum = formatLogRadiation(record.minimum * 0.00666, true);
+  const maximum = formatLogRadiation(record.maximum * 0.00666, true);
+  const average = formatLogRadiation(averageCpm * 0.00666, true);
+  return `D ${dose.value} ${dose.unit} · MIN ${minimum.value} · AVG ${average.value} · MAX ${maximum.value}`;
+}
+
+function formatAlertCells(record) {
+  const seconds = record.duration;
+  const duration = seconds < 600 ? `${seconds}s` :
+    (seconds < 3600 ? `${Math.max(1, Math.round(seconds / 60))}m` :
+      `${(seconds / 3600).toFixed(1)}h`);
+  if ((deviceSettings?.[9] ?? 0) === 1) {
+    const avg = Math.round(record.dose * 60 / Math.max(1, seconds));
+    return `${duration} · D ${record.dose.toLocaleString('en-US')} CNT · AVG ${avg} · MAX ${record.maximum} CPM`;
+  }
+  const dose = formatLogRadiation(record.dose * 0.000111);
+  const maximum = formatLogRadiation(record.maximum * 0.00666, true);
+  const average = formatLogRadiation(record.dose * 60 / Math.max(1, seconds) * 0.00666, true);
+  return `${duration} · D ${dose.value} ${dose.unit} · AVG ${average.value} · MAX ${maximum.value}`;
+}
+
+async function loadLogPage(reset = false) {
+  if (!serial || !logInfo) return;
+  if (logPageLoading) {
+    if (reset) {
+      logPageGeneration += 1;
+      logPageReloadPending = true;
+    }
+    return;
+  }
+  const type = logTypes.find((item) => item.id === selectedLogType) || logTypes[0];
+  if (reset) {
+    logPageGeneration += 1;
+    logRecords = [];
+    logPageTotal = 0;
+  }
+  const generation = logPageGeneration;
+  logPageLoading = true;
+  elements.loadMoreLogs.disabled = true;
+  elements.logsStatus.textContent = 'Loading records…';
+  renderLogSummary();
+  const typeId = logTypes.indexOf(type);
+  const target = logRecords.length + LOG_BATCH_SIZE;
+  let failure = '';
+  try {
+    while (logRecords.length < target &&
+        (logStartOffset + logRecords.length < logPageTotal || logPageTotal === 0)) {
+      const offset = logStartOffset + logRecords.length;
+      const payload = await serial.request(OP_GET_LOG_PAGE,
+        Uint8Array.of(typeId, offset & 0xff, (offset >> 8) & 0xff, 3), 5000);
+      if (generation !== logPageGeneration) break;
+      if (payload.length < 7 || payload[0] !== 0 || payload[1] !== typeId) {
+        throw new ProtocolError('Invalid log page response.');
+      }
+      const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+      const responseOffset = view.getUint16(2, true);
+      const total = view.getUint16(4, true);
+      const count = payload[6];
+      if (responseOffset !== offset || payload.length !== 7 + count * 16) {
+        throw new ProtocolError('Log page is incomplete or out of sequence.');
+      }
+      logPageTotal = total;
+      for (let i = 0; i < count; i += 1) {
+        const at = 7 + i * 16;
+        const timestamp = view.getUint32(at, true);
+        if (typeId === 3) {
+          logRecords.push({
+            timestamp,
+            duration: view.getUint32(at + 4, true),
+            dose: view.getUint32(at + 8, true),
+            maximum: view.getUint32(at + 12, true),
+          });
+        } else {
+          logRecords.push({
+            timestamp,
+            dose: view.getUint32(at + 4, true),
+            minimum: view.getUint32(at + 8, true),
+            maximum: view.getUint32(at + 12, true),
+          });
+        }
+      }
+      if (count < 3) {
+        logPageTotal = offset + count;
+        break;
+      }
+    }
+  } catch (error) {
+    failure = error.message;
+  } finally {
+    logPageLoading = false;
+    elements.loadMoreLogs.disabled = false;
+    renderLogSummary();
+    if (failure) elements.logsStatus.textContent = failure;
+    if (logPageReloadPending && serial && logInfo) {
+      logPageReloadPending = false;
+      loadLogPage(true);
+    }
+  }
+}
+
+async function loadLogInfo() {
+  if (!serial || logInfoLoading) return;
+  if ((protocolCapabilities & (1 << 3)) === 0 ||
+      (protocolCapabilities & (1 << 4)) === 0) {
+    elements.logsStatus.textContent = 'Firmware log transfer is not supported.';
+    return;
+  }
+  logInfoLoading = true;
+  elements.logsStatus.textContent = 'Reading log index…';
+  try {
+    const payload = await serial.request(OP_GET_LOG_INFO);
+    if (![15, 22, 26].includes(payload.length) || payload[0] !== 0) {
+      throw new ProtocolError('Invalid log index response.');
+    }
+    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    logInfo = {
+      spi: payload[1] !== 0,
+      minutes: view.getUint16(2, true),
+      hours: view.getUint16(4, true),
+      days: view.getUint16(6, true),
+      alerts: view.getUint16(8, true),
+      calendarValid: payload[10] !== 0,
+      calendarSeconds: view.getUint32(11, true),
+      calendarAnchorSeconds: view.getUint32(11, true),
+      calendarAnchorUptime: payload.length >= 26 ? view.getUint32(22, true) : null,
+      spiSizeMb: payload.length >= 22 ? payload[15] : null,
+      spiReady: payload.length >= 22 && payload[16] !== 0,
+      jedec: payload.length >= 22 ? Array.from(payload.subarray(17, 20),
+        (byte) => byte.toString(16).padStart(2, '0')).join(' ').toUpperCase() : '',
+      rtcStatus: payload.length >= 22 ? ({
+        1: 'OSC ERR', 2: 'INIT ERR', 3: 'SYNC ERR', 4: 'DBP ERR',
+        5: 'SET', 6: 'NOT SET', 7: 'NOT READY',
+      }[payload[20]] || 'UNKNOWN') : '',
+      clockSource: payload.length >= 22 ? (payload[21] === 1 ? 'LSE' : 'LSI') : '',
+    };
+    renderDebugLogInfo();
+    if (logInfo.calendarValid) {
+      elements.logDate.value = new Date(logInfo.calendarSeconds * 1000)
+        .toISOString().slice(0, 10);
+    }
+    updateDeviceDateTime();
+    selectedLogType = 'days';
+    renderLogTabs();
+    elements.logsStatus.textContent = 'Physical records on device';
+    if (!logInfo.spi) {
+      elements.logsStatus.textContent = 'EEPROM · day history';
+    }
+    if (!elements.logsPage.hidden) loadLogPage(true);
+  } catch (error) {
+    elements.logsStatus.textContent = error.message;
+  } finally {
+    logInfoLoading = false;
+  }
 }
 
 function setConnection(state, label) {
@@ -420,6 +787,20 @@ function formatUptime(seconds) {
   };
 }
 
+function updateDeviceDateTime(uptimeText = null) {
+  if (!logInfo?.calendarValid) {
+    elements.deviceDate.textContent = '—';
+    elements.deviceTime.textContent = '—';
+  } else {
+    const date = new Date(Date.UTC(2000, 0, 1) + logInfo.calendarSeconds * 1000);
+    elements.deviceDate.textContent = [date.getUTCFullYear(),
+      String(date.getUTCMonth() + 1).padStart(2, '0'),
+      String(date.getUTCDate()).padStart(2, '0')].join('-');
+    elements.deviceTime.textContent = `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
+  }
+  if (uptimeText !== null) elements.overviewUptime.textContent = uptimeText;
+}
+
 function handleHello(payload) {
   if (payload.length !== 10 || payload[0] !== 0) throw new ProtocolError('Device rejected HELLO or returned an unknown format.');
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
@@ -430,7 +811,6 @@ function handleHello(payload) {
     throw new ProtocolError(`Unsupported protocol or capabilities (version ${protocolVersion}, payload ${maxPayload}).`);
   }
   protocolCapabilities = capabilities;
-  elements.device.textContent = `Protocol ${protocolVersion}`;
 }
 
 function settingsOptions(setting) {
@@ -482,6 +862,7 @@ async function loadSettings() {
     }
     deviceSettings = Array.from(payload.subarray(2));
     renderSettings();
+    if (logInfo && logRecords.length) renderLogSummary();
     elements.settingsStatus.textContent = 'Loaded from device';
   } catch (error) {
     elements.settingsStatus.textContent = error.message;
@@ -501,6 +882,11 @@ async function writeSetting(settingId, value, control) {
     }
     deviceSettings = null;
     await loadSettings();
+    if (settingId === 13 && deviceSettings) {
+      logInfo = null;
+      logRecords = [];
+      await loadLogInfo();
+    }
     if (deviceSettings) elements.settingsStatus.textContent = 'Applied on device';
   } catch (error) {
     const message = error.message;
@@ -512,7 +898,7 @@ async function writeSetting(settingId, value, control) {
 }
 
 function handleStatus(payload) {
-  if (payload.length !== 25 || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
+  if ((payload.length !== 25 && payload.length !== 29) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const uptimeSeconds = view.getUint32(1, true);
   const count = view.getUint32(5, true);
@@ -521,8 +907,21 @@ function handleStatus(payload) {
   const batteryRaw = view.getUint16(17, true);
   const solarRaw = view.getUint16(19, true);
   const usbRaw = view.getUint16(21, true);
-  const flags = view.getUint16(23, true);
+  const countTotal = payload.length >= 29 ? view.getUint32(25, true) : count;
+  rateLevel = countTotal < 25 ? 'blue' :
+    (cpm * 666 > 90000 ? 'red' : (cpm * 666 >= 40000 ? 'yellow' : 'green'));
+  const levelClass = `level-${rateLevel}`;
+  elements.rateDose.classList.remove('level-blue', 'level-green', 'level-yellow', 'level-red');
+  elements.rateDose.classList.add(levelClass);
   const uptime = formatUptime(uptimeSeconds);
+  if (logInfo?.calendarValid) {
+    if (logInfo.calendarAnchorUptime === null) {
+      logInfo.calendarAnchorUptime = uptimeSeconds;
+      logInfo.calendarAnchorSeconds = logInfo.calendarSeconds;
+    }
+    logInfo.calendarSeconds = logInfo.calendarAnchorSeconds +
+      Math.max(0, uptimeSeconds - logInfo.calendarAnchorUptime);
+  }
   const unit = deviceSettings?.[9] ?? 0;
   const ratePrefix = deviceSettings?.[10] ?? 1;
   const dosePrefix = deviceSettings?.[11] ?? 1;
@@ -542,31 +941,33 @@ function handleStatus(payload) {
     const symbol = unit === 2 ? 'R' : 'Sv';
     const rate = formatRadiation(rateUsvh, ratePrefix, symbol, true);
     const dose = formatRadiation(doseUsv, dosePrefix, symbol, false);
-    elements.rateLabel.textContent = 'RATE · CALCULATED';
+    elements.rateLabel.textContent = 'RATE';
     elements.rateDose.textContent = rate.value;
     elements.rateUnit.textContent = rate.unit;
     elements.dose.textContent = dose.value;
     elements.doseUnit.textContent = dose.unit;
-    elements.rate.textContent = cpm.toLocaleString('en-US');
-    elements.rateFoot.hidden = false;
-    elements.doseFoot.hidden = false;
+    elements.rateFoot.hidden = true;
+    elements.doseFoot.hidden = true;
   }
   elements.count.textContent = count.toLocaleString('en-US');
-  elements.uptime.textContent = `${uptime.days}d ${uptime.clock}`;
+  elements.debugCount.textContent = countTotal.toLocaleString('en-US');
+  elements.uptime.textContent = `${uptime.days}D ${uptime.clock.slice(0, 5)}`;
+  updateDeviceDateTime(`${uptime.days}D ${uptime.clock}`);
   rateHistory.push(unit === 1 ? cpm : rateUsvh);
-  if (rateHistory.length > 60) rateHistory.shift();
+  rateHistoryUnit = unit === 1 ? 'CPM' :
+    formatRadiation(rateUsvh, ratePrefix, unit === 2 ? 'R' : 'Sv', true).unit;
+  elements.rateChart.setAttribute('aria-label', `Recent rate history (${rateHistoryUnit})`);
+  if (rateHistory.length > 180) rateHistory.shift();
   drawRateChart();
-  elements.battery.textContent = batteryRaw.toLocaleString('en-US');
-  elements.solar.textContent = solarRaw.toLocaleString('en-US');
-  elements.usbRaw.textContent = usbRaw.toLocaleString('en-US');
-  const solarPercent = Math.min(100, Math.round(solarRaw / 31));
+  const solarPercent = Math.min(100, Math.floor(solarRaw / 31));
   elements.solarPercent.textContent = `${solarPercent}%`;
   elements.solarPercent.classList.toggle('solar-warn', solarPercent > 49 && solarPercent <= 79);
   elements.solarPercent.classList.toggle('solar-good', solarPercent > 79);
-  elements.batteryPercent.textContent = `${percentFromAdc(batteryRaw, 1300, 2000)}%`;
-  setStateValue(elements.hv, (flags & 1) !== 0, 'On', 'Off');
-  setStateValue(elements.usb, (flags & 2) !== 0, 'Connected', 'Not detected');
-  elements.updated.textContent = `Updated ${new Date().toLocaleTimeString('en-US')}`;
+  const batteryPercent = percentFromAdc(batteryRaw, 1300, 2000);
+  elements.batteryPercent.textContent = `${batteryPercent}%`;
+  elements.debugBattery.textContent = `${batteryPercent}% · ${batteryRaw}`;
+  elements.debugSolar.textContent = `${solarPercent}% · ${solarRaw}`;
+  elements.debugUsb.textContent = usbRaw.toLocaleString('en-US');
 }
 
 function setStateValue(element, active, onText, offText) {
@@ -590,8 +991,8 @@ async function refreshStatus() {
 }
 
 async function requestHelloAfterBoot(protocol) {
-  // Diagnostic pause: observe Web Serial open before sending the first byte.
-  await delay(5000);
+  // Briefly allow the device to settle after opening the serial port.
+  await delay(1000);
   let lastError;
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
@@ -611,15 +1012,26 @@ elements.overviewTab.addEventListener('click', () => selectPage('overview'));
 elements.debugTab.addEventListener('click', () => selectPage('debug'));
 elements.settingsTab.addEventListener('click', () => selectPage('settings'));
 elements.logsTab.addEventListener('click', () => selectPage('logs'));
+elements.loadMoreLogs.addEventListener('click', () => loadLogPage(false));
+elements.loadLogDate.addEventListener('click', loadLogNearDate);
 elements.firmwareTab.addEventListener('click', () => selectPage('firmware'));
+elements.instructionsTab.addEventListener('click', () => selectPage('instructions'));
+document.querySelectorAll('[data-debug-page]').forEach((button) => {
+  button.addEventListener('click', () => selectDebugPage(button.dataset.debugPage));
+});
+selectDebugPage(selectedDebugPage);
 window.addEventListener('resize', drawRateChart);
-updateLocalTime();
-setInterval(updateLocalTime, 1000);
 
 async function connectDevice() {
   protocolCapabilities = 0;
   deviceSettings = null;
+  logInfo = null;
+  logRecords = [];
+  logStartOffset = 0;
+  logPageTotal = 0;
   elements.settingsList.replaceChildren();
+  elements.logTabs.replaceChildren();
+  elements.logContent.textContent = '';
   setConnection('connecting', 'Connecting…');
   showNotice('Select the device port. The app will wait if opening it restarts the device.', '');
   try {
@@ -628,25 +1040,37 @@ async function connectDevice() {
       pollTimer = 0;
       serial = null;
       deviceSettings = null;
+      logInfo = null;
+      logRecords = [];
+      logStartOffset = 0;
+      logPageTotal = 0;
       elements.settingsList.replaceChildren();
+      elements.logTabs.replaceChildren();
+      elements.logContent.textContent = '';
       elements.settingsStatus.textContent = 'Connect to read settings.';
       setConnection('disconnected', 'Connection lost');
       showNotice(error.message, 'error');
     });
     await serial.connect();
     setConnection('connected', 'Connected');
-    showNotice('Waiting 5 seconds before HELLO…', '');
+    showNotice('Waiting 1 second before HELLO…', '');
     const hello = await requestHelloAfterBoot(serial);
     handleHello(hello);
     showNotice('Device connected. Readings update once per second.', 'success');
     await loadSettings();
+    await loadLogInfo();
     await refreshStatus();
     pollTimer = setInterval(refreshStatus, 1000);
   } catch (error) {
     if (serial) await serial.disconnect();
     serial = null;
     deviceSettings = null;
+    logInfo = null;
+    logRecords = [];
+    logPageTotal = 0;
     elements.settingsList.replaceChildren();
+    elements.logTabs.replaceChildren();
+    elements.logContent.textContent = '';
     elements.settingsStatus.textContent = 'Connect to read settings.';
     setConnection('disconnected', 'Disconnected');
     showNotice(error.message || 'Could not connect to the device.', 'error');
@@ -660,10 +1084,14 @@ async function disconnectDevice() {
   serial = null;
   polling = false;
   deviceSettings = null;
+  logInfo = null;
+  logRecords = [];
+  logPageTotal = 0;
   elements.settingsList.replaceChildren();
+  elements.logTabs.replaceChildren();
+  elements.logContent.textContent = '';
   elements.settingsStatus.textContent = 'Connect to read settings.';
   setConnection('disconnected', 'Disconnected');
-  elements.device.textContent = '—';
   showNotice('Port closed. Last readings remain visible.', '');
 }
 

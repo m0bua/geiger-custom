@@ -31,7 +31,11 @@ button { font: inherit; }
 .notice p { margin: 0; font-size: 11px; line-height: 1.45; }
 .notice[data-kind="error"] { border-color: rgba(247,108,104,.3); color: #e5b4b2; }
 .notice[data-kind="success"] { border-color: rgba(0,229,139,.2); }
-.device-header { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 2px 0 12px; }
+.device-header { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 2px 0 6px; }
+.device-clock { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 0 12px; padding: 8px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.device-clock div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.device-clock span { color: #819096; font: 500 10px "DM Mono", Consolas, monospace; letter-spacing: .08em; }
+.device-clock strong { overflow: hidden; color: #dce6e8; font: 500 12px "DM Mono", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .header-reading { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
 .header-reading span { color: #819096; font: 500 10px "DM Mono", Consolas, monospace; letter-spacing: .08em; }
 .header-reading strong { color: #dce6e8; font: 500 14px "DM Mono", Consolas, monospace; }
@@ -45,6 +49,10 @@ button { font: inherit; }
 .metric-label { color: #91a1a6; font: 500 10px "DM Mono", Consolas, monospace; letter-spacing: .11em; }
 .metric-value { display: flex; align-items: baseline; gap: 8px; margin-top: 22px; font: 500 40px/1 "DM Mono", Consolas, monospace; letter-spacing: -.06em; }
 .metric-primary .metric-value { color: var(--green); }
+.metric-value .level-blue { color: #287bff; }
+.metric-value .level-green { color: #00e58b; }
+.metric-value .level-yellow { color: #f0d35e; }
+.metric-value .level-red { color: #ff6666; }
 .metric-value small { color: #89999e; font: 500 12px "DM Mono", Consolas, monospace; letter-spacing: .04em; }
 .metric-uptime { font-size: 25px; }
 .metric-foot { margin: 10px 0 0; color: #9aa9ae; font: 14px "DM Mono", Consolas, monospace; }
@@ -55,6 +63,24 @@ button { font: inherit; }
 .placeholder-page h2 { margin: 0 0 8px; font-size: 16px; }
 .placeholder-page p { margin: 0; color: var(--muted); font-size: 12px; }
 .settings-panel { padding: 18px; border: 1px solid var(--line); border-radius: 11px; background: rgba(17,26,31,.8); }
+.logs-panel { padding: 18px; border: 1px solid var(--line); border-radius: 11px; background: rgba(17,26,31,.8); }
+.log-tabs { display: flex; gap: 5px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.log-tab { padding: 7px 11px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; cursor: pointer; }
+.log-tab.active { color: var(--green); background: rgba(0,229,139,.09); }
+.log-content { min-height: 100px; padding: 14px 0; color: var(--muted); font: 11px "DM Mono", Consolas, monospace; }
+.log-date-tools { display: flex; align-items: center; justify-content: flex-end; gap: 9px; padding: 10px 0 2px; color: var(--muted); font-size: 11px; }
+.log-date-tools input { min-height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; color: #d8e2e4; background: #111a1f; font: 11px "DM Mono", Consolas, monospace; }
+.log-grid { min-width: 620px; display: grid; grid-template-columns: 1.1fr repeat(4, minmax(90px, 1fr)); gap: 8px; align-items: center; }
+.log-grid-header { padding: 8px 10px; color: var(--muted); font-size: 10px; text-transform: uppercase; }
+.log-grid-header span:not(:first-child) { text-align: right; }
+.log-record { position: relative; isolation: isolate; min-height: 38px; padding: 7px 10px; border-bottom: 1px solid rgba(160,186,194,.08); color: #d8e2e4; font: 500 11px/1.4 "DM Mono", Consolas, monospace; }
+.log-record::before { position: absolute; z-index: -1; inset: 0 auto 0 0; width: var(--bar-width); content: ""; background: rgba(194,207,211,.12); }
+.log-record span { text-align: right; white-space: nowrap; }
+.log-record span:first-child { color: #aab8bd; text-align: left; }
+.log-record.severity-yellow span:last-child { color: #f0d35e; }
+.log-record.severity-red span:last-child { color: #ff6666; }
+.log-content { overflow-x: auto; }
+.log-actions { display: flex; justify-content: center; }
 #settings-status { color: var(--muted); font: 10px "DM Mono", Consolas, monospace; }
 .settings-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
 .setting-row { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid rgba(160,186,194,.08); }
@@ -66,12 +92,16 @@ button { font: inherit; }
 .panel-heading h2 { margin: 0; font-size: 15px; }
 #last-update { color: var(--muted); font: 10px "DM Mono", Consolas, monospace; }
 .detail-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
+.debug-subpage { grid-template-columns: minmax(0, 1fr); }
+.debug-subpage .detail { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+.debug-subpage .detail strong { text-align: right; }
 .detail { min-height: 66px; display: flex; flex-direction: column; justify-content: center; gap: 7px; padding: 10px 12px 8px 0; border-bottom: 1px solid rgba(160,186,194,.08); }
 .detail:nth-last-child(-n+3) { border-bottom: 0; }
 .detail span { color: #819096; font-size: 11px; }
 .detail strong { color: #d8e2e4; font: 500 13px "DM Mono", Consolas, monospace; }
 .detail strong.state-on { color: var(--green); }
 .detail strong.state-off { color: #819096; }
+.detail strong.state-error { color: #ff6666; }
 footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas, monospace; }
 [hidden] { display: none !important; }
 @keyframes pulse { 50% { opacity: .35; } }
@@ -86,7 +116,11 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .button { min-height: 33px; padding: 0 9px; font-size: 11px; }
   .tab { padding: 7px 6px; font-size: 10px; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .device-header { gap: 4px; margin-bottom: 9px; }
+  .device-header { gap: 4px; margin-bottom: 6px; }
+  .device-clock { gap: 6px; margin-bottom: 9px; }
+  .device-clock div { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .device-clock span { font-size: 9px; }
+  .device-clock strong { font-size: 10px; }
   .header-reading { align-items: flex-start; flex-direction: column; gap: 4px; }
   .header-reading span { font-size: 9px; }
   .header-reading strong { font-size: 12px; }
@@ -96,7 +130,11 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .metric-value small { font-size: 10px; }
   .metric-value { margin-top: 14px; }
   .detail-grid { grid-template-columns: repeat(2, 1fr); }
+  .debug-subpage { grid-template-columns: minmax(0, 1fr); }
   .settings-list { grid-template-columns: 1fr; }
+  .log-tabs { overflow-x: auto; }
+  .log-tab { padding-inline: 8px; }
+  .log-date-tools { justify-content: flex-start; flex-wrap: wrap; }
   .detail:nth-last-child(-n+3) { border-bottom: 1px solid rgba(160,186,194,.08); }
   .detail:nth-last-child(-n+2) { border-bottom: 0; }
 }

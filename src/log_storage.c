@@ -1408,13 +1408,44 @@ uint16_t log_storage_alert_record_count(void)
         (uint16_t)alert_ring.total_records;
 }
 
-uint8_t log_storage_alert_recent(uint32_t *start_calendar,
-                                 uint32_t *duration_seconds,
-                                 uint32_t *dose_pulses,
-                                 uint32_t *maximum_cpm,
-                                 uint8_t capacity)
+uint16_t log_storage_alert_episode_count(void)
 {
     uint8_t record[NOR_ALERT_RECORD_SIZE];
+    uint16_t count = 0u;
+    uint16_t previous_run = 0u;
+    uint32_t previous_start = 0u;
+    bool have_previous = false;
+    if (!storage_spi || !alert_ring.initialized) return 0u;
+    for (uint32_t offset = 0u; offset < alert_ring.total_records; ++offset) {
+        uint16_t sequence;
+        if (!ring_read_newest_offset(&alert_ring, offset, record) ||
+            !decode_alert(record, &sequence)) continue;
+        (void)sequence;
+        const uint16_t run = (uint16_t)record[22] |
+            ((uint16_t)record[23] << 8u);
+        const uint32_t start = (uint32_t)record[2] |
+            ((uint32_t)record[3] << 8u) |
+            ((uint32_t)record[4] << 16u) |
+            ((uint32_t)record[5] << 24u);
+        if (have_previous && run == previous_run && start == previous_start) {
+            continue;
+        }
+        previous_run = run;
+        previous_start = start;
+        have_previous = true;
+        if (count < UINT16_MAX) ++count;
+    }
+    return count;
+}
+
+uint8_t log_storage_alert_page(uint16_t page_offset,
+                               uint32_t *start_calendar,
+                               uint32_t *duration_seconds,
+                               uint32_t *dose_pulses,
+                               uint32_t *maximum_cpm, uint8_t capacity)
+{
+    uint8_t record[NOR_ALERT_RECORD_SIZE];
+    uint16_t seen = 0u;
     uint8_t count = 0u;
     uint16_t previous_run = 0u;
     uint32_t previous_start = 0u;
@@ -1440,6 +1471,7 @@ uint8_t log_storage_alert_recent(uint32_t *start_calendar,
         previous_run = run;
         previous_start = start;
         have_previous = true;
+        if (seen++ < page_offset) continue;
         start_calendar[count] = (uint32_t)record[6] |
             ((uint32_t)record[7] << 8u) |
             ((uint32_t)record[8] << 16u) |
@@ -1460,6 +1492,16 @@ uint8_t log_storage_alert_recent(uint32_t *start_calendar,
     return count;
 }
 
+uint8_t log_storage_alert_recent(uint32_t *start_calendar,
+                                 uint32_t *duration_seconds,
+                                 uint32_t *dose_pulses,
+                                 uint32_t *maximum_cpm,
+                                 uint8_t capacity)
+{
+    return log_storage_alert_page(0u, start_calendar, duration_seconds,
+        dose_pulses, maximum_cpm, capacity);
+}
+
 
 static void graph_pack_min_max(uint8_t *packed, uint32_t minimum,
                                uint32_t maximum)
@@ -1471,11 +1513,13 @@ static void graph_pack_min_max(uint8_t *packed, uint32_t minimum,
     }
 }
 
-bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
-                            uint8_t *packed_min_max_cpm, uint8_t capacity,
-                            uint8_t *count)
+bool log_storage_graph_page(log_graph_period_t period, uint16_t offset,
+                           uint32_t *dose,
+                           uint8_t *packed_min_max_cpm, uint8_t capacity,
+                           uint8_t *count)
 {
     uint8_t used = 0u;
+    uint16_t seen = 0u;
     uint8_t record[EEPROM_DAY_SIZE];
     graph_hours_cover_current_day = false;
 
@@ -1494,7 +1538,9 @@ bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
         uint32_t maximum = minute_max_cpm;
         uint32_t current_dose = minute_dose;
         if (period == LOG_GRAPH_HOURS) {
-            current_dose += hour_dose;
+            /* The open-hour RAM snapshot must include the current open minute
+             * as well as the minutes already folded into hour_dose. */
+            current_dose = add_saturated(hour_dose, minute_dose, 0xFFFFFFu);
             if (hour_min_cpm < minimum) minimum = hour_min_cpm;
             if (hour_max_cpm > maximum) maximum = hour_max_cpm;
         } else if (period == LOG_GRAPH_DAYS) {
@@ -1502,23 +1548,27 @@ bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
             minimum = day_min_cpm;
             maximum = day_max_cpm;
         }
-        dose[used] = current_dose;
-        graph_pack_min_max(packed_min_max_cpm,
-            minimum == UINT32_MAX ? 0u : minimum, maximum);
-        ++used;
+        if (seen >= offset) {
+            dose[used] = current_dose;
+            graph_pack_min_max(&packed_min_max_cpm[(uint16_t)used * 5u],
+                minimum == UINT32_MAX ? 0u : minimum, maximum);
+            ++used;
+        }
+        ++seen;
     }
 
     if (period == LOG_GRAPH_MINUTES) {
         uint8_t header[NOR_SECTOR_HEADER_SIZE];
+        const uint32_t sectors_to_scan = minute_ring.records_per_sector == 0u ?
+            0u : (minute_ring.total_records +
+            minute_ring.records_per_sector - 1u) /
+            minute_ring.records_per_sector;
         if (!spi_nor_is_ready() || !minute_ring.initialized) {
             *count = used;
             return true;
         }
-        /* Recent minute records normally fit in the active sector. Only
-         * inspect its immediate predecessor as a rollover fallback; walking
-         * the entire NOR ring when there are no records stalls the UI. */
         for (uint16_t back = 0u;
-             back < 2u && back < minute_ring.sector_count &&
+             back < minute_ring.sector_count && back < sectors_to_scan &&
                  used < capacity; ++back) {
             const uint16_t sector = (uint16_t)((minute_ring.active_sector +
                 minute_ring.sector_count - back) % minute_ring.sector_count);
@@ -1542,6 +1592,7 @@ bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
                 if (!decode_minute(record, &sequence) ||
                     (record[8] & 0xC0u) != 0x40u) continue;
                 (void)sequence;
+                if (seen++ < offset) continue;
                 dose[used] = get_bits(record, 16u, 18u);
                 graph_pack_min_max(&packed_min_max_cpm[(uint16_t)used * 5u],
                     get_bits(record, 34u, 18u),
@@ -1550,13 +1601,18 @@ bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
             }
         }
     } else if (period == LOG_GRAPH_HOURS) {
+        const uint32_t sectors_to_scan = hour_ring.records_per_sector == 0u ?
+            0u : (hour_ring.total_records + hour_ring.records_per_sector - 1u) /
+            hour_ring.records_per_sector;
         if (!spi_nor_is_ready() || !hour_ring.initialized) {
             *count = used;
             return true;
         }
         uint8_t header[NOR_SECTOR_HEADER_SIZE];
-        for (uint8_t back = 0u; back < 2u && used < capacity &&
-             !graph_hours_cover_current_day; ++back) {
+        for (uint16_t back = 0u; back < hour_ring.sector_count &&
+             back < sectors_to_scan &&
+             used < capacity && (!graph_hours_cover_current_day ||
+             offset != 0u); ++back) {
             const uint16_t sector = (uint16_t)((hour_ring.active_sector +
                 hour_ring.sector_count - back) % hour_ring.sector_count);
             const uint32_t base = (uint32_t)(hour_ring.base_sector + sector) *
@@ -1579,12 +1635,14 @@ bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
                 if (!decode_hour(record, &sequence)) continue;
                 if ((record[9] & 0xF0u) == 0xC0u) {
                     graph_hours_cover_current_day = true;
-                    break;
+                    if (offset == 0u) break;
+                    continue;
                 }
                 /* A0 holds a partial hour closed by reboot/time change. It
                  * still contributes to today's dose and graph statistics. */
                 if ((record[9] & 0xF0u) != 0xA0u &&
                     (record[9] & 0xF0u) != 0xB0u) continue;
+                if (seen++ < offset) continue;
                 dose[used] = get_bits(record, 16u, 24u);
                 graph_pack_min_max(
                     &packed_min_max_cpm[(uint16_t)used * 5u],
@@ -1594,7 +1652,8 @@ bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
             }
         }
     } else if (period == LOG_GRAPH_DAYS) {
-        const uint16_t history_count = EEPROM_DAY_COUNT;
+        const uint16_t history_count = eeprom_day_count < EEPROM_DAY_COUNT ?
+            eeprom_day_count : EEPROM_DAY_COUNT;
         const uint8_t record_size = EEPROM_DAY_SIZE;
         const uint16_t base = EEPROM_DAY_BASE;
         const uint16_t newest_sequence = day_sequence;
@@ -1616,6 +1675,7 @@ bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
                     !decode_day(record, &stored_sequence) ||
                     stored_sequence != sequence) continue;
             }
+            if (seen++ < offset) continue;
             dose[used] = get_bits(record, 16u, 29u);
             graph_pack_min_max(
                 &packed_min_max_cpm[(uint16_t)used * 5u],
@@ -1629,6 +1689,14 @@ bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
 
     *count = used;
     return true;
+}
+
+bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
+                            uint8_t *packed_min_max_cpm, uint8_t capacity,
+                            uint8_t *count)
+{
+    return log_storage_graph_page(period, 0u, dose, packed_min_max_cpm,
+        capacity, count);
 }
 
 uint32_t log_storage_graph_current_seconds(log_graph_period_t period)
@@ -1646,7 +1714,7 @@ bool log_storage_graph_hours_cover_current_day(void)
 }
 
 int32_t log_storage_graph_time_correction(log_graph_period_t period,
-                                         uint8_t index,
+                                         uint16_t index,
                                          uint32_t current_period_start)
 {
     uint8_t older[EEPROM_CUTOFF_SIZE];

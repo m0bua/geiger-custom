@@ -552,6 +552,18 @@ bool board_rtc_log_time(uint32_t *uptime_seconds, uint32_t *calendar_seconds,
     return true;
 }
 
+uint8_t board_rtc_debug_status(void)
+{
+    if (rtc_init_error != 0u) return rtc_init_error;
+    if (!rtc_ready) return 7u;
+    return rtc_time_valid ? 5u : 6u;
+}
+
+uint8_t board_rtc_clock_source(void)
+{
+    return ((RCC_CSR >> 16u) & 3u) == 1u ? 1u : 0u;
+}
+
 uint32_t board_uptime_seconds_get(void)
 {
     return board_uptime_seconds;

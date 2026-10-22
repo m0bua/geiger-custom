@@ -310,17 +310,21 @@ MCU не має виділяти RAM за неперевіреною length: л�
 
 ### Реалізований початковий зріз у кастомній прошивці
 
-Firmware має USART1 на PA9/PA10, 115200 8N1, приймання через RX interrupt і обмежену RAM-чергу. Реалізовано COBS + CRC-16/CCITT-FALSE та запити `HELLO`, `GET_STATUS`, `GET_SETTINGS` і `SET_SETTING`; максимальний payload першої версії зараз **64 байти**. Пошкоджені кадри відкидаються без відповіді. Текстових повідомлень у serial stream немає.
+Firmware має USART1 на PA9/PA10, 115200 8N1, приймання через RX interrupt і обмежену RAM-чергу. Реалізовано COBS + CRC-16/CCITT-FALSE та запити `HELLO`, `GET_STATUS`, `GET_SETTINGS`, `SET_SETTING`, `GET_LOG_INFO` і `GET_LOG_PAGE`; максимальний payload — **64 байти**. Пошкоджені кадри відкидаються без відповіді. Текстових повідомлень у serial stream немає.
 
 `HELLO` response payload (10 байтів): `status:u8 | model_id:u16 | protocol_version:u8 | max_payload:u16 | capabilities:u32`. Наразі `model_id=1` (Geiger-2), `protocol_version=1`, `max_payload=64`, bit 0 capabilities означає підтримку `GET_STATUS`.
 
 `GET_STATUS` response payload (25 байтів): `status:u8 | uptime_seconds:u32 | count_today:u32 | rate_cpm:u32 | dose_nsv:u32 | battery_raw:u16 | solar_raw:u16 | usb_raw:u16 | flags:u16`. `dose_nsv` — накопичена за поточну добу доза в nSv; `flags` bit 0 — HV увімкнено, bit 1 — USB визначено як підключений. Усі багатобайтові значення little-endian. Response має `kind=2` і повторює `request_id` та `opcode` запиту. Status `0` — OK, `1` — невідома/непідтримана операція.
 
-Capability bits: bit 0 — `GET_STATUS`, bit 1 — `GET_SETTINGS`, bit 2 — `SET_SETTING`.
+Capability bits: bit 0 — `GET_STATUS`, bit 1 — `GET_SETTINGS`, bit 2 — `SET_SETTING`, bit 3 — `GET_LOG_INFO`, bit 4 — `GET_LOG_PAGE`.
 
 `GET_SETTINGS` request має порожній payload; response: `status:u8 | setting_count:u8 | setting_values[setting_count]`, де індекси значень відповідають стабільним ID налаштувань у `board_stm32l051.c`. ID: `0 LED, 1 CLICKS, 2 SCREEN ALARM, 3 LIGHT ALARM, 4 SOUND ALARM, 5 LED BRIGHT, 6 SCREEN BRIGHT, 7 SCREEN TIMER, 8 LEAD ZERO, 9 UNIT, 10 RATE PREFIX, 11 DOSE PREFIX, 12 RATE ROW 2, 13 USE-SPI, 14 RESET, 15 HV, 16 DOSE ALARM, 17 ALARM STOP, 18 POWER OFF, 19 REBOOT, 20 TONE`. `SET_SETTING` request: `setting_id:u8 | value_index:u8`; response містить лише status. Непідтримуване значення повертає status `2`. UI/назви/опції живуть у `app/`; `RESET`, `POWER OFF`, `REBOOT` і `RATE ROW 2` не можна записати віддалено. Під час локального редагування на приладі віддалений запис відхиляється.
 
-Логи, snapshot/read, синхронізація часу та reboot/bootloader-команди ще не реалізовані. RTS/DTR і фізичний обмін усе ще потребують перевірки на платі.
+`GET_LOG_INFO` має порожній request; response: `status:u8 | use_spi:u8 | minute_count:u16 | hour_count:u16 | day_count:u16 | alert_record_count:u16 | calendar_valid:u8 | calendar_seconds:u32 | spi_size_mb:u8 | spi_ready:u8 | jedec[3] | rtc_status:u8 | clock_source:u8`. Лічильники — фізичні збережені записи. `USE-SPI` визначає доступність вкладок MINUTES/HOURS/ALERTS; DAYS доступний завжди. Кількість у вкладці ALERTS — фізичні snapshots; записи у списку дедуплікуються до епізодів. Хвіст після перших 15 байтів додає діагностичні поля для APP; старі клієнти можуть його ігнорувати.
+
+`GET_LOG_PAGE` request: `type:u8 | offset:u16 | limit:u8`, де type: DAYS=0, MINUTES=1, HOURS=2, ALERTS=3; limit 1–3. Response: `status:u8 | type:u8 | offset:u16 | total:u16 | count:u8 | records[count]`. Максимум три записи на відповідь залишає payload у межах 64 байтів. Для агрегатів запис: `period_start_seconds_since_2000:u32 | dose_pulses:u32 | minimum_cpm:u32 | maximum_cpm:u32`; перший елемент — поточний RAM-агрегат, далі persisted history newest-first. Для алертів: `start_seconds_since_2000:u32 | duration_seconds:u32 | dose_pulses:u32 | maximum_cpm:u32`. Дані передаються сторінками напряму зі сховища; журнал цілком у RAM прошивки не копіюється. Поточний 500 ms буфер локального графіка не вимикається.
+
+Snapshot/generation token поки не передається, тому довгі завантаження під час активного запису можуть побачити зміни кільцевого журналу. Синхронізація часу та reboot/bootloader-команди ще не реалізовані. RTS/DTR і фізичний обмін усе ще потребують перевірки на платі.
 
 ### Налаштування
 

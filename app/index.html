@@ -12,10 +12,11 @@
     <section class="toolbar">
       <nav class="tabs" aria-label="Pages">
         <button class="tab active" id="overview-tab" type="button" aria-selected="true">Overview</button>
-        <button class="tab" id="debug-tab" type="button" aria-selected="false">Debug</button>
-        <button class="tab" id="settings-tab" type="button" aria-selected="false">Settings</button>
         <button class="tab" id="logs-tab" type="button" aria-selected="false">Logs</button>
+        <button class="tab" id="settings-tab" type="button" aria-selected="false">Settings</button>
+        <button class="tab" id="debug-tab" type="button" aria-selected="false">Debug</button>
         <button class="tab" id="firmware-tab" type="button" aria-selected="false">Firmware</button>
+        <button class="tab" id="instructions-tab" type="button" aria-selected="false">Instructions</button>
       </nav>
       <div id="connection" class="connection" data-state="disconnected">
         <span class="connection-dot"></span><span id="connection-label">Disconnected</span>
@@ -31,38 +32,63 @@
 
     <section id="overview-page" class="page">
       <section class="device-header" aria-label="Device header">
-        <div class="header-reading"><span>TIME</span><strong id="local-time">--:--</strong></div>
         <div class="header-reading"><span>SOLAR</span><strong id="solar-percent">—%</strong></div>
         <div class="header-reading"><span>BATTERY</span><strong id="battery-percent">—%</strong></div>
+      </section>
+      <section class="device-clock" aria-label="Device time">
+        <div><span>DATE</span><strong id="device-date">—</strong></div>
+        <div><span>TIME</span><strong id="device-time">—</strong></div>
+        <div><span>UPTIME</span><strong id="overview-uptime">—</strong></div>
       </section>
       <section class="metrics" aria-label="Live readings">
         <article class="metric metric-primary">
           <div class="metric-label" id="rate-label">RATE · CALCULATED</div>
-          <div class="metric-value"><span id="rate-dose">—</span><small id="rate-unit">µSv/h</small></div>
-          <p class="metric-foot" id="rate-foot"><span id="rate">—</span> CPM</p>
+          <div class="metric-value"><span id="rate-dose">—</span><small id="rate-unit">CPM</small></div>
+          <p class="metric-foot" id="rate-foot" hidden><span id="rate">—</span> CPM</p>
         </article>
         <article class="metric">
           <div class="metric-label">DOSE TODAY</div>
-          <div class="metric-value"><span id="dose">—</span><small id="dose-unit">µSv</small></div>
-          <p class="metric-foot" id="dose-foot"><span id="count">—</span> counts</p>
+          <div class="metric-value"><span id="dose">—</span><small id="dose-unit">CNT</small></div>
+          <p class="metric-foot" id="dose-foot" hidden><span id="count">—</span> CNT</p>
         </article>
       </section>
       <section class="chart-panel" aria-label="Recent rate history">
-        <canvas id="rate-chart" aria-label="Rate over the latest 60 readings"></canvas>
+        <canvas id="rate-chart" aria-label="Rate over the latest 3 minutes"></canvas>
       </section>
     </section>
 
     <section id="debug-page" class="page" hidden>
       <section class="details-panel">
-        <div class="panel-heading"><h2>Debug</h2><span id="last-update">No data</span></div>
-        <div class="detail-grid">
-          <div class="detail"><span>Battery ADC</span><strong id="battery">—</strong></div>
-          <div class="detail"><span>Solar ADC</span><strong id="solar">—</strong></div>
-          <div class="detail"><span>USB ADC</span><strong id="usb-raw">—</strong></div>
-          <div class="detail"><span>High voltage</span><strong id="hv-state">—</strong></div>
-          <div class="detail"><span>USB power</span><strong id="usb-state">—</strong></div>
-          <div class="detail"><span>Protocol</span><strong id="device-info">—</strong></div>
-          <div class="detail"><span>Uptime</span><strong id="uptime">—</strong></div>
+        <div class="panel-heading"><h2 id="debug-heading">DEBUG</h2></div>
+        <nav id="debug-subtabs" class="log-tabs" aria-label="Debug pages">
+          <button class="log-tab active" type="button" data-debug-page="main">DEBUG</button>
+          <button class="log-tab" type="button" data-debug-page="memory">DEBUG MEM</button>
+          <button class="log-tab" type="button" data-debug-page="logs">DEBUG LOGS</button>
+          <button class="log-tab" type="button" data-debug-page="voltage">DEBUG VOLT</button>
+        </nav>
+        <div class="debug-subpage detail-grid" data-debug-panel="main">
+          <div class="detail"><span>UPTIME</span><strong id="uptime">—</strong></div>
+          <div class="detail"><span>CNT</span><strong id="debug-count">—</strong></div>
+          <div class="detail"><span>RTC</span><strong id="debug-rtc">—</strong></div>
+          <div class="detail"><span>CLOCK</span><strong id="debug-clock">—</strong></div>
+        </div>
+        <div class="debug-subpage detail-grid" data-debug-panel="memory" hidden>
+          <div class="detail"><span>FLASH</span><strong id="memory-flash">64 KB</strong></div>
+          <div class="detail"><span>RAM</span><strong id="memory-ram">8 KB</strong></div>
+          <div class="detail"><span>EEPROM</span><strong id="memory-eeprom">2 KB</strong></div>
+          <div class="detail"><span>SPI</span><strong id="memory-spi">—</strong></div>
+          <div class="detail"><span>JEDEC</span><strong id="memory-jedec">—</strong></div>
+        </div>
+        <div class="debug-subpage detail-grid" data-debug-panel="logs" hidden>
+          <div class="detail"><span>MIN</span><strong id="debug-minutes">—</strong></div>
+          <div class="detail"><span>HOUR</span><strong id="debug-hours">—</strong></div>
+          <div class="detail"><span>DAY</span><strong id="debug-days">—</strong></div>
+          <div class="detail"><span>ALERTS</span><strong id="debug-alerts">—</strong></div>
+        </div>
+        <div class="debug-subpage detail-grid" data-debug-panel="voltage" hidden>
+          <div class="detail"><span>BATT</span><strong id="debug-battery">—</strong></div>
+          <div class="detail"><span>SOL</span><strong id="debug-solar">—</strong></div>
+          <div class="detail"><span>USB</span><strong id="debug-usb">—</strong></div>
         </div>
       </section>
     </section>
@@ -73,14 +99,26 @@
       <p class="settings-note">Rate Row 2 and device actions are not remotely editable yet.</p>
     </section>
 
-    <section id="logs-page" class="page placeholder-page" hidden>
-      <h2>Logs</h2>
-      <p>Log transfer is not available yet.</p>
+    <section id="logs-page" class="page logs-panel" hidden>
+      <div class="panel-heading"><h2>Logs</h2><span id="logs-status">Connect to read logs.</span></div>
+      <nav id="log-tabs" class="log-tabs" aria-label="Log types"></nav>
+      <div class="log-date-tools">
+        <label for="log-date">Load near date</label>
+        <input id="log-date" type="date" disabled>
+        <button id="load-log-date" class="button button-quiet" type="button" disabled>Load date</button>
+      </div>
+      <div id="log-content" class="log-content"></div>
+      <div class="log-actions"><button id="load-more-logs" class="button button-quiet" type="button" hidden>Load more</button></div>
     </section>
 
     <section id="firmware-page" class="page placeholder-page" hidden>
       <h2>Firmware</h2>
       <p>Firmware update is not available yet.</p>
+    </section>
+
+    <section id="instructions-page" class="page placeholder-page" hidden>
+      <h2>Instructions</h2>
+      <p>Device instructions will be available here.</p>
     </section>
 
     <footer>Protocol V1</footer>

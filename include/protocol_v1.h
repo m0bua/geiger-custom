@@ -15,13 +15,16 @@ typedef struct {
     uint16_t solar_raw;
     uint16_t usb_raw;
     uint16_t flags;
+    uint32_t count_total;
 } protocol_v1_status_t;
 
 enum {
     PROTOCOL_V1_OP_HELLO = 1u,
     PROTOCOL_V1_OP_GET_STATUS = 2u,
     PROTOCOL_V1_OP_GET_SETTINGS = 3u,
-    PROTOCOL_V1_OP_SET_SETTING = 4u
+    PROTOCOL_V1_OP_SET_SETTING = 4u,
+    PROTOCOL_V1_OP_GET_LOG_INFO = 5u,
+    PROTOCOL_V1_OP_GET_LOG_PAGE = 6u
 };
 
 void protocol_v1_transport_init(void);
