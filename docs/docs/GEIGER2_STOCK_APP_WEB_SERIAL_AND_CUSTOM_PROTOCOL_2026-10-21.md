@@ -310,13 +310,17 @@ MCU не має виділяти RAM за неперевіреною length: л�
 
 ### Реалізований початковий зріз у кастомній прошивці
 
-Firmware має USART1 на PA9/PA10, 115200 8N1, приймання через RX interrupt і обмежену RAM-чергу. Реалізовано COBS + CRC-16/CCITT-FALSE та запити `HELLO` і `GET_STATUS`; максимальний payload першої версії зараз **64 байти**. Пошкоджені кадри відкидаються без відповіді. Текстових повідомлень у serial stream немає.
+Firmware має USART1 на PA9/PA10, 115200 8N1, приймання через RX interrupt і обмежену RAM-чергу. Реалізовано COBS + CRC-16/CCITT-FALSE та запити `HELLO`, `GET_STATUS`, `GET_SETTINGS` і `SET_SETTING`; максимальний payload першої версії зараз **64 байти**. Пошкоджені кадри відкидаються без відповіді. Текстових повідомлень у serial stream немає.
 
 `HELLO` response payload (10 байтів): `status:u8 | model_id:u16 | protocol_version:u8 | max_payload:u16 | capabilities:u32`. Наразі `model_id=1` (Geiger-2), `protocol_version=1`, `max_payload=64`, bit 0 capabilities означає підтримку `GET_STATUS`.
 
 `GET_STATUS` response payload (25 байтів): `status:u8 | uptime_seconds:u32 | count_today:u32 | rate_cpm:u32 | dose_nsv:u32 | battery_raw:u16 | solar_raw:u16 | usb_raw:u16 | flags:u16`. `dose_nsv` — накопичена за поточну добу доза в nSv; `flags` bit 0 — HV увімкнено, bit 1 — USB визначено як підключений. Усі багатобайтові значення little-endian. Response має `kind=2` і повторює `request_id` та `opcode` запиту. Status `0` — OK, `1` — невідома/непідтримана операція.
 
-Налаштування, логічні snapshot/read, синхронізація часу та reboot/bootloader-команди ще не реалізовані. Поведінку RTS/DTR і роботу на фізичному пристрої треба перевірити окремо.
+Capability bits: bit 0 — `GET_STATUS`, bit 1 — `GET_SETTINGS`, bit 2 — `SET_SETTING`.
+
+`GET_SETTINGS` request має порожній payload; response: `status:u8 | setting_count:u8 | setting_values[setting_count]`, де індекси значень відповідають стабільним ID налаштувань у `board_stm32l051.c`. ID: `0 LED, 1 CLICKS, 2 SCREEN ALARM, 3 LIGHT ALARM, 4 SOUND ALARM, 5 LED BRIGHT, 6 SCREEN BRIGHT, 7 SCREEN TIMER, 8 LEAD ZERO, 9 UNIT, 10 RATE PREFIX, 11 DOSE PREFIX, 12 RATE ROW 2, 13 USE-SPI, 14 RESET, 15 HV, 16 DOSE ALARM, 17 ALARM STOP, 18 POWER OFF, 19 REBOOT, 20 TONE`. `SET_SETTING` request: `setting_id:u8 | value_index:u8`; response містить лише status. Непідтримуване значення повертає status `2`. UI/назви/опції живуть у `app/`; `RESET`, `POWER OFF`, `REBOOT` і `RATE ROW 2` не можна записати віддалено. Під час локального редагування на приладі віддалений запис відхиляється.
+
+Логи, snapshot/read, синхронізація часу та reboot/bootloader-команди ще не реалізовані. RTS/DTR і фізичний обмін усе ще потребують перевірки на платі.
 
 ### Налаштування
 

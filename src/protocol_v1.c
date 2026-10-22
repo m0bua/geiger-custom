@@ -1,4 +1,5 @@
 #include "protocol_v1.h"
+#include "board.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -29,7 +30,8 @@
 
 enum {
     PROTOCOL_STATUS_OK = 0u,
-    PROTOCOL_STATUS_UNKNOWN_OPCODE = 1u
+    PROTOCOL_STATUS_UNKNOWN_OPCODE = 1u,
+    PROTOCOL_STATUS_INVALID_VALUE = 2u
 };
 
 static volatile uint8_t rx_ring[RX_RING_SIZE];
@@ -181,7 +183,8 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         write_u16(&response[1], 1u);
         response[3] = PROTOCOL_V1_VERSION;
         write_u16(&response[4], PROTOCOL_V1_MAX_PAYLOAD);
-        write_u32(&response[6], 1u << 0u); /* GET_STATUS */
+        write_u32(&response[6], (1u << 0u) | (1u << 1u) |
+            (1u << 2u)); /* GET_STATUS, GET_SETTINGS, SET_SETTING */
         response_length = 10u;
     } else if (opcode == PROTOCOL_V1_OP_GET_STATUS && payload_length == 0u) {
         /* status, uptime, today's CNT, CPM, dose in nSv, ADC raw, flags */
@@ -194,6 +197,22 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         write_u16(&response[21], current_status.usb_raw);
         write_u16(&response[23], current_status.flags);
         response_length = 25u;
+    } else if (opcode == PROTOCOL_V1_OP_GET_SETTINGS &&
+               payload_length == 0u) {
+        const uint8_t count = board_display_settings_remote_count();
+        response[1] = count;
+        if (count > PROTOCOL_V1_MAX_PAYLOAD - 2u ||
+            !board_display_settings_remote_read(&response[2], count)) {
+            response[0] = PROTOCOL_STATUS_INVALID_VALUE;
+            response_length = 1u;
+        } else {
+            response_length = (uint16_t)count + 2u;
+        }
+    } else if (opcode == PROTOCOL_V1_OP_SET_SETTING &&
+               payload_length == 2u) {
+        if (!board_display_setting_remote_write(frame[8], frame[9])) {
+            response[0] = PROTOCOL_STATUS_INVALID_VALUE;
+        }
     } else {
         response[0] = PROTOCOL_STATUS_UNKNOWN_OPCODE;
     }

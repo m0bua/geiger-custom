@@ -13,13 +13,15 @@
       <nav class="tabs" aria-label="Pages">
         <button class="tab active" id="overview-tab" type="button" aria-selected="true">Overview</button>
         <button class="tab" id="debug-tab" type="button" aria-selected="false">Debug</button>
+        <button class="tab" id="settings-tab" type="button" aria-selected="false">Settings</button>
+        <button class="tab" id="logs-tab" type="button" aria-selected="false">Logs</button>
+        <button class="tab" id="firmware-tab" type="button" aria-selected="false">Firmware</button>
       </nav>
       <div id="connection" class="connection" data-state="disconnected">
         <span class="connection-dot"></span><span id="connection-label">Disconnected</span>
       </div>
       <div class="actions">
         <button id="connect-button" class="button button-primary" type="button">Connect</button>
-        <button id="disconnect-button" class="button button-quiet" type="button" disabled>Disconnect</button>
       </div>
     </section>
 
@@ -35,14 +37,14 @@
       </section>
       <section class="metrics" aria-label="Live readings">
         <article class="metric metric-primary">
-          <div class="metric-label">RATE · CALCULATED</div>
-          <div class="metric-value"><span id="rate-dose">—</span><small>µSv/h</small></div>
-          <p class="metric-foot"><span id="rate">—</span> CPM</p>
+          <div class="metric-label" id="rate-label">RATE · CALCULATED</div>
+          <div class="metric-value"><span id="rate-dose">—</span><small id="rate-unit">µSv/h</small></div>
+          <p class="metric-foot" id="rate-foot"><span id="rate">—</span> CPM</p>
         </article>
         <article class="metric">
           <div class="metric-label">DOSE TODAY</div>
-          <div class="metric-value"><span id="dose">—</span><small>µSv</small></div>
-          <p class="metric-foot"><span id="count">—</span> counts</p>
+          <div class="metric-value"><span id="dose">—</span><small id="dose-unit">µSv</small></div>
+          <p class="metric-foot" id="dose-foot"><span id="count">—</span> counts</p>
         </article>
       </section>
       <section class="chart-panel" aria-label="Recent rate history">
@@ -63,6 +65,22 @@
           <div class="detail"><span>Uptime</span><strong id="uptime">—</strong></div>
         </div>
       </section>
+    </section>
+
+    <section id="settings-page" class="page settings-panel" hidden>
+      <div class="panel-heading"><h2>Settings</h2><span id="settings-status">Connect to read settings.</span></div>
+      <div id="settings-list" class="settings-list"></div>
+      <p class="settings-note">Rate Row 2 and device actions are not remotely editable yet.</p>
+    </section>
+
+    <section id="logs-page" class="page placeholder-page" hidden>
+      <h2>Logs</h2>
+      <p>Log transfer is not available yet.</p>
+    </section>
+
+    <section id="firmware-page" class="page placeholder-page" hidden>
+      <h2>Firmware</h2>
+      <p>Firmware update is not available yet.</p>
     </section>
 
     <footer>Protocol V1</footer>

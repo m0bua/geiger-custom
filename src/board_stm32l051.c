@@ -5056,6 +5056,48 @@ static void lcd_settings_apply_current(void)
     }
 }
 
+uint8_t board_display_settings_remote_count(void)
+{
+    return SETTING_COUNT;
+}
+
+bool board_display_settings_remote_read(uint8_t *values, uint8_t capacity)
+{
+    if (values == NULL || capacity < SETTING_COUNT) return false;
+    for (uint8_t i = 0u; i < SETTING_COUNT; ++i) {
+        values[i] = lcd_settings_value_index[i];
+    }
+    return true;
+}
+
+bool board_display_setting_remote_write(uint8_t setting_id, uint8_t value)
+{
+    const uint8_t previous_selected = lcd_settings_selected;
+    const uint8_t previous_edit_value = lcd_settings_edit_value;
+    const bool previous_editing = lcd_settings_editing;
+
+    /* RESET, POWER OFF, REBOOT and RATE ROW 2 are not remote preferences:
+       the first three are actions, while RATE ROW 2 has no persistent slot. */
+    if (lcd_settings_list_active || setting_id >= SETTING_COUNT ||
+        setting_id == SETTING_RESET ||
+        setting_id == SETTING_RATE_ROW_2 ||
+        setting_id == SETTING_POWER_OFF || setting_id == SETTING_REBOOT ||
+        value >= lcd_settings_value_count(setting_id)) {
+        return false;
+    }
+
+    if (lcd_settings_value_index[setting_id] == value) return true;
+
+    lcd_settings_selected = setting_id;
+    lcd_settings_editing = false;
+    lcd_settings_value_index[setting_id] = value;
+    lcd_settings_apply_current();
+    lcd_settings_selected = previous_selected;
+    lcd_settings_edit_value = previous_edit_value;
+    lcd_settings_editing = previous_editing;
+    return true;
+}
+
 static bool settings_reset_all(void)
 {
     static const uint8_t record_magic_offsets[] = {

@@ -19,7 +19,9 @@ typedef struct {
 
 enum {
     PROTOCOL_V1_OP_HELLO = 1u,
-    PROTOCOL_V1_OP_GET_STATUS = 2u
+    PROTOCOL_V1_OP_GET_STATUS = 2u,
+    PROTOCOL_V1_OP_GET_SETTINGS = 3u,
+    PROTOCOL_V1_OP_SET_SETTING = 4u
 };
 
 void protocol_v1_transport_init(void);

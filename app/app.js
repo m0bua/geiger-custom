@@ -3,6 +3,10 @@ const KIND_REQUEST = 1;
 const KIND_RESPONSE = 2;
 const OP_HELLO = 1;
 const OP_GET_STATUS = 2;
+const OP_GET_SETTINGS = 3;
+const OP_SET_SETTING = 4;
+const CAP_GET_SETTINGS = 1 << 1;
+const CAP_SET_SETTING = 1 << 2;
 const MAX_PAYLOAD = 64;
 
 function delay(ms) {
@@ -11,7 +15,6 @@ function delay(ms) {
 
 const elements = {
   connect: document.querySelector('#connect-button'),
-  disconnect: document.querySelector('#disconnect-button'),
   connection: document.querySelector('#connection'),
   connectionLabel: document.querySelector('#connection-label'),
   notice: document.querySelector('#notice'),
@@ -21,12 +24,25 @@ const elements = {
   batteryPercent: document.querySelector('#battery-percent'),
   overviewTab: document.querySelector('#overview-tab'),
   debugTab: document.querySelector('#debug-tab'),
+  settingsTab: document.querySelector('#settings-tab'),
+  logsTab: document.querySelector('#logs-tab'),
+  firmwareTab: document.querySelector('#firmware-tab'),
   overviewPage: document.querySelector('#overview-page'),
   debugPage: document.querySelector('#debug-page'),
+  settingsPage: document.querySelector('#settings-page'),
+  logsPage: document.querySelector('#logs-page'),
+  firmwarePage: document.querySelector('#firmware-page'),
+  settingsStatus: document.querySelector('#settings-status'),
+  settingsList: document.querySelector('#settings-list'),
   rate: document.querySelector('#rate'),
+  rateFoot: document.querySelector('#rate-foot'),
+  rateLabel: document.querySelector('#rate-label'),
   rateDose: document.querySelector('#rate-dose'),
+  rateUnit: document.querySelector('#rate-unit'),
   dose: document.querySelector('#dose'),
+  doseUnit: document.querySelector('#dose-unit'),
   count: document.querySelector('#count'),
+  doseFoot: document.querySelector('#dose-foot'),
   uptime: document.querySelector('#uptime'),
   battery: document.querySelector('#battery'),
   solar: document.querySelector('#solar'),
@@ -259,7 +275,29 @@ class SerialProtocol {
 let serial = null;
 let pollTimer = 0;
 let polling = false;
+let protocolCapabilities = 0;
+let deviceSettings = null;
 const rateHistory = [];
+
+const remoteSettings = [
+  { id: 0, label: 'LED', options: ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED'] },
+  { id: 1, label: 'CLICKS', options: ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED'] },
+  { id: 2, label: 'SCREEN ALARM', options: ['OFF', 'YELLOW', 'RED'] },
+  { id: 3, label: 'LIGHT ALARM', options: ['OFF', 'YELLOW', 'RED'] },
+  { id: 4, label: 'SOUND ALARM', options: ['OFF', 'YELLOW', 'RED'] },
+  { id: 5, label: 'LED BRIGHT', options: ['AUTO', '1%', '3%', '5%', '10%', '25%', '50%', '80%', '100%'] },
+  { id: 6, label: 'SCREEN BRIGHT', options: ['AUTO', '1%', '3%', '5%', '10%', '25%', '50%', '80%', '100%'] },
+  { id: 7, label: 'SCREEN TIMER', options: ['1 s', '5 s', '10 s', '30 s', '60 s', '90 s'] },
+  { id: 8, label: 'LEAD ZERO', options: ['SHOW', 'HIDE'] },
+  { id: 9, label: 'UNIT', options: ['Sv', 'CNT', 'R'] },
+  { id: 10, label: 'RATE PREFIX', options: ['m', 'µ', 'n', 'AUTO'] },
+  { id: 11, label: 'DOSE PREFIX', options: ['m', 'µ', 'n', 'AUTO'] },
+  { id: 13, label: 'USE-SPI', options: ['OFF', 'ON'] },
+  { id: 15, label: 'HV', options: ['ON', 'OFF'] },
+  { id: 16, label: 'DOSE ALARM', options: ['OFF', 'AUTO-Y', 'AUTO-R', '5', '7', '10', '30', '50', '100', '500', '1000'] },
+  { id: 17, label: 'ALARM STOP', options: ['CLEAR', 'BUTTON'] },
+  { id: 20, label: 'TONE', options: ['STOCK', 'CLASSIC', 'MODERN'] },
+];
 
 function updateLocalTime() {
   elements.localTime.textContent = new Intl.DateTimeFormat('en-GB', {
@@ -271,6 +309,30 @@ function percentFromAdc(raw, empty, full) {
   if (raw <= empty) return 0;
   if (raw >= full) return 100;
   return Math.round(((raw - empty) * 100) / (full - empty));
+}
+
+function formatRadiation(valueUsv, prefixSetting, symbol, perHour) {
+  const prefixes = [
+    { name: 'm', factor: 0.001 },
+    { name: 'µ', factor: 1 },
+    { name: 'n', factor: 1000 },
+    { name: 'p', factor: 1000000 },
+  ];
+  let prefix = prefixSetting;
+  if (prefix === 3) {
+    prefix = prefixes.findIndex(({ factor }) => {
+      const scaled = valueUsv * factor;
+      return scaled >= 10 && scaled < 1000;
+    });
+    if (prefix < 0) prefix = prefixes.findIndex(({ factor }) => valueUsv * factor >= 1);
+    if (prefix < 0) prefix = 3;
+  }
+  const selected = prefixes[Math.min(prefix, prefixes.length - 1)];
+  const value = valueUsv * selected.factor;
+  const integerDigits = Math.max(0, Math.floor(Math.log10(Math.abs(value))) + 1);
+  const digits = value === 0 ? 0 : Math.max(0, Math.min(5, 5 - integerDigits));
+  const text = value.toFixed(digits).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  return { value: text, unit: `${selected.name}${symbol}${perHour ? '/h' : ''}` };
 }
 
 function drawRateChart() {
@@ -326,21 +388,25 @@ function showNotice(message, kind = '') {
 }
 
 function selectPage(page) {
-  const debug = page === 'debug';
-  elements.overviewPage.hidden = debug;
-  elements.debugPage.hidden = !debug;
-  elements.overviewTab.classList.toggle('active', !debug);
-  elements.debugTab.classList.toggle('active', debug);
-  elements.overviewTab.setAttribute('aria-selected', String(!debug));
-  elements.debugTab.setAttribute('aria-selected', String(debug));
-  if (!debug) drawRateChart();
+  const pages = ['overview', 'debug', 'settings', 'logs', 'firmware'];
+  for (const name of pages) {
+    const active = name === page;
+    elements[`${name}Page`].hidden = !active;
+    elements[`${name}Tab`].classList.toggle('active', active);
+    elements[`${name}Tab`].setAttribute('aria-selected', String(active));
+  }
+  if (page === 'overview') drawRateChart();
+  if (page === 'settings' && serial && deviceSettings === null) loadSettings();
 }
 
 function setConnection(state, label) {
   elements.connection.dataset.state = state;
   elements.connectionLabel.textContent = label;
-  elements.connect.disabled = state === 'connecting' || state === 'connected';
-  elements.disconnect.disabled = state !== 'connected';
+  elements.connect.disabled = state === 'connecting';
+  elements.connect.textContent = state === 'connected' ? 'Disconnect' :
+    (state === 'connecting' ? 'Connecting…' : 'Connect');
+  elements.connect.classList.toggle('button-primary', state !== 'connected');
+  elements.connect.classList.toggle('button-quiet', state === 'connected');
 }
 
 function formatUptime(seconds) {
@@ -363,7 +429,86 @@ function handleHello(payload) {
   if (protocolVersion !== VERSION || maxPayload < 25 || (capabilities & 1) === 0) {
     throw new ProtocolError(`Unsupported protocol or capabilities (version ${protocolVersion}, payload ${maxPayload}).`);
   }
+  protocolCapabilities = capabilities;
   elements.device.textContent = `Protocol ${protocolVersion}`;
+}
+
+function settingsOptions(setting) {
+  if ((setting.id === 10 || setting.id === 11) && deviceSettings?.[9] === 1) {
+    return ['CPM', 'CPS'];
+  }
+  return setting.options;
+}
+
+function renderSettings() {
+  elements.settingsList.replaceChildren();
+  if (!deviceSettings) return;
+  for (const setting of remoteSettings) {
+    if (setting.id === 11 && deviceSettings[9] === 1) continue;
+    const options = settingsOptions(setting);
+    const row = document.createElement('div');
+    row.className = 'setting-row';
+    const label = document.createElement('label');
+    label.htmlFor = `setting-${setting.id}`;
+    label.textContent = setting.label;
+    const select = document.createElement('select');
+    select.id = `setting-${setting.id}`;
+    select.dataset.settingId = String(setting.id);
+    options.forEach((text, index) => {
+      const option = document.createElement('option');
+      option.value = String(index);
+      option.textContent = text;
+      select.append(option);
+    });
+    select.value = String(deviceSettings[setting.id]);
+    select.addEventListener('change', () => writeSetting(setting.id, Number(select.value), select));
+    row.append(label, select);
+    elements.settingsList.append(row);
+  }
+}
+
+async function loadSettings() {
+  if (!serial) return;
+  if ((protocolCapabilities & (CAP_GET_SETTINGS | CAP_SET_SETTING)) !==
+      (CAP_GET_SETTINGS | CAP_SET_SETTING)) {
+    elements.settingsStatus.textContent = 'Firmware settings transfer is not supported.';
+    return;
+  }
+  elements.settingsStatus.textContent = 'Reading…';
+  try {
+    const payload = await serial.request(OP_GET_SETTINGS);
+    if (payload.length < 2 || payload[0] !== 0 || payload[1] !== 21 || payload.length !== 23) {
+      throw new ProtocolError('Invalid settings response.');
+    }
+    deviceSettings = Array.from(payload.subarray(2));
+    renderSettings();
+    elements.settingsStatus.textContent = 'Loaded from device';
+  } catch (error) {
+    elements.settingsStatus.textContent = error.message;
+  }
+}
+
+async function writeSetting(settingId, value, control) {
+  if (!serial) return;
+  control.disabled = true;
+  elements.settingsStatus.textContent = 'Saving…';
+  try {
+    const result = await serial.request(OP_SET_SETTING, Uint8Array.of(settingId, value));
+    if (result.length !== 1 || result[0] !== 0) throw new ProtocolError('Device rejected this setting.');
+    if (settingId === 9) {
+      rateHistory.length = 0;
+      drawRateChart();
+    }
+    deviceSettings = null;
+    await loadSettings();
+    if (deviceSettings) elements.settingsStatus.textContent = 'Applied on device';
+  } catch (error) {
+    const message = error.message;
+    await loadSettings();
+    elements.settingsStatus.textContent = message;
+  } finally {
+    control.disabled = false;
+  }
 }
 
 function handleStatus(payload) {
@@ -378,14 +523,37 @@ function handleStatus(payload) {
   const usbRaw = view.getUint16(21, true);
   const flags = view.getUint16(23, true);
   const uptime = formatUptime(uptimeSeconds);
-  const rateUsvh = cpm * 0.00666;
+  const unit = deviceSettings?.[9] ?? 0;
+  const ratePrefix = deviceSettings?.[10] ?? 1;
+  const dosePrefix = deviceSettings?.[11] ?? 1;
+  const rateUsvh = cpm * 0.00666 * (unit === 2 ? 100 : 1);
+  const doseUsv = doseNsv / 1000 * (unit === 2 ? 100 : 1);
 
-  elements.rate.textContent = cpm.toLocaleString('en-US');
-  elements.rateDose.textContent = rateUsvh.toFixed(3);
-  elements.dose.textContent = (doseNsv / 1000).toFixed(3);
+  if (unit === 1) {
+    elements.rate.textContent = cpm.toLocaleString('en-US');
+    elements.rateLabel.textContent = 'RATE';
+    elements.rateDose.textContent = cpm.toLocaleString('en-US');
+    elements.rateUnit.textContent = 'CPM';
+    elements.dose.textContent = count.toLocaleString('en-US');
+    elements.doseUnit.textContent = 'CNT';
+    elements.rateFoot.hidden = true;
+    elements.doseFoot.hidden = true;
+  } else {
+    const symbol = unit === 2 ? 'R' : 'Sv';
+    const rate = formatRadiation(rateUsvh, ratePrefix, symbol, true);
+    const dose = formatRadiation(doseUsv, dosePrefix, symbol, false);
+    elements.rateLabel.textContent = 'RATE · CALCULATED';
+    elements.rateDose.textContent = rate.value;
+    elements.rateUnit.textContent = rate.unit;
+    elements.dose.textContent = dose.value;
+    elements.doseUnit.textContent = dose.unit;
+    elements.rate.textContent = cpm.toLocaleString('en-US');
+    elements.rateFoot.hidden = false;
+    elements.doseFoot.hidden = false;
+  }
   elements.count.textContent = count.toLocaleString('en-US');
   elements.uptime.textContent = `${uptime.days}d ${uptime.clock}`;
-  rateHistory.push(rateUsvh);
+  rateHistory.push(unit === 1 ? cpm : rateUsvh);
   if (rateHistory.length > 60) rateHistory.shift();
   drawRateChart();
   elements.battery.textContent = batteryRaw.toLocaleString('en-US');
@@ -441,11 +609,17 @@ async function requestHelloAfterBoot(protocol) {
 
 elements.overviewTab.addEventListener('click', () => selectPage('overview'));
 elements.debugTab.addEventListener('click', () => selectPage('debug'));
+elements.settingsTab.addEventListener('click', () => selectPage('settings'));
+elements.logsTab.addEventListener('click', () => selectPage('logs'));
+elements.firmwareTab.addEventListener('click', () => selectPage('firmware'));
 window.addEventListener('resize', drawRateChart);
 updateLocalTime();
 setInterval(updateLocalTime, 1000);
 
-elements.connect.addEventListener('click', async () => {
+async function connectDevice() {
+  protocolCapabilities = 0;
+  deviceSettings = null;
+  elements.settingsList.replaceChildren();
   setConnection('connecting', 'Connecting…');
   showNotice('Select the device port. The app will wait if opening it restarts the device.', '');
   try {
@@ -453,6 +627,9 @@ elements.connect.addEventListener('click', async () => {
       clearInterval(pollTimer);
       pollTimer = 0;
       serial = null;
+      deviceSettings = null;
+      elements.settingsList.replaceChildren();
+      elements.settingsStatus.textContent = 'Connect to read settings.';
       setConnection('disconnected', 'Connection lost');
       showNotice(error.message, 'error');
     });
@@ -462,25 +639,37 @@ elements.connect.addEventListener('click', async () => {
     const hello = await requestHelloAfterBoot(serial);
     handleHello(hello);
     showNotice('Device connected. Readings update once per second.', 'success');
+    await loadSettings();
     await refreshStatus();
     pollTimer = setInterval(refreshStatus, 1000);
   } catch (error) {
     if (serial) await serial.disconnect();
     serial = null;
+    deviceSettings = null;
+    elements.settingsList.replaceChildren();
+    elements.settingsStatus.textContent = 'Connect to read settings.';
     setConnection('disconnected', 'Disconnected');
     showNotice(error.message || 'Could not connect to the device.', 'error');
   }
-});
+}
 
-elements.disconnect.addEventListener('click', async () => {
+async function disconnectDevice() {
   clearInterval(pollTimer);
   pollTimer = 0;
   if (serial) await serial.disconnect();
   serial = null;
   polling = false;
+  deviceSettings = null;
+  elements.settingsList.replaceChildren();
+  elements.settingsStatus.textContent = 'Connect to read settings.';
   setConnection('disconnected', 'Disconnected');
   elements.device.textContent = '—';
   showNotice('Port closed. Last readings remain visible.', '');
+}
+
+elements.connect.addEventListener('click', () => {
+  if (serial) disconnectDevice();
+  else connectDevice();
 });
 
 if (!('serial' in navigator)) {
