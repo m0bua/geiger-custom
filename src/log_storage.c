@@ -6,18 +6,24 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define EEPROM_LOG_BASE 205u
-#define EEPROM_HOUR_COUNT 72u
-#define EEPROM_HOUR_SIZE 11u
-#define EEPROM_DAY_BASE (EEPROM_LOG_BASE + EEPROM_HOUR_COUNT * EEPROM_HOUR_SIZE)
-#define EEPROM_DAY_COUNT 87u
+#define EEPROM_LOG_REGION_BASE 140u
+#define EEPROM_CUTOFF_SLOT0_BASE 140u
+#define EEPROM_CUTOFF_SLOT1_BASE 181u
+#define EEPROM_CUTOFF_SIZE 24u
+#define EEPROM_CUTOFF_MAGIC 0xC1u
+#define EEPROM_DAY_BASE 205u
+#define EEPROM_DAY_COUNT 100u
 #define EEPROM_DAY_SIZE 12u
-#define EEPROM_CHECKPOINT_BASE 140u
-#define EEPROM_HOUR_CHECKPOINT_SIZE 14u
+/* Previous firmware placed its 87-day ring after a 72-entry hour ring. */
+#define EEPROM_LEGACY_DAY_BASE 997u
+#define EEPROM_LEGACY_DAY_COUNT 87u
+#define EEPROM_DAY_CHECKPOINT_BASE 1806u
+#define EEPROM_DAY_CHECKPOINT_COUNT 8u
 #define EEPROM_DAY_CHECKPOINT_SIZE 17u
-#define EEPROM_DAY_CHECKPOINT_BASE (EEPROM_CHECKPOINT_BASE + \
-    2u * EEPROM_HOUR_CHECKPOINT_SIZE)
-#define EEPROM_DAY_CHECKPOINT_MAGIC 0xD4u
+#define EEPROM_DAY_CHECKPOINT_MAGIC 0xD5u
+#define EEPROM_DAY_CHECKPOINT_LEGACY_MAGIC 0xD4u
+#define EEPROM_DAY_CHECKPOINT_LEGACY_BASE 168u
+#define EEPROM_DAY_CHECKPOINT_PREVIOUS_BASE 164u
 #define EEPROM_DAY_UNKNOWN_KEY UINT16_MAX
 
 #define NOR_SECTOR_SIZE 4096u
@@ -29,6 +35,14 @@
 #define NOR_MINUTE_SECTORS 117u
 #define NOR_ALERT_SECTORS 55u
 #define NOR_CUTOFF_SECTORS 4u
+/* Four formerly-unused cutoff sectors now hold wear-levelled RAM snapshots. */
+#define NOR_LIVE_MINUTE_BASE_SECTOR (NOR_MINUTE_SECTORS + NOR_ALERT_SECTORS)
+#define NOR_LIVE_HOUR_BASE_SECTOR (NOR_LIVE_MINUTE_BASE_SECTOR + 2u)
+#define NOR_LIVE_SECTORS 2u
+#define NOR_LIVE_RECORD_SIZE 22u
+#define NOR_LIVE_RECORDS_PER_SECTOR ((NOR_SECTOR_SIZE - \
+    NOR_SECTOR_HEADER_SIZE) / NOR_LIVE_RECORD_SIZE)
+/* Keep the hour ring at its existing sector offset for log compatibility. */
 #define NOR_HOUR_BASE_SECTOR (NOR_MINUTE_SECTORS + NOR_ALERT_SECTORS + \
                               NOR_CUTOFF_SECTORS)
 #define NOR_HOUR_SECTORS (256u - NOR_HOUR_BASE_SECTOR)
@@ -39,8 +53,9 @@
 
 #define NOR_RING_MINUTE 1u
 #define NOR_RING_HOUR 2u
-#define NOR_RING_CUTOFF 3u
 #define NOR_RING_ALERT 4u
+#define NOR_RING_LIVE_MINUTE 5u
+#define NOR_RING_LIVE_HOUR 6u
 #define NOR_ALERT_RECORDS_PER_SECTOR ((NOR_SECTOR_SIZE - \
     NOR_SECTOR_HEADER_SIZE) / NOR_ALERT_RECORD_SIZE)
 
@@ -53,20 +68,24 @@ typedef struct {
     uint16_t active_sector;
     uint16_t next_slot;
     uint32_t sector_sequence;
+    uint32_t total_records;
     uint16_t record_sequence;
     bool initialized;
 } nor_ring_t;
 
 static bool storage_ready;
 static bool storage_spi;
+static bool storage_spi_requested;
+static uint32_t storage_spi_retry_at;
 static nor_ring_t minute_ring;
 static nor_ring_t hour_ring;
-static nor_ring_t cutoff_ring;
 static nor_ring_t alert_ring;
+static nor_ring_t minute_live_ring;
+static nor_ring_t hour_live_ring;
 static uint16_t minute_sequence;
-static uint16_t hour_sequence;
 static uint16_t day_sequence;
-static uint8_t hour_checkpoint_generation;
+static uint16_t cutoff_sequence;
+static uint16_t eeprom_day_count;
 static uint8_t day_checkpoint_generation;
 static uint32_t minute_dose;
 static uint32_t minute_min_cpm;
@@ -80,6 +99,7 @@ static uint32_t day_dose;
 static uint32_t day_min_cpm;
 static uint32_t day_max_cpm;
 static uint16_t day_minutes;
+static bool day_checkpoint_dirty;
 static uint16_t day_calendar_key = EEPROM_DAY_UNKNOWN_KEY;
 static bool day_calendar_key_valid;
 static uint16_t alert_run_id;
@@ -90,6 +110,8 @@ static uint32_t alert_max_cpm;
 static uint32_t alert_seconds_since_save;
 static uint8_t alert_severity;
 static bool alert_active;
+static uint32_t last_live_minute_save;
+static uint32_t last_live_day_save;
 
 static uint8_t crc8(const uint8_t *data, uint16_t length)
 {
@@ -197,8 +219,10 @@ static void encode_alert(uint8_t record[NOR_ALERT_RECORD_SIZE],
     record[16] = (uint8_t)max_cpm;
     record[17] = (uint8_t)(max_cpm >> 8u);
     record[18] = (uint8_t)((max_cpm >> 16u) & 0x03u);
-    record[19] = (uint8_t)((severity & 0x03u) |
-        (active ? 0x04u : 0u) | (interrupted ? 0x08u : 0u));
+    /* Severity is derived later from max_cpm; do not duplicate it on media. */
+    (void)severity;
+    record[19] = (uint8_t)((active ? 0x04u : 0u) |
+        (interrupted ? 0x08u : 0u));
     record[20] = crc8(record, 20u);
     record[21] = 0xA2u;
 }
@@ -209,6 +233,37 @@ static bool decode_alert(const uint8_t record[NOR_ALERT_RECORD_SIZE],
     if (record[21] != 0xA2u || record[20] != crc8(record, 20u)) {
         return false;
     }
+    *sequence = (uint16_t)record[0] | ((uint16_t)record[1] << 8u);
+    return true;
+}
+
+static void encode_live(uint8_t record[NOR_LIVE_RECORD_SIZE],
+                        uint16_t sequence, uint32_t period_key,
+                        uint32_t dose, uint32_t minimum, uint32_t maximum,
+                        uint8_t progress, uint8_t type)
+{
+    for (uint8_t i = 0u; i < NOR_LIVE_RECORD_SIZE; ++i) record[i] = 0u;
+    record[0] = (uint8_t)sequence;
+    record[1] = (uint8_t)(sequence >> 8u);
+    for (uint8_t i = 0u; i < 4u; ++i) {
+        record[2u + i] = (uint8_t)(period_key >> (i * 8u));
+        record[6u + i] = (uint8_t)(dose >> (i * 8u));
+    }
+    for (uint8_t i = 0u; i < 3u; ++i) {
+        record[10u + i] = (uint8_t)(minimum >> (i * 8u));
+        record[13u + i] = (uint8_t)(maximum >> (i * 8u));
+    }
+    record[16] = progress;
+    record[17] = type;
+    record[20] = crc8(record, 20u);
+    record[21] = 0xA4u;
+}
+
+static bool decode_live(const uint8_t record[NOR_LIVE_RECORD_SIZE],
+                        uint8_t type, uint16_t *sequence)
+{
+    if (record[21] != 0xA4u || record[17] != type ||
+        record[20] != crc8(record, 20u)) return false;
     *sequence = (uint16_t)record[0] | ((uint16_t)record[1] << 8u);
     return true;
 }
@@ -355,21 +410,62 @@ static bool alert_find_latest(uint8_t latest[NOR_ALERT_RECORD_SIZE])
     return found;
 }
 
+static bool live_find_latest(const nor_ring_t *ring, uint8_t type,
+                             uint8_t latest[NOR_LIVE_RECORD_SIZE])
+{
+    uint8_t header[NOR_SECTOR_HEADER_SIZE];
+    uint8_t candidate[NOR_LIVE_RECORD_SIZE];
+    uint16_t best_sequence = 0u;
+    bool found = false;
+
+    if (!ring->initialized) return false;
+    for (uint8_t back = 0u; back < 2u; ++back) {
+        const uint16_t sector = (uint16_t)((ring->active_sector +
+            ring->sector_count - back) % ring->sector_count);
+        const uint32_t base = (uint32_t)(ring->base_sector + sector) *
+            NOR_SECTOR_SIZE;
+        uint32_t sector_sequence;
+        const uint16_t top_slot = back == 0u ? ring->next_slot :
+            ring->records_per_sector;
+        if (!spi_nor_read(base, header, sizeof(header)) ||
+            !parse_sector_header(header, ring->type, &sector_sequence)) {
+            continue;
+        }
+        (void)sector_sequence;
+        for (uint16_t slot = 0u; slot < top_slot; ++slot) {
+            uint16_t sequence;
+            const uint32_t address = base + NOR_SECTOR_HEADER_SIZE +
+                (uint32_t)slot * NOR_LIVE_RECORD_SIZE;
+            if (!spi_nor_read(address, candidate, sizeof(candidate))) {
+                return false;
+            }
+            if (!decode_live(candidate, type, &sequence)) continue;
+            if (!found || (int16_t)(sequence - best_sequence) > 0) {
+                found = true;
+                best_sequence = sequence;
+                for (uint8_t i = 0u; i < NOR_LIVE_RECORD_SIZE; ++i) {
+                    latest[i] = candidate[i];
+                }
+            }
+        }
+    }
+    return found;
+}
+
 static bool ring_record_valid(const nor_ring_t *ring, const uint8_t *record,
                               uint16_t *sequence)
 {
     if (ring->type == NOR_RING_MINUTE) {
         return decode_minute(record, sequence);
     }
-    if (ring->type == NOR_RING_CUTOFF) {
-        if (record[24] != 0xC1u || record[23] != crc8(record, 23u)) {
-            return false;
-        }
-        *sequence = (uint16_t)record[0] | ((uint16_t)record[1] << 8u);
-        return true;
-    }
     if (ring->type == NOR_RING_ALERT) {
         return decode_alert(record, sequence);
+    }
+    if (ring->type == NOR_RING_LIVE_MINUTE) {
+        return decode_live(record, NOR_RING_LIVE_MINUTE, sequence);
+    }
+    if (ring->type == NOR_RING_LIVE_HOUR) {
+        return decode_live(record, NOR_RING_LIVE_HOUR, sequence);
     }
     return decode_hour(record, sequence);
 }
@@ -398,7 +494,9 @@ static bool ring_init(nor_ring_t *ring)
 {
     uint8_t header[NOR_SECTOR_HEADER_SIZE];
     uint32_t best_sequence = 0u;
+    uint32_t oldest_sequence = 0u;
     uint16_t best_sector = 0u;
+    uint16_t valid_sectors = 0u;
     bool found = false;
 
     for (uint16_t sector = 0u; sector < ring->sector_count; ++sector) {
@@ -406,15 +504,27 @@ static bool ring_init(nor_ring_t *ring)
             NOR_SECTOR_SIZE;
         uint32_t sequence;
         if (spi_nor_read(address, header, sizeof(header)) &&
-            parse_sector_header(header, ring->type, &sequence) &&
-            (!found || (int32_t)(sequence - best_sequence) > 0)) {
-            found = true;
-            best_sequence = sequence;
-            best_sector = sector;
+            parse_sector_header(header, ring->type, &sequence)) {
+            if (!found) {
+                best_sequence = sequence;
+                oldest_sequence = sequence;
+                best_sector = sector;
+                found = true;
+            } else {
+                if ((int32_t)(sequence - best_sequence) > 0) {
+                    best_sequence = sequence;
+                    best_sector = sector;
+                }
+                if ((int32_t)(oldest_sequence - sequence) > 0) {
+                    oldest_sequence = sequence;
+                }
+            }
+            ++valid_sectors;
         }
     }
     if (!found) {
         ring->initialized = false;
+        ring->total_records = 0u;
         return true;
     }
 
@@ -438,6 +548,19 @@ static bool ring_init(nor_ring_t *ring)
         ring->record_sequence = (uint16_t)(sequence + 1u);
         ++ring->next_slot;
     }
+    {
+        uint32_t occupied = best_sequence - oldest_sequence + 1u;
+        const uint32_t sector_capacity = ring->sector_count;
+        const uint32_t record_capacity = sector_capacity *
+            ring->records_per_sector;
+        if (occupied > valid_sectors) occupied = valid_sectors;
+        if (occupied > sector_capacity) occupied = sector_capacity;
+        ring->total_records = occupied == 0u ? 0u :
+            (occupied - 1u) * ring->records_per_sector + ring->next_slot;
+        if (ring->total_records > record_capacity) {
+            ring->total_records = record_capacity;
+        }
+    }
     return true;
 }
 
@@ -458,6 +581,10 @@ static bool ring_append(nor_ring_t *ring, const uint8_t *record)
     if (!nor_program_bytes(address, record, ring->record_size)) return false;
     ++ring->next_slot;
     ring->record_sequence = (uint16_t)(ring->record_sequence + 1u);
+    if (ring->total_records <
+        (uint32_t)ring->sector_count * ring->records_per_sector) {
+        ++ring->total_records;
+    }
     return true;
 }
 
@@ -465,49 +592,60 @@ static void eeprom_find_sequences(void)
 {
     uint8_t record[EEPROM_DAY_SIZE];
     uint16_t candidate;
-    bool have_hour = false;
     bool have_day = false;
-    uint16_t newest_hour = 0u;
     uint16_t newest_day = 0u;
 
-    for (uint16_t slot = 0u; slot < EEPROM_HOUR_COUNT; ++slot) {
-        if (eeprom_read_record((uint16_t)(EEPROM_LOG_BASE +
-                slot * EEPROM_HOUR_SIZE), record, EEPROM_HOUR_SIZE) &&
-            decode_hour(record, &candidate) &&
-            (!have_hour || sequence_newer(candidate, newest_hour))) {
-            have_hour = true;
-            newest_hour = candidate;
-        }
-    }
+    eeprom_day_count = 0u;
+
     for (uint16_t slot = 0u; slot < EEPROM_DAY_COUNT; ++slot) {
         if (eeprom_read_record((uint16_t)(EEPROM_DAY_BASE +
                 slot * EEPROM_DAY_SIZE), record, EEPROM_DAY_SIZE) &&
+            decode_day(record, &candidate)) {
+            if (!have_day || sequence_newer(candidate, newest_day)) {
+                have_day = true;
+                newest_day = candidate;
+            }
+        }
+    }
+    /* Preserve old daily entries outside the new 100-record window. The
+     * overlapping legacy addresses are already covered by the new-ring scan. */
+    for (uint16_t slot = 0u; slot < EEPROM_LEGACY_DAY_COUNT; ++slot) {
+        const uint16_t address = (uint16_t)(EEPROM_LEGACY_DAY_BASE +
+            slot * EEPROM_DAY_SIZE);
+        if (address >= EEPROM_DAY_BASE +
+                EEPROM_DAY_COUNT * EEPROM_DAY_SIZE &&
+            eeprom_read_record(address, record, EEPROM_DAY_SIZE) &&
             decode_day(record, &candidate) &&
             (!have_day || sequence_newer(candidate, newest_day))) {
             have_day = true;
             newest_day = candidate;
         }
     }
-    hour_sequence = have_hour ? (uint16_t)(newest_hour + 1u) : 0u;
-    day_sequence = have_day ? (uint16_t)(newest_day + 1u) : 0u;
-}
 
-static bool eeprom_write_hour(uint32_t dose, uint32_t minimum,
-                              uint32_t maximum, bool complete)
-{
-    uint8_t record[EEPROM_HOUR_SIZE] = {0u};
-    const uint16_t slot = (uint16_t)(hour_sequence % EEPROM_HOUR_COUNT);
-    put_bits(record, 0u, hour_sequence, 16u);
-    put_bits(record, 16u, dose > 0xFFFFFFu ? 0xFFFFFFu : dose, 24u);
-    put_bits(record, 40u, minimum > 0x3FFFFu ? 0x3FFFFu : minimum, 18u);
-    put_bits(record, 58u, maximum > 0x3FFFFu ? 0x3FFFFu : maximum, 18u);
-    record[9] = (uint8_t)((record[9] & 0x0Fu) |
-        (complete ? 0xB0u : 0xA0u));
-    record[10] = crc8(record, 10u);
-    if (!eeprom_write_record((uint16_t)(EEPROM_LOG_BASE +
-            slot * EEPROM_HOUR_SIZE), record, EEPROM_HOUR_SIZE)) return false;
-    if (complete) ++hour_sequence;
-    return true;
+    if (have_day) {
+        for (uint16_t slot = 0u; slot < EEPROM_DAY_COUNT; ++slot) {
+            if (eeprom_read_record((uint16_t)(EEPROM_DAY_BASE +
+                    slot * EEPROM_DAY_SIZE), record, EEPROM_DAY_SIZE) &&
+                decode_day(record, &candidate) &&
+                (uint16_t)(newest_day - candidate) < EEPROM_DAY_COUNT &&
+                eeprom_day_count < EEPROM_DAY_COUNT) {
+                ++eeprom_day_count;
+            }
+        }
+        for (uint16_t slot = 0u; slot < EEPROM_LEGACY_DAY_COUNT; ++slot) {
+            const uint16_t address = (uint16_t)(EEPROM_LEGACY_DAY_BASE +
+                slot * EEPROM_DAY_SIZE);
+            if (address >= EEPROM_DAY_BASE +
+                    EEPROM_DAY_COUNT * EEPROM_DAY_SIZE &&
+                eeprom_read_record(address, record, EEPROM_DAY_SIZE) &&
+                decode_day(record, &candidate) &&
+                (uint16_t)(newest_day - candidate) < EEPROM_DAY_COUNT &&
+                eeprom_day_count < EEPROM_DAY_COUNT) {
+                ++eeprom_day_count;
+            }
+        }
+    }
+    day_sequence = have_day ? (uint16_t)(newest_day + 1u) : 0u;
 }
 
 static bool eeprom_write_day(uint32_t dose, uint32_t minimum,
@@ -518,40 +656,24 @@ static bool eeprom_write_day(uint32_t dose, uint32_t minimum,
     encode_day(record, day_sequence, dose, minimum, maximum, complete);
     if (!eeprom_write_record((uint16_t)(EEPROM_DAY_BASE +
             slot * EEPROM_DAY_SIZE), record, EEPROM_DAY_SIZE)) return false;
+    if (eeprom_day_count < EEPROM_DAY_COUNT) ++eeprom_day_count;
     if (complete) ++day_sequence;
     return true;
 }
 
-static bool hour_checkpoint_read(uint8_t slot, uint16_t *sequence,
-                                 uint8_t *generation, uint32_t *dose,
-                                 uint32_t *minimum, uint32_t *maximum)
-{
-    uint8_t record[EEPROM_HOUR_CHECKPOINT_SIZE];
-    const uint16_t address = (uint16_t)(EEPROM_CHECKPOINT_BASE +
-        slot * EEPROM_HOUR_CHECKPOINT_SIZE);
-    if (!eeprom_read_record(address, record, sizeof(record)) ||
-        record[12] != 0xC3u || record[13] != crc8(record, 13u)) return false;
-    *sequence = (uint16_t)record[0] | ((uint16_t)record[1] << 8u);
-    *generation = record[2];
-    *dose = (uint32_t)record[3] | ((uint32_t)record[4] << 8u) |
-        ((uint32_t)record[5] << 16u);
-    *minimum = (uint32_t)record[6] | ((uint32_t)record[7] << 8u) |
-        ((uint32_t)record[8] << 16u);
-    *maximum = (uint32_t)record[9] | ((uint32_t)record[10] << 8u) |
-        ((uint32_t)record[11] << 16u);
-    return true;
-}
-
-static bool day_checkpoint_read(uint8_t slot, uint16_t *sequence,
+static bool day_checkpoint_read(uint16_t address, uint16_t *sequence,
                                 uint8_t *generation, uint16_t *day_key,
                                 uint32_t *dose, uint32_t *minimum,
                                 uint32_t *maximum)
 {
     uint8_t record[EEPROM_DAY_CHECKPOINT_SIZE];
-    const uint16_t address = (uint16_t)(EEPROM_DAY_CHECKPOINT_BASE +
-        slot * EEPROM_DAY_CHECKPOINT_SIZE);
+    const uint8_t expected_magic = (address == EEPROM_DAY_CHECKPOINT_PREVIOUS_BASE ||
+        (address >= EEPROM_DAY_CHECKPOINT_BASE &&
+         address < EEPROM_DAY_CHECKPOINT_BASE +
+            EEPROM_DAY_CHECKPOINT_COUNT * EEPROM_DAY_CHECKPOINT_SIZE)) ?
+        EEPROM_DAY_CHECKPOINT_MAGIC : EEPROM_DAY_CHECKPOINT_LEGACY_MAGIC;
     if (!eeprom_read_record(address, record, sizeof(record)) ||
-        record[16] != EEPROM_DAY_CHECKPOINT_MAGIC ||
+        record[16] != expected_magic ||
         record[15] != crc8(record, 15u)) return false;
     *sequence = (uint16_t)record[0] | ((uint16_t)record[1] << 8u);
     *generation = record[2];
@@ -565,35 +687,14 @@ static bool day_checkpoint_read(uint8_t slot, uint16_t *sequence,
     return true;
 }
 
-static bool hour_checkpoint_write(uint16_t sequence, uint8_t generation,
-                                  uint32_t dose, uint32_t minimum,
-                                  uint32_t maximum)
-{
-    uint8_t record[EEPROM_HOUR_CHECKPOINT_SIZE];
-    const uint8_t slot = generation & 1u;
-    const uint16_t address = (uint16_t)(EEPROM_CHECKPOINT_BASE +
-        slot * EEPROM_HOUR_CHECKPOINT_SIZE);
-    record[0] = (uint8_t)sequence;
-    record[1] = (uint8_t)(sequence >> 8u);
-    record[2] = generation;
-    for (uint8_t i = 0u; i < 3u; ++i) {
-        record[3u + i] = (uint8_t)(dose >> (i * 8u));
-        record[6u + i] = (uint8_t)(minimum >> (i * 8u));
-        record[9u + i] = (uint8_t)(maximum >> (i * 8u));
-    }
-    record[12] = 0xC3u;
-    record[13] = crc8(record, 13u);
-    return eeprom_write_record(address, record, sizeof(record));
-}
-
 static bool day_checkpoint_write(uint16_t sequence, uint8_t generation,
                                  uint16_t day_key, uint32_t dose,
                                  uint32_t minimum, uint32_t maximum)
 {
     uint8_t record[EEPROM_DAY_CHECKPOINT_SIZE];
-    const uint8_t slot = generation & 1u;
     const uint16_t address = (uint16_t)(EEPROM_DAY_CHECKPOINT_BASE +
-        slot * EEPROM_DAY_CHECKPOINT_SIZE);
+        (uint16_t)(generation % EEPROM_DAY_CHECKPOINT_COUNT) *
+            EEPROM_DAY_CHECKPOINT_SIZE);
     record[0] = (uint8_t)sequence;
     record[1] = (uint8_t)(sequence >> 8u);
     record[2] = generation;
@@ -613,66 +714,140 @@ static bool day_checkpoint_write(uint16_t sequence, uint8_t generation,
 
 static void eeprom_recover_checkpoints(void)
 {
-    uint16_t seq0, seq1;
-    uint8_t generation0, generation1;
-    uint16_t day_key0, day_key1;
-    uint32_t dose0, dose1, min0, min1, max0, max1;
-    const bool hour0 = hour_checkpoint_read(0u, &seq0, &generation0,
-        &dose0, &min0, &max0);
-    const bool hour1 = hour_checkpoint_read(1u, &seq1, &generation1,
-        &dose1, &min1, &max1);
-    bool choose1 = hour1 && (!hour0 ||
-        (int8_t)(generation1 - generation0) > 0);
-    if (hour0 || hour1) {
-        const uint16_t sequence = choose1 ? seq1 : seq0;
-        hour_checkpoint_generation = (uint8_t)((choose1 ? generation1 :
-            generation0) + 1u);
-        if (sequence_newer(sequence, (uint16_t)(hour_sequence - 1u)) ||
-            hour_sequence == 0u) {
-            hour_sequence = sequence;
-            hour_dose = choose1 ? dose1 : dose0;
-            hour_min_cpm = choose1 ? min1 : min0;
-            hour_max_cpm = choose1 ? max1 : max0;
-            hour_minutes = 0u;
-            (void)eeprom_write_hour(choose1 ? dose1 : dose0,
-                choose1 ? min1 : min0, choose1 ? max1 : max0, false);
-            hour_sequence = (uint16_t)(sequence + 1u);
+    uint16_t best_sequence = 0u, candidate_sequence;
+    uint8_t best_generation = 0u, candidate_generation;
+    uint16_t best_day_key = EEPROM_DAY_UNKNOWN_KEY, candidate_day_key;
+    uint32_t best_dose = 0u, best_minimum = 0u, best_maximum = 0u;
+    uint32_t candidate_dose, candidate_minimum, candidate_maximum;
+    bool found = false;
+
+    for (uint8_t slot = 0u; slot < EEPROM_DAY_CHECKPOINT_COUNT; ++slot) {
+        const uint16_t address = (uint16_t)(EEPROM_DAY_CHECKPOINT_BASE +
+            (uint16_t)slot * EEPROM_DAY_CHECKPOINT_SIZE);
+        if (!day_checkpoint_read(address, &candidate_sequence,
+                &candidate_generation, &candidate_day_key, &candidate_dose,
+                &candidate_minimum, &candidate_maximum)) continue;
+        if (!found || (int8_t)(candidate_generation - best_generation) > 0) {
+            found = true;
+            best_sequence = candidate_sequence;
+            best_generation = candidate_generation;
+            best_day_key = candidate_day_key;
+            best_dose = candidate_dose;
+            best_minimum = candidate_minimum;
+            best_maximum = candidate_maximum;
         }
     }
+    /* One-slot D5 and older two-slot D4 checkpoints are migrated once. */
+    if (!found) {
+        const uint16_t old_addresses[] = {
+            EEPROM_DAY_CHECKPOINT_PREVIOUS_BASE,
+            EEPROM_DAY_CHECKPOINT_LEGACY_BASE,
+            (uint16_t)(EEPROM_DAY_CHECKPOINT_LEGACY_BASE +
+                EEPROM_DAY_CHECKPOINT_SIZE)
+        };
+        for (uint8_t slot = 0u; slot < 3u; ++slot) {
+            if (!day_checkpoint_read(old_addresses[slot],
+                    &candidate_sequence, &candidate_generation,
+                    &candidate_day_key, &candidate_dose,
+                    &candidate_minimum, &candidate_maximum)) continue;
+            if (!found || (int8_t)(candidate_generation - best_generation) > 0) {
+                found = true;
+                best_sequence = candidate_sequence;
+                best_generation = candidate_generation;
+                best_day_key = candidate_day_key;
+                best_dose = candidate_dose;
+                best_minimum = candidate_minimum;
+                best_maximum = candidate_maximum;
+            }
+        }
+    }
+    if (!found) return;
+    day_checkpoint_generation = (uint8_t)(best_generation + 1u);
+    day_calendar_key = best_day_key;
+    day_calendar_key_valid = best_day_key != EEPROM_DAY_UNKNOWN_KEY;
+    if (sequence_newer(best_sequence, (uint16_t)(day_sequence - 1u)) ||
+        day_sequence == 0u) day_sequence = best_sequence;
+    if (!day_calendar_key_valid) return;
+    day_dose = best_dose;
+    day_min_cpm = best_minimum;
+    day_max_cpm = best_maximum;
+    day_minutes = day_dose != 0u || day_max_cpm != 0u ? 1u : 0u;
+    day_checkpoint_dirty = false;
+    /* A migration writes one fresh member of the rotating ring. */
+    (void)day_checkpoint_write(best_sequence, day_checkpoint_generation,
+        day_calendar_key, day_dose, day_min_cpm, day_max_cpm);
+    ++day_checkpoint_generation;
+}
 
-    const bool day0 = day_checkpoint_read(0u, &seq0, &generation0,
-        &day_key0, &dose0, &min0, &max0);
-    const bool day1 = day_checkpoint_read(1u, &seq1, &generation1,
-        &day_key1, &dose1, &min1, &max1);
-    choose1 = day1 && (!day0 ||
-        (int8_t)(generation1 - generation0) > 0);
-    if (day0 || day1) {
-        const uint16_t sequence = choose1 ? seq1 : seq0;
-        day_checkpoint_generation = (uint8_t)((choose1 ? generation1 :
-            generation0) + 1u);
-        day_calendar_key = choose1 ? day_key1 : day_key0;
-        day_calendar_key_valid = day_calendar_key !=
-            EEPROM_DAY_UNKNOWN_KEY;
-        if (sequence_newer(sequence, (uint16_t)(day_sequence - 1u)) ||
-            day_sequence == 0u) {
-            day_sequence = sequence;
-            (void)eeprom_write_day(choose1 ? dose1 : dose0,
-                choose1 ? min1 : min0, choose1 ? max1 : max0, false);
-            day_sequence = (uint16_t)(sequence + 1u);
-        }
-        if (day_calendar_key_valid) {
-            day_dose = choose1 ? dose1 : dose0;
-            day_min_cpm = choose1 ? min1 : min0;
-            day_max_cpm = choose1 ? max1 : max0;
-            day_minutes = day_dose != 0u || day_max_cpm != 0u ? 1u : 0u;
-        }
+static bool eeprom_cutoff_read(uint16_t address, uint8_t *record,
+                               uint16_t *sequence)
+{
+    if (!eeprom_read_record(address, record, EEPROM_CUTOFF_SIZE) ||
+        record[23] != EEPROM_CUTOFF_MAGIC ||
+        record[22] != crc8(record, 22u)) return false;
+    *sequence = (uint16_t)record[0] | ((uint16_t)record[1] << 8u);
+    return true;
+}
+
+static void eeprom_cutoff_recover_sequence(void)
+{
+    uint8_t record[EEPROM_CUTOFF_SIZE];
+    uint16_t sequence0 = 0u;
+    uint16_t sequence1 = 0u;
+    const bool valid0 = eeprom_cutoff_read(EEPROM_CUTOFF_SLOT0_BASE,
+        record, &sequence0);
+    const bool valid1 = eeprom_cutoff_read(EEPROM_CUTOFF_SLOT1_BASE,
+        record, &sequence1);
+    if (valid0 || valid1) {
+        const uint16_t newest = valid1 && (!valid0 ||
+            sequence_newer(sequence1, sequence0)) ? sequence1 : sequence0;
+        cutoff_sequence = (uint16_t)(newest + 1u);
+    } else {
+        cutoff_sequence = 0u;
+    }
+}
+
+static void eeprom_cutoff_append(uint32_t uptime_seconds,
+                                 uint32_t calendar_seconds,
+                                 bool calendar_valid, uint8_t reason)
+{
+    uint8_t record[EEPROM_CUTOFF_SIZE] = {0u};
+    const uint16_t address = (cutoff_sequence & 1u) != 0u ?
+        EEPROM_CUTOFF_SLOT1_BASE : EEPROM_CUTOFF_SLOT0_BASE;
+    record[0] = (uint8_t)cutoff_sequence;
+    record[1] = (uint8_t)(cutoff_sequence >> 8u);
+    record[2] = (uint8_t)uptime_seconds;
+    record[3] = (uint8_t)(uptime_seconds >> 8u);
+    record[4] = (uint8_t)(uptime_seconds >> 16u);
+    record[5] = (uint8_t)(uptime_seconds >> 24u);
+    record[6] = (uint8_t)calendar_seconds;
+    record[7] = (uint8_t)(calendar_seconds >> 8u);
+    record[8] = (uint8_t)(calendar_seconds >> 16u);
+    record[9] = (uint8_t)(calendar_seconds >> 24u);
+    record[10] = (uint8_t)((reason & 0x7Fu) |
+        (calendar_valid ? 0x80u : 0u));
+    for (uint8_t i = 0u; i < 3u; ++i) {
+        record[11u + i] = (uint8_t)(minute_ring.sector_sequence >>
+            (i * 8u));
+        record[16u + i] = (uint8_t)(hour_ring.sector_sequence >>
+            (i * 8u));
+    }
+    record[14] = (uint8_t)minute_ring.next_slot;
+    record[15] = (uint8_t)(minute_ring.next_slot >> 8u);
+    record[19] = (uint8_t)hour_ring.next_slot;
+    record[20] = (uint8_t)(hour_ring.next_slot >> 8u);
+    record[21] = storage_spi ? 1u : 0u;
+    record[22] = crc8(record, 22u);
+    record[23] = EEPROM_CUTOFF_MAGIC;
+    if (eeprom_write_record(address, record, EEPROM_CUTOFF_SIZE)) {
+        ++cutoff_sequence;
     }
 }
 
 static bool nor_append_minute(uint32_t dose, uint32_t minimum,
                               uint32_t maximum, bool complete)
 {
-    uint8_t record[NOR_MINUTE_RECORD_SIZE];
+    uint8_t record[EEPROM_DAY_SIZE];
     encode_minute(record, minute_ring.record_sequence, dose, minimum, maximum,
         complete);
     return ring_append(&minute_ring, record);
@@ -704,22 +879,8 @@ static void reset_interval(uint32_t *dose, uint32_t *minimum,
     *maximum = 0u;
 }
 
-void log_storage_init(bool use_spi)
+static void configure_nor_rings(void)
 {
-    reset_interval(&minute_dose, &minute_min_cpm, &minute_max_cpm);
-    reset_interval(&hour_dose, &hour_min_cpm, &hour_max_cpm);
-    reset_interval(&day_dose, &day_min_cpm, &day_max_cpm);
-    minute_seconds = 0u;
-    hour_minutes = 0u;
-    day_minutes = 0u;
-    day_calendar_key = EEPROM_DAY_UNKNOWN_KEY;
-    day_calendar_key_valid = false;
-    minute_sequence = 0u;
-    storage_spi = use_spi && spi_nor_is_ready();
-    storage_ready = true;
-    eeprom_find_sequences();
-    eeprom_recover_checkpoints();
-
     minute_ring.type = NOR_RING_MINUTE;
     minute_ring.base_sector = 0u;
     minute_ring.sector_count = NOR_MINUTE_SECTORS;
@@ -732,25 +893,54 @@ void log_storage_init(bool use_spi)
     hour_ring.record_size = NOR_HOUR_RECORD_SIZE;
     hour_ring.records_per_sector = NOR_HOUR_RECORDS_PER_SECTOR;
     hour_ring.initialized = false;
-
-    cutoff_ring.type = NOR_RING_CUTOFF;
-    cutoff_ring.base_sector = (uint16_t)(NOR_MINUTE_SECTORS +
-        NOR_ALERT_SECTORS);
-    cutoff_ring.sector_count = NOR_CUTOFF_SECTORS;
-    cutoff_ring.record_size = NOR_CUTOFF_RECORD_SIZE;
-    cutoff_ring.records_per_sector = (uint16_t)((NOR_SECTOR_SIZE -
-        NOR_SECTOR_HEADER_SIZE) / NOR_CUTOFF_RECORD_SIZE);
-    cutoff_ring.initialized = false;
     alert_ring.type = NOR_RING_ALERT;
     alert_ring.base_sector = NOR_MINUTE_SECTORS;
     alert_ring.sector_count = NOR_ALERT_SECTORS;
     alert_ring.record_size = NOR_ALERT_RECORD_SIZE;
     alert_ring.records_per_sector = NOR_ALERT_RECORDS_PER_SECTOR;
     alert_ring.initialized = false;
+    minute_live_ring.type = NOR_RING_LIVE_MINUTE;
+    minute_live_ring.base_sector = NOR_LIVE_MINUTE_BASE_SECTOR;
+    minute_live_ring.sector_count = NOR_LIVE_SECTORS;
+    minute_live_ring.record_size = NOR_LIVE_RECORD_SIZE;
+    minute_live_ring.records_per_sector = NOR_LIVE_RECORDS_PER_SECTOR;
+    minute_live_ring.initialized = false;
+    hour_live_ring.type = NOR_RING_LIVE_HOUR;
+    hour_live_ring.base_sector = NOR_LIVE_HOUR_BASE_SECTOR;
+    hour_live_ring.sector_count = NOR_LIVE_SECTORS;
+    hour_live_ring.record_size = NOR_LIVE_RECORD_SIZE;
+    hour_live_ring.records_per_sector = NOR_LIVE_RECORDS_PER_SECTOR;
+    hour_live_ring.initialized = false;
+}
+
+void log_storage_init(bool use_spi)
+{
+    reset_interval(&minute_dose, &minute_min_cpm, &minute_max_cpm);
+    reset_interval(&hour_dose, &hour_min_cpm, &hour_max_cpm);
+    reset_interval(&day_dose, &day_min_cpm, &day_max_cpm);
+    minute_seconds = 0u;
+    hour_minutes = 0u;
+    day_minutes = 0u;
+    day_checkpoint_dirty = false;
+    day_calendar_key = EEPROM_DAY_UNKNOWN_KEY;
+    day_calendar_key_valid = false;
+    minute_sequence = 0u;
+    last_live_minute_save = 0u;
+    last_live_day_save = 0u;
+    storage_spi = use_spi && spi_nor_is_ready();
+    storage_spi_requested = use_spi;
+    storage_spi_retry_at = board_millis + 1000u;
+    storage_ready = true;
+    eeprom_find_sequences();
+    eeprom_recover_checkpoints();
+    eeprom_cutoff_recover_sequence();
+
+    configure_nor_rings();
 
     if (storage_spi) {
         storage_spi = ring_init(&minute_ring) && ring_init(&hour_ring) &&
-            ring_init(&cutoff_ring) && ring_init(&alert_ring);
+            ring_init(&alert_ring) && ring_init(&minute_live_ring) &&
+            ring_init(&hour_live_ring);
         if (storage_spi) {
             uint8_t record[NOR_ALERT_RECORD_SIZE];
             if (alert_find_latest(record) && (record[19] & 0x04u) != 0u) {
@@ -782,6 +972,23 @@ void log_storage_init(bool use_spi)
     }
 }
 
+void log_storage_set_spi_enabled(bool enabled)
+{
+    if (!storage_ready) return;
+    storage_spi_requested = enabled;
+    storage_spi_retry_at = board_millis + 60000u;
+    if (!enabled) {
+        storage_spi = false;
+        return;
+    }
+    if (storage_spi) return;
+    if (!spi_nor_is_ready() && !spi_nor_init()) return;
+    configure_nor_rings();
+    storage_spi = ring_init(&minute_ring) && ring_init(&hour_ring) &&
+        ring_init(&alert_ring) && ring_init(&minute_live_ring) &&
+        ring_init(&hour_live_ring);
+}
+
 void log_storage_sample_cpm(uint32_t cpm)
 {
     if (!storage_ready) return;
@@ -809,6 +1016,7 @@ static void close_minute(bool complete)
 
     hour_dose = add_saturated(hour_dose, minute_dose, 0xFFFFFFu);
     day_dose = add_saturated(day_dose, minute_dose, 0x1FFFFFFFu);
+    day_checkpoint_dirty = true;
     if (min_value < hour_min_cpm) hour_min_cpm = min_value;
     if (minute_max_cpm > hour_max_cpm) hour_max_cpm = minute_max_cpm;
     if (min_value < day_min_cpm) day_min_cpm = min_value;
@@ -822,33 +1030,24 @@ static void close_minute(bool complete)
         const bool hour_complete = hour_minutes >= 60u;
         const uint32_t hour_min = hour_min_cpm == UINT32_MAX ? 0u :
             hour_min_cpm;
-        if (hour_checkpoint_write(hour_sequence, hour_checkpoint_generation,
-                hour_dose, hour_min, hour_max_cpm)) {
-            ++hour_checkpoint_generation;
-        }
         if (hour_complete) {
-            (void)eeprom_write_hour(hour_dose, hour_min, hour_max_cpm, true);
-        }
-        if (storage_spi && hour_complete &&
-            !nor_append_hour(hour_dose, hour_min, hour_max_cpm, true)) {
-            storage_spi = false;
-        }
-        if (hour_complete) {
+            if (storage_spi && !nor_append_hour(hour_dose, hour_min,
+                    hour_max_cpm, true)) {
+                storage_spi = false;
+            }
+            if (day_checkpoint_dirty && day_checkpoint_write(day_sequence,
+                    day_checkpoint_generation,
+                    day_calendar_key_valid ? day_calendar_key :
+                        EEPROM_DAY_UNKNOWN_KEY,
+                    day_dose, day_min_cpm == UINT32_MAX ? 0u : day_min_cpm,
+                    day_max_cpm)) {
+                ++day_checkpoint_generation;
+                day_checkpoint_dirty = false;
+            }
             hour_minutes = 0u;
             reset_interval(&hour_dose, &hour_min_cpm, &hour_max_cpm);
         }
     }
-    {
-        const uint32_t day_min = day_min_cpm == UINT32_MAX ? 0u :
-            day_min_cpm;
-        if (day_checkpoint_write(day_sequence, day_checkpoint_generation,
-                day_calendar_key_valid ? day_calendar_key :
-                    EEPROM_DAY_UNKNOWN_KEY,
-                day_dose, day_min, day_max_cpm)) {
-            ++day_checkpoint_generation;
-        }
-    }
-
     reset_interval(&minute_dose, &minute_min_cpm, &minute_max_cpm);
     minute_seconds = 0u;
 }
@@ -860,12 +1059,9 @@ static void close_time_segment(void)
     if (hour_minutes != 0u || hour_dose != 0u || hour_min_cpm != UINT32_MAX) {
         const uint32_t minimum = hour_min_cpm == UINT32_MAX ? 0u :
             hour_min_cpm;
-        if (eeprom_write_hour(hour_dose, minimum, hour_max_cpm, false)) {
-            ++hour_sequence;
-        }
-        if (storage_spi && !nor_append_hour(hour_dose, minimum, hour_max_cpm,
-                false)) {
-            storage_spi = false;
+        if (storage_spi) {
+            if (!nor_append_hour(hour_dose, minimum,
+                    hour_max_cpm, false)) storage_spi = false;
         }
         hour_minutes = 0u;
         reset_interval(&hour_dose, &hour_min_cpm, &hour_max_cpm);
@@ -876,9 +1072,124 @@ static void close_time_segment(void)
 void log_storage_second(uint32_t pulse_count)
 {
     if (!storage_ready) return;
+    /* The early JEDEC probe can precede the board-enable settling time.
+     * Retry after startup, and after a transient write failure. */
+    if (storage_spi_requested && !storage_spi &&
+        (int32_t)(board_millis - storage_spi_retry_at) >= 0) {
+        log_storage_set_spi_enabled(true);
+    }
     minute_dose = add_saturated(minute_dose, pulse_count, 0x3FFFFu);
     if (minute_seconds < 60u) ++minute_seconds;
     if (minute_seconds >= 60u) close_minute(true);
+}
+
+static bool append_live_snapshot(nor_ring_t *ring, uint8_t type,
+                                 uint32_t period_key, uint32_t dose,
+                                 uint32_t minimum, uint32_t maximum,
+                                 uint8_t progress)
+{
+    uint8_t record[NOR_LIVE_RECORD_SIZE];
+    encode_live(record, ring->record_sequence, period_key, dose,
+        minimum == UINT32_MAX ? 0u : minimum, maximum, progress, type);
+    return ring_append(ring, record);
+}
+
+void log_storage_checkpoint(uint32_t calendar_seconds, bool calendar_valid,
+                            bool usb_powered, bool screen_woke)
+{
+    const bool minute_due = usb_powered &&
+        (uint32_t)(calendar_seconds - last_live_minute_save) >= 10u;
+    const bool screen_due = screen_woke &&
+        (uint32_t)(calendar_seconds - last_live_minute_save) >= 300u;
+    const bool day_due = (uint32_t)(calendar_seconds - last_live_day_save) >=
+        600u || (screen_woke &&
+        (uint32_t)(calendar_seconds - last_live_day_save) >= 300u);
+
+    if (!storage_ready || !calendar_valid) return;
+    if (storage_spi && (minute_due || screen_due)) {
+        if (!append_live_snapshot(&minute_live_ring, NOR_RING_LIVE_MINUTE,
+                calendar_seconds / 60u, minute_dose, minute_min_cpm,
+                minute_max_cpm, minute_seconds) ||
+            !append_live_snapshot(&hour_live_ring, NOR_RING_LIVE_HOUR,
+                calendar_seconds / 3600u, hour_dose, hour_min_cpm,
+                hour_max_cpm, hour_minutes)) {
+            storage_spi = false;
+        } else {
+            last_live_minute_save = calendar_seconds;
+        }
+    }
+    if (day_calendar_key_valid && day_due &&
+        day_checkpoint_write(day_sequence, day_checkpoint_generation,
+            day_calendar_key, day_dose,
+            day_min_cpm == UINT32_MAX ? 0u : day_min_cpm, day_max_cpm)) {
+        ++day_checkpoint_generation;
+        day_checkpoint_dirty = false;
+        last_live_day_save = calendar_seconds;
+    }
+}
+
+static uint32_t live_u32(const uint8_t record[NOR_LIVE_RECORD_SIZE],
+                         uint8_t offset)
+{
+    return (uint32_t)record[offset] | ((uint32_t)record[offset + 1u] << 8u) |
+        ((uint32_t)record[offset + 2u] << 16u) |
+        ((uint32_t)record[offset + 3u] << 24u);
+}
+
+void log_storage_restore_live(uint32_t calendar_seconds, bool calendar_valid)
+{
+    uint8_t record[NOR_LIVE_RECORD_SIZE];
+    uint16_t sequence;
+
+    if (!storage_ready || !calendar_valid || !storage_spi) return;
+    if (live_find_latest(&minute_live_ring, NOR_RING_LIVE_MINUTE, record) &&
+        decode_live(record, NOR_RING_LIVE_MINUTE, &sequence) &&
+        live_u32(record, 2u) == calendar_seconds / 60u) {
+        minute_dose = live_u32(record, 6u);
+        minute_min_cpm = (uint32_t)record[10] |
+            ((uint32_t)record[11] << 8u) | ((uint32_t)record[12] << 16u);
+        minute_max_cpm = (uint32_t)record[13] |
+            ((uint32_t)record[14] << 8u) | ((uint32_t)record[15] << 16u);
+        minute_seconds = record[16] > 59u ? 59u : record[16];
+    }
+    if (live_find_latest(&hour_live_ring, NOR_RING_LIVE_HOUR, record) &&
+        decode_live(record, NOR_RING_LIVE_HOUR, &sequence) &&
+        live_u32(record, 2u) == calendar_seconds / 3600u) {
+        hour_dose = live_u32(record, 6u);
+        hour_min_cpm = (uint32_t)record[10] |
+            ((uint32_t)record[11] << 8u) | ((uint32_t)record[12] << 16u);
+        hour_max_cpm = (uint32_t)record[13] |
+            ((uint32_t)record[14] << 8u) | ((uint32_t)record[15] << 16u);
+        hour_minutes = record[16] > 59u ? 59u : record[16];
+    }
+    last_live_minute_save = calendar_seconds;
+    last_live_day_save = calendar_seconds;
+    (void)sequence;
+}
+
+void log_storage_flush(void)
+{
+    uint32_t uptime_seconds;
+    uint32_t calendar_seconds;
+    bool calendar_valid;
+
+    if (!board_rtc_log_time(&uptime_seconds, &calendar_seconds,
+            &calendar_valid) || !calendar_valid) return;
+    if (storage_spi) {
+        if (!append_live_snapshot(&minute_live_ring, NOR_RING_LIVE_MINUTE,
+                calendar_seconds / 60u, minute_dose, minute_min_cpm,
+                minute_max_cpm, minute_seconds) ||
+            !append_live_snapshot(&hour_live_ring, NOR_RING_LIVE_HOUR,
+                calendar_seconds / 3600u, hour_dose, hour_min_cpm,
+                hour_max_cpm, hour_minutes)) storage_spi = false;
+    }
+    if (day_calendar_key_valid && day_checkpoint_write(day_sequence,
+            day_checkpoint_generation, day_calendar_key, day_dose,
+            day_min_cpm == UINT32_MAX ? 0u : day_min_cpm, day_max_cpm)) {
+        ++day_checkpoint_generation;
+        day_checkpoint_dirty = false;
+    }
+    (void)uptime_seconds;
 }
 
 bool log_storage_calendar_day(uint16_t day_key, bool at_runtime_boundary)
@@ -894,9 +1205,9 @@ bool log_storage_calendar_day(uint16_t day_key, bool at_runtime_boundary)
          day_min_cpm != UINT32_MAX)) {
         const uint32_t minimum = day_min_cpm == UINT32_MAX ? 0u :
             day_min_cpm;
-        (void)eeprom_write_day(day_dose, minimum, day_max_cpm,
-            day_minutes >= 1440u);
-        ++day_sequence;
+        const bool complete = day_minutes >= 1440u;
+        if (eeprom_write_day(day_dose, minimum, day_max_cpm, complete) &&
+            !complete) ++day_sequence;
     }
 
     day_calendar_key = day_key;
@@ -914,6 +1225,7 @@ bool log_storage_calendar_day(uint16_t day_key, bool at_runtime_boundary)
             day_min_cpm == UINT32_MAX ? 0u : day_min_cpm,
             day_max_cpm)) {
         ++day_checkpoint_generation;
+        day_checkpoint_dirty = false;
     }
     return false;
 }
@@ -924,13 +1236,7 @@ void log_storage_today_seed(uint32_t pulse_count)
     if (minute_seconds != 0u) close_minute(false);
     day_dose = pulse_count > 0x1FFFFFFFu ? 0x1FFFFFFFu : pulse_count;
     day_minutes = day_dose != 0u ? 1u : day_minutes;
-    if (day_checkpoint_write(day_sequence, day_checkpoint_generation,
-            day_calendar_key_valid ? day_calendar_key :
-                EEPROM_DAY_UNKNOWN_KEY,
-            day_dose, day_min_cpm == UINT32_MAX ? 0u : day_min_cpm,
-            day_max_cpm)) {
-        ++day_checkpoint_generation;
-    }
+    day_checkpoint_dirty = true;
 }
 
 uint32_t log_storage_today_pulse_count(void)
@@ -995,17 +1301,11 @@ uint32_t log_storage_today_recover_from_hours(uint8_t completed_hours)
     }
 
     uint32_t total = marker_found ? since_marker_total : recent_total;
-    /* The current hour checkpoint has not reached SPI yet. The open minute
+    /* The open hour has not reached the SPI ring yet. The open minute
      * stays separate and is included by log_storage_today_pulse_count(). */
     total = add_saturated(total, hour_dose, 0x1FFFFFFFu);
     day_dose = total;
-    if (day_checkpoint_write(day_sequence, day_checkpoint_generation,
-            day_calendar_key_valid ? day_calendar_key :
-                EEPROM_DAY_UNKNOWN_KEY,
-            day_dose, day_min_cpm == UINT32_MAX ? 0u : day_min_cpm,
-            day_max_cpm)) {
-        ++day_checkpoint_generation;
-    }
+    day_checkpoint_dirty = true;
     return log_storage_today_pulse_count();
 }
 
@@ -1064,6 +1364,36 @@ bool log_storage_spi_available(void)
     return storage_spi;
 }
 
+uint16_t log_storage_minute_records_in_sector(void)
+{
+    if (!storage_spi || !minute_ring.initialized) return 0u;
+    return minute_ring.total_records > UINT16_MAX ? UINT16_MAX :
+        (uint16_t)minute_ring.total_records;
+}
+
+void log_storage_log_counts(uint16_t *minutes, uint16_t *hours,
+                            uint16_t *days)
+{
+    if (minutes != NULL) *minutes = storage_spi_requested &&
+        minute_ring.initialized ?
+        (minute_ring.total_records > UINT16_MAX ? UINT16_MAX :
+            (uint16_t)minute_ring.total_records) : 0u;
+    if (hours != NULL) *hours = storage_spi_requested &&
+        hour_ring.initialized ?
+        (hour_ring.total_records > UINT16_MAX ? UINT16_MAX :
+            (uint16_t)hour_ring.total_records) : 0u;
+    /* Like MIN/HOUR, DAY counts only persisted history on its owning medium.
+     * RAM aggregates and durable LIVE checkpoints are separate from history. */
+    if (days != NULL) *days = eeprom_day_count;
+}
+
+uint16_t log_storage_alert_record_count(void)
+{
+    if (!storage_spi_requested || !alert_ring.initialized) return 0u;
+    return alert_ring.total_records > UINT16_MAX ? UINT16_MAX :
+        (uint16_t)alert_ring.total_records;
+}
+
 bool log_storage_minute_history_load(uint32_t *cpm, uint8_t capacity,
                                     uint8_t *count)
 {
@@ -1111,6 +1441,176 @@ bool log_storage_minute_history_load(uint32_t *cpm, uint8_t capacity,
     return true;
 }
 
+static void graph_pack_min_max(uint8_t *packed, uint32_t minimum,
+                               uint32_t maximum)
+{
+    const uint64_t pair = (uint64_t)(minimum & 0x3FFFFu) |
+        ((uint64_t)(maximum & 0x3FFFFu) << 18u);
+    for (uint8_t i = 0u; i < 5u; ++i) {
+        packed[i] = (uint8_t)(pair >> (i * 8u));
+    }
+}
+
+bool log_storage_graph_load(log_graph_period_t period, uint32_t *dose,
+                            uint8_t *packed_min_max_cpm, uint8_t capacity,
+                            uint8_t *count)
+{
+    uint8_t used = 0u;
+    uint8_t record[EEPROM_DAY_SIZE];
+
+    if (count != NULL) *count = 0u;
+    if (!storage_ready || dose == NULL || packed_min_max_cpm == NULL ||
+        count == NULL || capacity == 0u) return false;
+
+    if ((period == LOG_GRAPH_MINUTES || period == LOG_GRAPH_HOURS) &&
+        !storage_spi_requested) return false;
+
+    /* Index zero always belongs to the open RAM period, even before the
+     * first pulse or the first persistent record. History follows newest first.
+     * Only completed records are read below; LIVE snapshots are never history. */
+    if (period <= LOG_GRAPH_DAYS) {
+        uint32_t minimum = minute_min_cpm;
+        uint32_t maximum = minute_max_cpm;
+        uint32_t current_dose = minute_dose;
+        if (period == LOG_GRAPH_HOURS) {
+            current_dose += hour_dose;
+            if (hour_min_cpm < minimum) minimum = hour_min_cpm;
+            if (hour_max_cpm > maximum) maximum = hour_max_cpm;
+        } else if (period == LOG_GRAPH_DAYS) {
+            current_dose = log_storage_today_pulse_count();
+            if (day_min_cpm < minimum) minimum = day_min_cpm;
+            if (day_max_cpm > maximum) maximum = day_max_cpm;
+        }
+        dose[used] = current_dose;
+        graph_pack_min_max(packed_min_max_cpm,
+            minimum == UINT32_MAX ? 0u : minimum, maximum);
+        ++used;
+    }
+
+    if (period == LOG_GRAPH_MINUTES) {
+        uint8_t header[NOR_SECTOR_HEADER_SIZE];
+        if (!spi_nor_is_ready() || !minute_ring.initialized) {
+            *count = used;
+            return true;
+        }
+        /* Recent minute records normally fit in the active sector. Only
+         * inspect its immediate predecessor as a rollover fallback; walking
+         * the entire NOR ring when there are no records stalls the UI. */
+        for (uint16_t back = 0u;
+             back < 2u && back < minute_ring.sector_count &&
+                 used < capacity; ++back) {
+            const uint16_t sector = (uint16_t)((minute_ring.active_sector +
+                minute_ring.sector_count - back) % minute_ring.sector_count);
+            const uint32_t base = (uint32_t)(minute_ring.base_sector + sector) *
+                NOR_SECTOR_SIZE;
+            uint32_t sector_sequence;
+            const uint16_t top_slot = back == 0u ? minute_ring.next_slot :
+                minute_ring.records_per_sector;
+            if (!spi_nor_read(base, header, sizeof(header)) ||
+                !parse_sector_header(header, NOR_RING_MINUTE,
+                    &sector_sequence)) continue;
+            (void)sector_sequence;
+            for (uint16_t slot = top_slot;
+                 slot > 0u && used < capacity; --slot) {
+                uint16_t sequence;
+                const uint32_t address = base + NOR_SECTOR_HEADER_SIZE +
+                    (uint32_t)(slot - 1u) * NOR_MINUTE_RECORD_SIZE;
+                if (!spi_nor_read(address, record, NOR_MINUTE_RECORD_SIZE)) {
+                    return false;
+                }
+                if (!decode_minute(record, &sequence) ||
+                    (record[8] & 0xC0u) != 0x40u) continue;
+                (void)sequence;
+                dose[used] = get_bits(record, 16u, 18u);
+                graph_pack_min_max(&packed_min_max_cpm[(uint16_t)used * 5u],
+                    get_bits(record, 34u, 18u),
+                    get_bits(record, 52u, 18u));
+                ++used;
+            }
+        }
+    } else if (period == LOG_GRAPH_HOURS) {
+        if (!spi_nor_is_ready() || !hour_ring.initialized) {
+            *count = used;
+            return true;
+        }
+        uint8_t header[NOR_SECTOR_HEADER_SIZE];
+        for (uint8_t back = 0u; back < 2u && used < capacity; ++back) {
+            const uint16_t sector = (uint16_t)((hour_ring.active_sector +
+                hour_ring.sector_count - back) % hour_ring.sector_count);
+            const uint32_t base = (uint32_t)(hour_ring.base_sector + sector) *
+                NOR_SECTOR_SIZE;
+            const uint16_t top_slot = back == 0u ? hour_ring.next_slot :
+                hour_ring.records_per_sector;
+            uint32_t sector_sequence;
+            if (!spi_nor_read(base, header, sizeof(header)) ||
+                !parse_sector_header(header, NOR_RING_HOUR,
+                    &sector_sequence)) continue;
+            (void)sector_sequence;
+            for (uint16_t slot = top_slot;
+                 slot > 0u && used < capacity; --slot) {
+                uint16_t sequence;
+                const uint32_t address = base + NOR_SECTOR_HEADER_SIZE +
+                    (uint32_t)(slot - 1u) * NOR_HOUR_RECORD_SIZE;
+                if (!spi_nor_read(address, record, NOR_HOUR_RECORD_SIZE)) {
+                    return false;
+                }
+                if (!decode_hour(record, &sequence) ||
+                    (record[9] & 0xF0u) != 0xB0u) continue;
+                dose[used] = get_bits(record, 16u, 24u);
+                graph_pack_min_max(
+                    &packed_min_max_cpm[(uint16_t)used * 5u],
+                    get_bits(record, 40u, 18u),
+                    get_bits(record, 58u, 18u));
+                ++used;
+            }
+        }
+    } else if (period == LOG_GRAPH_DAYS) {
+        const uint16_t history_count = EEPROM_DAY_COUNT;
+        const uint8_t record_size = EEPROM_DAY_SIZE;
+        const uint16_t base = EEPROM_DAY_BASE;
+        const uint16_t newest_sequence = day_sequence;
+        for (uint16_t age = 0u; age < history_count && used < capacity;
+             ++age) {
+            const uint16_t sequence = (uint16_t)(newest_sequence - 1u - age);
+            const uint16_t address = (uint16_t)(base +
+                (sequence % history_count) * record_size);
+            uint16_t stored_sequence;
+            if (!eeprom_read_record(address, record, record_size)) return false;
+            if (!decode_day(record, &stored_sequence) ||
+                stored_sequence != sequence) {
+                const uint16_t legacy_address = (uint16_t)(
+                    EEPROM_LEGACY_DAY_BASE +
+                    (sequence % EEPROM_LEGACY_DAY_COUNT) * EEPROM_DAY_SIZE);
+                if (legacy_address == address ||
+                    !eeprom_read_record(legacy_address, record,
+                        EEPROM_DAY_SIZE) ||
+                    !decode_day(record, &stored_sequence) ||
+                    stored_sequence != sequence) continue;
+            }
+            dose[used] = get_bits(record, 16u, 29u);
+            graph_pack_min_max(
+                &packed_min_max_cpm[(uint16_t)used * 5u],
+                get_bits(record, 45u, 18u),
+                get_bits(record, 63u, 18u));
+            ++used;
+        }
+    } else {
+        return false;
+    }
+
+    *count = used;
+    return true;
+}
+
+uint32_t log_storage_graph_current_seconds(log_graph_period_t period)
+{
+    if (period == LOG_GRAPH_MINUTES) return minute_seconds;
+    if (period == LOG_GRAPH_HOURS) {
+        return (uint32_t)hour_minutes * 60u + minute_seconds;
+    }
+    return (uint32_t)day_minutes * 60u + minute_seconds;
+}
+
 static bool erase_nor_sectors(uint16_t first, uint16_t count)
 {
     if (!spi_nor_is_ready() && !spi_nor_init()) return false;
@@ -1136,31 +1636,30 @@ bool log_storage_clear(log_clear_target_t target)
 
     switch (target) {
     case LOG_CLEAR_MINUTE:
-        ok = erase_nor_sectors(0u, NOR_MINUTE_SECTORS);
+        ok = erase_nor_sectors(0u, NOR_MINUTE_SECTORS) &&
+            erase_nor_sectors(NOR_LIVE_MINUTE_BASE_SECTOR, NOR_LIVE_SECTORS);
         break;
     case LOG_CLEAR_HOUR:
-        ok = clear_eeprom_range(EEPROM_CHECKPOINT_BASE,
-                EEPROM_CHECKPOINT_BASE + 2u * EEPROM_HOUR_CHECKPOINT_SIZE) &&
-            clear_eeprom_range(EEPROM_LOG_BASE,
-                EEPROM_LOG_BASE + EEPROM_HOUR_COUNT * EEPROM_HOUR_SIZE) &&
-            erase_nor_sectors(NOR_HOUR_BASE_SECTOR, NOR_HOUR_SECTORS);
+        ok = erase_nor_sectors(NOR_HOUR_BASE_SECTOR, NOR_HOUR_SECTORS) &&
+            erase_nor_sectors(NOR_LIVE_HOUR_BASE_SECTOR, NOR_LIVE_SECTORS);
         break;
     case LOG_CLEAR_DAY:
         ok = clear_eeprom_range(EEPROM_DAY_CHECKPOINT_BASE,
                 EEPROM_DAY_CHECKPOINT_BASE +
-                    2u * EEPROM_DAY_CHECKPOINT_SIZE) &&
+                EEPROM_DAY_CHECKPOINT_COUNT * EEPROM_DAY_CHECKPOINT_SIZE) &&
             clear_eeprom_range(EEPROM_DAY_BASE,
-                EEPROM_DAY_BASE + EEPROM_DAY_COUNT * EEPROM_DAY_SIZE);
+                EEPROM_DAY_BASE + EEPROM_DAY_COUNT * EEPROM_DAY_SIZE) &&
+            clear_eeprom_range(EEPROM_LEGACY_DAY_BASE, 2041u);
         break;
     case LOG_CLEAR_ERROR:
         ok = erase_nor_sectors(NOR_MINUTE_SECTORS, NOR_ALERT_SECTORS);
         break;
     case LOG_CLEAR_LOGS:
-        ok = clear_eeprom_range(EEPROM_CHECKPOINT_BASE, 2048u) &&
+        ok = clear_eeprom_range(EEPROM_LOG_REGION_BASE, 2048u) &&
             erase_nor_sectors(0u, 256u);
         break;
     case LOG_CLEAR_EEPROM_LOGS:
-        ok = clear_eeprom_range(EEPROM_CHECKPOINT_BASE, 2048u);
+        ok = clear_eeprom_range(EEPROM_LOG_REGION_BASE, 2048u);
         break;
     case LOG_CLEAR_SPI:
         ok = erase_nor_sectors(0u,
@@ -1174,19 +1673,21 @@ bool log_storage_clear(log_clear_target_t target)
     switch (target) {
     case LOG_CLEAR_MINUTE:
         minute_ring.initialized = false;
+        minute_live_ring.initialized = false;
         reset_interval(&minute_dose, &minute_min_cpm, &minute_max_cpm);
         minute_seconds = 0u;
         break;
     case LOG_CLEAR_HOUR:
         hour_ring.initialized = false;
-        hour_sequence = 0u;
-        hour_checkpoint_generation = 0u;
+        hour_live_ring.initialized = false;
         hour_minutes = 0u;
         reset_interval(&hour_dose, &hour_min_cpm, &hour_max_cpm);
         break;
     case LOG_CLEAR_DAY:
         day_sequence = 0u;
+        eeprom_day_count = 0u;
         day_checkpoint_generation = 0u;
+        day_checkpoint_dirty = false;
         day_minutes = 0u;
         day_calendar_key = EEPROM_DAY_UNKNOWN_KEY;
         day_calendar_key_valid = false;
@@ -1199,14 +1700,15 @@ bool log_storage_clear(log_clear_target_t target)
     case LOG_CLEAR_LOGS:
         minute_ring.initialized = false;
         hour_ring.initialized = false;
-        cutoff_ring.initialized = false;
         alert_ring.initialized = false;
+        minute_live_ring.initialized = false;
+        hour_live_ring.initialized = false;
         alert_active = false;
         minute_sequence = 0u;
-        hour_sequence = 0u;
         day_sequence = 0u;
-        hour_checkpoint_generation = 0u;
         day_checkpoint_generation = 0u;
+        eeprom_day_count = 0u;
+        day_checkpoint_dirty = false;
         minute_seconds = 0u;
         hour_minutes = 0u;
         day_minutes = 0u;
@@ -1217,10 +1719,10 @@ bool log_storage_clear(log_clear_target_t target)
         reset_interval(&day_dose, &day_min_cpm, &day_max_cpm);
         break;
     case LOG_CLEAR_EEPROM_LOGS:
-        hour_sequence = 0u;
         day_sequence = 0u;
-        hour_checkpoint_generation = 0u;
         day_checkpoint_generation = 0u;
+        eeprom_day_count = 0u;
+        day_checkpoint_dirty = false;
         minute_seconds = 0u;
         hour_minutes = 0u;
         day_minutes = 0u;
@@ -1233,8 +1735,9 @@ bool log_storage_clear(log_clear_target_t target)
     case LOG_CLEAR_SPI:
         minute_ring.initialized = false;
         hour_ring.initialized = false;
-        cutoff_ring.initialized = false;
         alert_ring.initialized = false;
+        minute_live_ring.initialized = false;
+        hour_live_ring.initialized = false;
         alert_active = false;
         break;
     default:
@@ -1246,38 +1749,11 @@ bool log_storage_clear(log_clear_target_t target)
 void log_storage_time_cutoff(uint32_t uptime_seconds, uint32_t calendar_seconds,
                              bool calendar_valid, uint8_t reason)
 {
-    uint8_t record[NOR_CUTOFF_RECORD_SIZE] = {0u};
     if (!storage_ready) return;
     if (reason == LOG_CUTOFF_REASON_CLOCK_SET) close_time_segment();
-    if (!storage_spi) return;
-    record[0] = (uint8_t)cutoff_ring.record_sequence;
-    record[1] = (uint8_t)(cutoff_ring.record_sequence >> 8u);
-    record[2] = (uint8_t)uptime_seconds;
-    record[3] = (uint8_t)(uptime_seconds >> 8u);
-    record[4] = (uint8_t)(uptime_seconds >> 16u);
-    record[5] = (uint8_t)(uptime_seconds >> 24u);
-    record[6] = (uint8_t)calendar_seconds;
-    record[7] = (uint8_t)(calendar_seconds >> 8u);
-    record[8] = (uint8_t)(calendar_seconds >> 16u);
-    record[9] = (uint8_t)(calendar_seconds >> 24u);
-    record[10] = (uint8_t)((reason & 0x7Fu) |
-        (calendar_valid ? 0x80u : 0u));
-    record[11] = (uint8_t)minute_ring.sector_sequence;
-    record[12] = (uint8_t)(minute_ring.sector_sequence >> 8u);
-    record[13] = (uint8_t)(minute_ring.sector_sequence >> 16u);
-    record[14] = (uint8_t)(minute_ring.sector_sequence >> 24u);
-    record[15] = (uint8_t)minute_ring.next_slot;
-    record[16] = (uint8_t)(minute_ring.next_slot >> 8u);
-    record[17] = (uint8_t)hour_ring.sector_sequence;
-    record[18] = (uint8_t)(hour_ring.sector_sequence >> 8u);
-    record[19] = (uint8_t)(hour_ring.sector_sequence >> 16u);
-    record[20] = (uint8_t)(hour_ring.sector_sequence >> 24u);
-    record[21] = (uint8_t)hour_ring.next_slot;
-    record[22] = (uint8_t)(hour_ring.next_slot >> 8u);
-    record[23] = crc8(record, 23u);
-    record[24] = 0xC1u;
     if (reason == LOG_CUTOFF_REASON_BOOT) {
-        alert_run_id = cutoff_ring.record_sequence;
+        alert_run_id = cutoff_sequence;
     }
-    (void)ring_append(&cutoff_ring, record);
+    eeprom_cutoff_append(uptime_seconds, calendar_seconds,
+        calendar_valid, reason);
 }

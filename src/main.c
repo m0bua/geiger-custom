@@ -78,6 +78,7 @@ int main(void)
     bool idle_tick_active = false;
     bool idle_clock_active = false;
     bool adc_screen_was_on = false;
+    bool log_checkpoint_on_wake = false;
     bool hv_enabled;
     bool left_long_repeat_navigation = false;
     bool right_long_repeat_navigation = false;
@@ -107,6 +108,7 @@ int main(void)
                 calendar_day_valid = true;
                 const bool day_checkpoint_matches =
                     log_storage_calendar_day(calendar_day_key, true);
+                log_storage_restore_live(calendar_seconds, true);
                 today_pulse_count = log_storage_today_pulse_count();
                 if ((!day_checkpoint_matches || today_pulse_count == 0u) &&
                     log_storage_spi_available()) {
@@ -163,6 +165,7 @@ int main(void)
             now = board_millis;
             screen_backlight_wake();
             backlight_on = true;
+            log_checkpoint_on_wake = true;
             inactivity_deadline = now + screen_timeout_ms;
             board_buttons_suppress_until_release(button_wakeup_mask |
                 currently_pressed);
@@ -216,6 +219,7 @@ int main(void)
                     (BOARD_BUTTON_LEFT_DOWN | BOARD_BUTTON_RIGHT_DOWN));
                 screen_backlight_wake();
                 backlight_on = true;
+                log_checkpoint_on_wake = true;
                 inactivity_deadline = now + screen_timeout_ms;
                 events &= (uint8_t)~button_events;
             } else if ((events & button_events) != 0u) {
@@ -236,6 +240,9 @@ int main(void)
                     left_long_seen = true;
                     if (board_display_settings_list_active()) {
                         board_display_settings_list_exit();
+                    } else if (board_display_graph_back()) {
+                        /* First back leaves the selected bar and restores
+                         * period selection; another back exits to Dose. */
                     } else if (!board_display_rate_long_press()) {
                         board_display_extra_exit();
                     }
@@ -255,6 +262,8 @@ int main(void)
                     } else if (board_display_extra_active()) {
                         board_display_settings_list_activate();
                     } else if (board_display_graph_enter()) {
+                        right_long_repeat_navigation = false;
+                    } else if (board_display_graph_long_press()) {
                         right_long_repeat_navigation = false;
                     } else {
                         board_display_extra_enter();
@@ -323,6 +332,7 @@ int main(void)
                     }
                     screen_backlight_wake();
                     backlight_on = true;
+                    log_checkpoint_on_wake = true;
                     inactivity_deadline = now + screen_timeout_ms;
                 } else if (!alarm_active && screen_alarm_active) {
                     inactivity_deadline = now + screen_timeout_ms;
@@ -412,6 +422,7 @@ int main(void)
                 }
                 screen_backlight_wake();
                 backlight_on = true;
+                log_checkpoint_on_wake = true;
                 inactivity_deadline = now + screen_timeout_ms;
             }
 
@@ -448,6 +459,10 @@ int main(void)
                                 dose_fraction, today_pulse_count,
                                 dose_measurement_seconds);
                         }
+                        log_storage_checkpoint(calendar_seconds, true,
+                            board_display_usb_connected(),
+                            log_checkpoint_on_wake);
+                        log_checkpoint_on_wake = false;
                     }
                 }
                 if (session_elapsed_seconds < UINT32_MAX) {

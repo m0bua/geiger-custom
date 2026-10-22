@@ -28,7 +28,7 @@
 #define NOR_SECTOR_SIZE 4096u
 #define NOR_CAPACITY_BYTES 0x00100000u
 #define NOR_ID_MANUFACTURER 0xC2u
-#define NOR_ID_MEMORY_TYPE  0x20u
+#define NOR_ID_MEMORY_TYPE  0x28u
 #define NOR_ID_CAPACITY     0x14u
 
 static bool nor_ready;
@@ -152,8 +152,7 @@ bool spi_nor_init(void)
         return false;
     }
 
-    /* The board's populated NOR has not been identified from its package
-     * marking. Enable write support only for the supplied MX25L8006E ID. */
+    /* The populated device reports the Macronix MX25R8035F JEDEC ID. */
     nor_ready = nor_id.manufacturer == NOR_ID_MANUFACTURER &&
         nor_id.memory_type == NOR_ID_MEMORY_TYPE &&
         nor_id.capacity == NOR_ID_CAPACITY;
@@ -179,7 +178,10 @@ spi_nor_jedec_id_t spi_nor_jedec_id(void)
 
 uint32_t spi_nor_size_bytes(void)
 {
-    return nor_ready ? NOR_CAPACITY_BYTES : 0u;
+    /* Report the discovered JEDEC density independently of write readiness.
+     * Debug UI can then distinguish a detected chip from a usable one. */
+    if (nor_id.capacity < 0x10u || nor_id.capacity > 0x20u) return 0u;
+    return 1u << nor_id.capacity;
 }
 
 bool spi_nor_read(uint32_t address, uint8_t *data, size_t length)
@@ -216,7 +218,27 @@ bool spi_nor_program_page(uint32_t address, const uint8_t *data,
         ok = spi_transfer(data[i], NULL);
     }
     nor_cs(false);
-    return ok && nor_wait_ready(20u);
+    if (!ok || !nor_wait_ready(20u)) return false;
+
+    /* Some NOR devices accept commands while a sector is protected but do
+     * not change the array. Read back each programmed page so the logger can
+     * fall back to EEPROM and report ERR instead of silently losing records. */
+    {
+        uint8_t verify[16];
+        size_t offset = 0u;
+        while (offset < length) {
+            const size_t amount = length - offset < sizeof(verify) ?
+                length - offset : sizeof(verify);
+            if (!spi_nor_read(address + (uint32_t)offset, verify, amount)) {
+                return false;
+            }
+            for (size_t i = 0u; i < amount; ++i) {
+                if (verify[i] != data[offset + i]) return false;
+            }
+            offset += amount;
+        }
+    }
+    return true;
 }
 
 bool spi_nor_erase_sector(uint32_t address)
@@ -230,5 +252,13 @@ bool spi_nor_erase_sector(uint32_t address)
         spi_transfer((uint8_t)(address >> 8u), NULL) &&
         spi_transfer((uint8_t)address, NULL);
     nor_cs(false);
-    return ok && nor_wait_ready(500u);
+    if (!ok || !nor_wait_ready(500u)) return false;
+    {
+        uint8_t verify[16];
+        if (!spi_nor_read(address, verify, sizeof(verify))) return false;
+        for (size_t i = 0u; i < sizeof(verify); ++i) {
+            if (verify[i] != 0xFFu) return false;
+        }
+    }
+    return true;
 }
