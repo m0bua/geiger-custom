@@ -161,6 +161,8 @@ static uint8_t lcd_indication_mode = 1u;
 #define LCD_GRAPH_HEIGHT (LCD_HEIGHT - LCD_GRAPH_TOP)
 #define LCD_GRAPH_STATS_WIDTH ((7u * 7u) + 4u)
 #define LCD_GRAPH_PLOT_WIDTH (LCD_WIDTH - LCD_GRAPH_STATS_WIDTH)
+#define LCD_GRAPH_YELLOW_THRESHOLD_CPM 61u
+#define LCD_GRAPH_RED_THRESHOLD_CPM 136u
 #define LCD_GRAPH_CHUNK_HEIGHT FONT_SMALL_CELL_HEIGHT
 #define LCD_GRAPH_CHUNK_COUNT ((LCD_GRAPH_HEIGHT + \
     LCD_GRAPH_CHUNK_HEIGHT - 1u) / LCD_GRAPH_CHUNK_HEIGHT)
@@ -282,10 +284,12 @@ static uint8_t lcd_main_return_page;
 static uint8_t lcd_last_extra_page = 2u;
 static uint8_t lcd_graph_range_index = 3u;
 static uint8_t lcd_graph_column_y[LCD_WIDTH];
-static char lcd_graph_stat_values[3][5];
+static char lcd_graph_stat_values[4][5];
 static uint32_t lcd_graph_stat_min;
 static uint32_t lcd_graph_stat_average;
 static uint32_t lcd_graph_stat_max;
+static uint8_t lcd_graph_yellow_threshold_y = UINT8_MAX;
+static uint8_t lcd_graph_red_threshold_y = UINT8_MAX;
 static uint32_t lcd_graph_minute_cpm[60];
 static uint8_t lcd_graph_minute_count;
 static uint32_t lcd_graph_refresh_deadline;
@@ -1909,19 +1913,23 @@ static uint8_t lcd_settings_make_line(uint8_t visible_row, char *line)
 
 static bool lcd_graph_stat_icon_pixel(uint8_t stat, uint8_t x, uint8_t y)
 {
-    static const uint8_t icon_rows[3][7] = {
+    static const uint8_t icon_rows[2][7] = {
         { 4u, 14u, 21u, 4u, 4u, 4u, 4u }, /* maximum: upward arrow */
-        { 0u, 0u, 4u, 31u, 4u, 0u, 0u }, /* average: centered mean line */
         { 4u, 4u, 4u, 4u, 21u, 14u, 4u }  /* minimum: downward arrow */
     };
 
-    if (stat == 1u) {
+    if (stat == 0u) {
+        return font_small_pixel('C', x, y);
+    }
+    if (stat == 2u) {
         return font_small_pixel('A', x, y);
     }
-    if (stat >= 3u || x < 1u || x > 5u || y < 1u || y > 7u) {
+    if ((stat != 1u && stat != 3u) || x < 1u || x > 5u ||
+        y < 1u || y > 7u) {
         return false;
     }
-    return (icon_rows[stat][y - 1u] & (uint8_t)(1u << (5u - x))) != 0u;
+    return (icon_rows[stat == 1u ? 0u : 1u][y - 1u] &
+        (uint8_t)(1u << (5u - x))) != 0u;
 }
 
 static uint64_t lcd_graph_stat_rate(uint32_t cpm)
@@ -2090,12 +2098,23 @@ static void lcd_graph_build_series(uint8_t requested)
     lcd_graph_stat_average = visible == 0u ? 0u :
         (uint32_t)((sum + visible / 2u) / visible);
     stat_unit = lcd_graph_stat_unit(lcd_graph_stat_max);
-    lcd_graph_format_stat(lcd_graph_stat_max, stat_unit,
+    lcd_graph_format_stat(lcd_current_cpm, stat_unit,
         lcd_graph_stat_values[0]);
-    lcd_graph_format_stat(lcd_graph_stat_average, stat_unit,
+    lcd_graph_format_stat(lcd_graph_stat_max, stat_unit,
         lcd_graph_stat_values[1]);
-    lcd_graph_format_stat(lcd_graph_stat_min, stat_unit,
+    lcd_graph_format_stat(lcd_graph_stat_average, stat_unit,
         lcd_graph_stat_values[2]);
+    lcd_graph_format_stat(lcd_graph_stat_min, stat_unit,
+        lcd_graph_stat_values[3]);
+    lcd_graph_yellow_threshold_y =
+        LCD_GRAPH_YELLOW_THRESHOLD_CPM <= maximum ?
+            (uint8_t)(plot_bottom -
+                ((uint32_t)LCD_GRAPH_YELLOW_THRESHOLD_CPM *
+                    (plot_height - 1u)) / maximum) : UINT8_MAX;
+    lcd_graph_red_threshold_y = LCD_GRAPH_RED_THRESHOLD_CPM <= maximum ?
+        (uint8_t)(plot_bottom -
+            ((uint32_t)LCD_GRAPH_RED_THRESHOLD_CPM *
+                (plot_height - 1u)) / maximum) : UINT8_MAX;
     if (visible == 0u) return;
 
     {
@@ -2229,7 +2248,6 @@ static bool lcd_graph_prepare_glyph(void)
         const uint16_t chunk_row = (uint16_t)(step - 1u) *
             LCD_GRAPH_CHUNK_HEIGHT;
         const uint16_t graph_y_start = LCD_GRAPH_TOP + chunk_row;
-        const uint16_t graph_bottom = LCD_HEIGHT - 1u;
         const uint8_t rows_this_chunk = (uint8_t)(
             (LCD_HEIGHT - graph_y_start) < LCD_GRAPH_CHUNK_HEIGHT ?
                 (LCD_HEIGHT - graph_y_start) : LCD_GRAPH_CHUNK_HEIGHT);
@@ -2237,20 +2255,17 @@ static bool lcd_graph_prepare_glyph(void)
 
         for (uint8_t row = 0u; row < rows_this_chunk; ++row) {
             const uint16_t graph_y = (uint16_t)(graph_y_start + row);
-            const bool grid_line = graph_y == LCD_GRAPH_TOP + 15u ||
-                graph_y == LCD_GRAPH_TOP + 30u ||
-                graph_y == LCD_GRAPH_TOP + 45u ||
-                graph_y == graph_bottom;
             for (uint16_t x = 0u; x < LCD_WIDTH; ++x) {
                 uint16_t color = LCD_TEXT_BACKGROUND;
                 if (x < LCD_GRAPH_STATS_WIDTH - 1u) {
-                    static const uint8_t stat_y[3] = {
-                        LCD_GRAPH_TOP + 3u,
-                        LCD_GRAPH_TOP + 25u,
-                        LCD_GRAPH_TOP + 47u
+                    static const uint8_t stat_y[4] = {
+                        LCD_GRAPH_TOP + 1u,
+                        LCD_GRAPH_TOP + 17u,
+                        LCD_GRAPH_TOP + 33u,
+                        LCD_GRAPH_TOP + 49u
                     };
                     const uint16_t local_x = x;
-                    for (uint8_t stat = 0u; stat < 3u; ++stat) {
+                    for (uint8_t stat = 0u; stat < 4u; ++stat) {
                         if (graph_y >= stat_y[stat] &&
                             graph_y < stat_y[stat] +
                                 FONT_SMALL_CELL_HEIGHT) {
@@ -2259,7 +2274,8 @@ static bool lcd_graph_prepare_glyph(void)
                             if (local_x < FONT_SMALL_CELL_WIDTH) {
                                 if (lcd_graph_stat_icon_pixel(stat,
                                     (uint8_t)local_x, glyph_y)) {
-                                    color = LCD_TEXT_FOREGROUND;
+                                    color = stat == 0u ? lcd_rate_color :
+                                        LCD_TEXT_FOREGROUND;
                                 }
                             } else if (local_x >= 8u && local_x < 48u) {
                                 const uint8_t relative = (uint8_t)(
@@ -2270,7 +2286,8 @@ static bool lcd_graph_prepare_glyph(void)
                                     font_small_pixel(
                                         lcd_graph_stat_values[stat][digit],
                                         glyph_x, glyph_y)) {
-                                    color = LCD_TEXT_FOREGROUND;
+                                    color = stat == 0u ? lcd_rate_color :
+                                        LCD_TEXT_FOREGROUND;
                                 }
                             }
                             break;
@@ -2282,8 +2299,14 @@ static bool lcd_graph_prepare_glyph(void)
                     const bool graph_fill =
                         lcd_graph_column_y[x] != UINT8_MAX &&
                         graph_y >= lcd_graph_column_y[x];
-                    color = graph_fill ? LCD_COUNTER_GREEN :
-                        (grid_line ? 0x3186u : LCD_TEXT_BACKGROUND);
+                    if (graph_y == lcd_graph_red_threshold_y) {
+                        color = LCD_COUNTER_RED;
+                    } else if (graph_y == lcd_graph_yellow_threshold_y) {
+                        color = LCD_COUNTER_YELLOW;
+                    } else {
+                        color = graph_fill ? 0xBDF7u :
+                            LCD_TEXT_BACKGROUND;
+                    }
                 }
                 lcd_text_glyph[(uint16_t)row * LCD_WIDTH + x] = color;
             }
