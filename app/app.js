@@ -14,7 +14,8 @@ const CAP_SET_SETTING = 1 << 2;
 const CAP_GET_SPI_DUMP = 1 << 5;
 const CAP_SET_RTC = 1 << 6;
 const MAX_PAYLOAD = 64;
-const LOG_BATCH_SIZE = 6;
+const LOG_BATCH_SIZE = 5;
+const LOG_INITIAL_TARGETS = { days: 30, minutes: 60, hours: 24, alerts: 5 };
 const STM32_FLASH_BASE = 0x08000000;
 const STM32_FLASH_SIZE = 64 * 1024;
 const STM32_FLASH_PAGE_SIZE = 128;
@@ -208,6 +209,7 @@ const elements = {
   logTabs: document.querySelector('#log-tabs'),
   logContent: document.querySelector('#log-content'),
   logDate: document.querySelector('#log-date'),
+  logsDeviceTime: document.querySelector('#logs-device-time'),
   loadLogDate: document.querySelector('#load-log-date'),
   logsStatus: document.querySelector('#logs-status'),
   loadMoreLogs: document.querySelector('#load-more-logs'),
@@ -506,6 +508,9 @@ let logPageLoading = false;
 let logPageReloadPending = false;
 let logPageGeneration = 0;
 let logInfoLoading = false;
+let logRefreshBusy = false;
+let logCountsRefreshBusy = false;
+const logViewCache = new Map();
 let clockSyncBusy = false;
 const rateHistory = [];
 const rateStatsHistory = [];
@@ -649,7 +654,10 @@ function selectPage(page, updateUrl = true) {
   if (page === 'settings' && serial && deviceSettings === null) loadSettings();
   if (page === 'settings' && serial && logInfo === null) loadLogInfo();
   if (page === 'logs' && serial && logInfo === null) loadLogInfo();
-  else if (page === 'logs' && serial && logInfo && logRecords.length === 0) loadLogPage(true);
+  else if (page === 'logs' && serial && logInfo) {
+    if (logRecords.length === 0) loadLogPage(true);
+    else refreshLatestLogRecord();
+  }
 }
 
 function selectDebugPage(name) {
@@ -682,35 +690,96 @@ function renderDebugLogInfo() {
   elements.memoryJedec.textContent = logInfo.jedec ? logInfo.jedec : '—';
 }
 
+async function refreshLogCounts() {
+  if (!serial || !logInfo || logCountsRefreshBusy) return;
+  logCountsRefreshBusy = true;
+  const activeSerial = serial;
+  try {
+    const payload = await activeSerial.request(OP_GET_LOG_INFO, undefined, 5000);
+    if (serial !== activeSerial || ![15, 22, 26].includes(payload.length) || payload[0] !== 0) return;
+    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    logInfo.minutes = view.getUint16(2, true);
+    logInfo.hours = view.getUint16(4, true);
+    logInfo.days = view.getUint16(6, true);
+    logInfo.alerts = view.getUint16(8, true);
+    renderDebugLogInfo();
+    elements.logTabs.querySelectorAll('[data-log-type]').forEach((button) => {
+      const type = logTypes.find((item) => item.id === button.dataset.logType);
+      if (type) button.textContent = `${type.label} (${logInfo[type.countKey].toLocaleString('en-US')})`;
+    });
+  } catch {
+    // A transient index read should not interrupt the live readings or logs.
+  } finally {
+    logCountsRefreshBusy = false;
+  }
+}
+
 const logTypes = [
-  { id: 'days', label: 'DAYS', countKey: 'days' },
-  { id: 'minutes', label: 'MINUTES', countKey: 'minutes', spi: true },
-  { id: 'hours', label: 'HOURS', countKey: 'hours', spi: true },
-  { id: 'alerts', label: 'ALERTS', countKey: 'alerts', spi: true },
+  { id: 'minutes', protocolId: 1, label: 'MINUTES', countKey: 'minutes', spi: true },
+  { id: 'hours', protocolId: 2, label: 'HOURS', countKey: 'hours', spi: true },
+  { id: 'days', protocolId: 0, label: 'DAYS', countKey: 'days' },
+  { id: 'alerts', protocolId: 3, label: 'ALERTS', countKey: 'alerts', spi: true },
 ];
 
 function renderLogTabs() {
   elements.logTabs.replaceChildren();
   if (!logInfo) return;
   const enabled = logTypes.filter((type) => !type.spi || logInfo.spi);
-  if (!enabled.some((type) => type.id === selectedLogType)) selectedLogType = 'days';
+  if (!enabled.some((type) => type.id === selectedLogType)) selectedLogType = enabled[0]?.id || 'days';
   for (const type of enabled) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `log-tab${type.id === selectedLogType ? ' active' : ''}`;
     button.textContent = `${type.label} (${logInfo[type.countKey].toLocaleString('en-US')})`;
+    button.dataset.logType = type.id;
     button.setAttribute('aria-selected', String(type.id === selectedLogType));
     button.addEventListener('click', () => {
+      saveLogView();
       selectedLogType = type.id;
-      logRecords = [];
-      logPageTotal = 0;
-      logStartOffset = 0;
+      if (!restoreLogView()) {
+        logRecords = [];
+        logPageTotal = 0;
+        logStartOffset = 0;
+      }
       renderLogTabs();
-      loadLogPage(true);
+      if (logRecords.length) {
+        if (hasCurrentLogDate()) loadNewerLogRecords();
+        else refreshLatestLogRecord();
+      }
+      else if (hasCurrentLogDate()) loadLogPage(true);
+      else loadLogNearDate();
     });
     elements.logTabs.append(button);
   }
   renderLogSummary();
+}
+
+function logViewKey() {
+  return `${selectedLogType}:${elements.logDate.value || 'latest'}`;
+}
+
+function saveLogView() {
+  logViewCache.set(logViewKey(), {
+    records: logRecords.slice(),
+    startOffset: logStartOffset,
+    total: logPageTotal,
+  });
+}
+
+function restoreLogView() {
+  const view = logViewCache.get(logViewKey());
+  if (!view) return false;
+  logRecords = view.records.slice();
+  logStartOffset = view.startOffset;
+  logPageTotal = view.total;
+  return true;
+}
+
+function hasCurrentLogDate() {
+  if (!logInfo?.calendarValid) return true;
+  const today = new Date(Date.UTC(2000, 0, 1) + logInfo.calendarSeconds * 1000)
+    .toISOString().slice(0, 10);
+  return elements.logDate.value === today;
 }
 
 function renderLogSummary() {
@@ -782,19 +851,58 @@ function logValueCells(record, index) {
     `${average.value} ${average.unit}`, `${maximum.value} ${maximum.unit}`];
 }
 
-function loadLogNearDate() {
-  if (!logInfo?.calendarValid || !elements.logDate.value || selectedLogType === 'alerts') return;
-  const dateSeconds = new Date(`${elements.logDate.value}T00:00:00Z`).getTime() / 1000;
-  const periodSeconds = selectedLogType === 'minutes' ? 60 :
-    (selectedLogType === 'hours' ? 3600 : 86400);
+async function loadLogNearDate() {
+  if (!serial || !logInfo?.calendarValid || !elements.logDate.value ||
+      selectedLogType === 'alerts') return;
+  const selectedDateValue = elements.logDate.value;
+  const selectedDateUnixMs = new Date(`${selectedDateValue}T00:00:00Z`).getTime();
+  const epoch2000UnixMs = Date.UTC(2000, 0, 1);
+  const selectedDateStart = Math.floor(
+    (selectedDateUnixMs - epoch2000UnixMs) / 1000);
+  const selectedDateEnd = selectedDateStart + 86400;
+  const type = logTypes.find((item) => item.id === selectedLogType) || logTypes[0];
+  const typeId = type.protocolId;
   const physicalCount = selectedLogType === 'minutes' ? logInfo.minutes :
     (selectedLogType === 'hours' ? logInfo.hours : logInfo.days);
   const total = physicalCount + 1;
-  logStartOffset = Math.min(total - 1, Math.max(0,
-    Math.floor((logInfo.calendarSeconds - dateSeconds) / periodSeconds)));
-  logRecords = [];
-  logPageTotal = 0;
-  loadLogPage(true);
+  let targetOffset = Math.max(0, total - 1);
+  let found = false;
+
+  if (logPageLoading) return;
+  elements.logsStatus.textContent = 'Finding the last record for that date…';
+  try {
+    for (let offset = 0; offset < total; offset += 3) {
+      const requested = Math.min(3, total - offset);
+      const payload = await serial.request(OP_GET_LOG_PAGE,
+        Uint8Array.of(typeId, offset & 0xff, (offset >> 8) & 0xff, requested), 5000);
+      if (selectedLogType !== type.id || elements.logDate.value !== selectedDateValue) return;
+      if (payload.length < 7 || payload[0] !== 0 || payload[1] !== typeId) {
+        throw new ProtocolError('Invalid log page response.');
+      }
+      const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+      const responseOffset = view.getUint16(2, true);
+      const responseTotal = view.getUint16(4, true);
+      const count = payload[6];
+      if (responseOffset !== offset || payload.length !== 7 + count * 16) {
+        throw new ProtocolError('Log page is incomplete or out of sequence.');
+      }
+      for (let index = 0; index < count; index += 1) {
+        const timestamp = view.getUint32(7 + index * 16, true);
+        if (timestamp < selectedDateEnd) {
+          targetOffset = offset + index;
+          found = true;
+          break;
+        }
+      }
+      if (found || count < requested || responseTotal <= offset + count) break;
+    }
+    logStartOffset = targetOffset;
+    logRecords = [];
+    logPageTotal = 0;
+    loadLogPage(true);
+  } catch (error) {
+    elements.logsStatus.textContent = error.message;
+  }
 }
 
 function formatLogDate(seconds, type) {
@@ -868,49 +976,66 @@ async function loadLogPage(reset = false) {
   elements.loadMoreLogs.disabled = true;
   elements.logsStatus.textContent = 'Loading records…';
   renderLogSummary();
-  const typeId = logTypes.indexOf(type);
-  const target = logRecords.length + LOG_BATCH_SIZE;
+  const typeId = type.protocolId;
+  const target = logRecords.length +
+    (LOG_INITIAL_TARGETS[type.id] || LOG_BATCH_SIZE);
   let failure = '';
+  let exhausted = false;
   try {
-    while (logRecords.length < target &&
+    while (generation === logPageGeneration && !exhausted &&
+        logRecords.length < target &&
         (logStartOffset + logRecords.length < logPageTotal || logPageTotal === 0)) {
-      const offset = logStartOffset + logRecords.length;
-      const payload = await serial.request(OP_GET_LOG_PAGE,
-        Uint8Array.of(typeId, offset & 0xff, (offset >> 8) & 0xff, 3), 5000);
-      if (generation !== logPageGeneration) break;
-      if (payload.length < 7 || payload[0] !== 0 || payload[1] !== typeId) {
-        throw new ProtocolError('Invalid log page response.');
-      }
-      const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-      const responseOffset = view.getUint16(2, true);
-      const total = view.getUint16(4, true);
-      const count = payload[6];
-      if (responseOffset !== offset || payload.length !== 7 + count * 16) {
-        throw new ProtocolError('Log page is incomplete or out of sequence.');
-      }
-      logPageTotal = total;
-      for (let i = 0; i < count; i += 1) {
-        const at = 7 + i * 16;
-        const timestamp = view.getUint32(at, true);
-        if (typeId === 3) {
-          logRecords.push({
-            timestamp,
-            duration: view.getUint32(at + 4, true),
-            dose: view.getUint32(at + 8, true),
-            maximum: view.getUint32(at + 12, true),
-          });
-        } else {
-          logRecords.push({
-            timestamp,
-            dose: view.getUint32(at + 4, true),
-            minimum: view.getUint32(at + 8, true),
-            maximum: view.getUint32(at + 12, true),
-          });
+      const batchTarget = Math.min(target, logRecords.length + LOG_BATCH_SIZE);
+      while (generation === logPageGeneration &&
+          !exhausted &&
+          logRecords.length < batchTarget &&
+          (logStartOffset + logRecords.length < logPageTotal || logPageTotal === 0)) {
+        const offset = logStartOffset + logRecords.length;
+        const requested = Math.min(3, batchTarget - logRecords.length);
+        const payload = await serial.request(OP_GET_LOG_PAGE,
+          Uint8Array.of(typeId, offset & 0xff, (offset >> 8) & 0xff, requested), 5000);
+        if (generation !== logPageGeneration) break;
+        if (payload.length < 7 || payload[0] !== 0 || payload[1] !== typeId) {
+          throw new ProtocolError('Invalid log page response.');
+        }
+        const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+        const responseOffset = view.getUint16(2, true);
+        const total = view.getUint16(4, true);
+        const count = payload[6];
+        if (responseOffset !== offset || payload.length !== 7 + count * 16) {
+          throw new ProtocolError('Log page is incomplete or out of sequence.');
+        }
+        logPageTotal = total;
+        for (let i = 0; i < count; i += 1) {
+          const at = 7 + i * 16;
+          const timestamp = view.getUint32(at, true);
+          if (typeId === 3) {
+            logRecords.push({
+              timestamp,
+              duration: view.getUint32(at + 4, true),
+              dose: view.getUint32(at + 8, true),
+              maximum: view.getUint32(at + 12, true),
+            });
+          } else {
+            logRecords.push({
+              timestamp,
+              dose: view.getUint32(at + 4, true),
+              minimum: view.getUint32(at + 8, true),
+              maximum: view.getUint32(at + 12, true),
+            });
+          }
+        }
+        if (count < requested) {
+          logPageTotal = offset + count;
+          exhausted = true;
+          break;
         }
       }
-      if (count < 3) {
-        logPageTotal = offset + count;
-        break;
+      if (generation !== logPageGeneration) break;
+      renderLogSummary();
+      if (logStartOffset + logRecords.length < logPageTotal) {
+        elements.logsStatus.textContent =
+          `Loading ${(logStartOffset + logRecords.length).toLocaleString('en-US')} of ${logPageTotal.toLocaleString('en-US')} records…`;
       }
     }
   } catch (error) {
@@ -919,11 +1044,133 @@ async function loadLogPage(reset = false) {
     logPageLoading = false;
     elements.loadMoreLogs.disabled = false;
     renderLogSummary();
+    saveLogView();
     if (failure) elements.logsStatus.textContent = failure;
     if (logPageReloadPending && serial && logInfo) {
       logPageReloadPending = false;
       loadLogPage(true);
     }
+  }
+}
+
+async function refreshLatestLogRecord() {
+  if (!serial || !logInfo || logRefreshBusy || logPageLoading ||
+      elements.logsPage.hidden || !hasCurrentLogDate()) return;
+  logRefreshBusy = true;
+  const type = logTypes.find((item) => item.id === selectedLogType) || logTypes[0];
+  const typeId = type.protocolId;
+  const generation = logPageGeneration;
+  try {
+    const payload = await serial.request(OP_GET_LOG_PAGE,
+      Uint8Array.of(typeId, 0, 0, 1), 5000);
+    if (generation !== logPageGeneration || selectedLogType !== type.id ||
+        !logRecords.length || elements.logsPage.hidden || !hasCurrentLogDate()) return;
+    if (payload.length !== 23 || payload[0] !== 0 || payload[1] !== typeId ||
+        new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getUint16(2, true) !== 0 ||
+        payload[6] !== 1) {
+      throw new ProtocolError('Invalid latest log record response.');
+    }
+    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    const record = typeId === 3 ? {
+      timestamp: view.getUint32(7, true),
+      duration: view.getUint32(11, true),
+      dose: view.getUint32(15, true),
+      maximum: view.getUint32(19, true),
+    } : {
+      timestamp: view.getUint32(7, true),
+      dose: view.getUint32(11, true),
+      minimum: view.getUint32(15, true),
+      maximum: view.getUint32(19, true),
+    };
+    if (logStartOffset === 0 && record.timestamp > logRecords[0].timestamp) {
+      logRecords.unshift(record);
+      logPageTotal = Math.max(logPageTotal + 1, 1);
+      logRecords.pop();
+    } else if (record.timestamp === logRecords[0].timestamp) {
+      logRecords[0] = record;
+    } else return;
+    renderLogSummary();
+    saveLogView();
+  } catch (error) {
+    elements.logsStatus.textContent = error.message;
+  } finally {
+    logRefreshBusy = false;
+  }
+}
+
+async function loadNewerLogRecords() {
+  if (!serial || !logInfo || logPageLoading || logRefreshBusy ||
+      elements.logsPage.hidden || !hasCurrentLogDate()) return;
+  logRefreshBusy = true;
+  const type = logTypes.find((item) => item.id === selectedLogType) || logTypes[0];
+  const typeId = type.protocolId;
+  const generation = logPageGeneration;
+  try {
+    const infoPayload = await serial.request(OP_GET_LOG_INFO, undefined, 5000);
+    if (![15, 22, 26].includes(infoPayload.length) || infoPayload[0] !== 0) {
+      throw new ProtocolError('Invalid log index response.');
+    }
+    if (generation !== logPageGeneration || selectedLogType !== type.id || !hasCurrentLogDate()) return;
+    const info = new DataView(infoPayload.buffer, infoPayload.byteOffset, infoPayload.byteLength);
+    const countOffset = { minutes: 2, hours: 4, days: 6, alerts: 8 }[type.id];
+    const count = info.getUint16(countOffset, true);
+    const additional = Math.max(0, count - logPageTotal);
+    if (additional === 0) {
+      await refreshLatestLogRecord();
+      return;
+    }
+
+    const newerRecords = [];
+    let fetched = 0;
+    while (fetched < additional) {
+      const batchEnd = Math.min(additional, fetched + LOG_BATCH_SIZE);
+      while (fetched < batchEnd) {
+        const requested = Math.min(3, batchEnd - fetched);
+        const payload = await serial.request(OP_GET_LOG_PAGE,
+          Uint8Array.of(typeId, fetched & 0xff, (fetched >> 8) & 0xff, requested), 5000);
+        if (generation !== logPageGeneration || selectedLogType !== type.id || !hasCurrentLogDate()) return;
+        if (payload.length < 7 || payload[0] !== 0 || payload[1] !== typeId) {
+          throw new ProtocolError('Invalid log page response.');
+        }
+        const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+        const responseOffset = view.getUint16(2, true);
+        const returned = payload[6];
+        if (responseOffset !== fetched || payload.length !== 7 + returned * 16) {
+          throw new ProtocolError('Log page is incomplete or out of sequence.');
+        }
+        for (let index = 0; index < returned; index += 1) {
+          const at = 7 + index * 16;
+          newerRecords.push(typeId === 3 ? {
+            timestamp: view.getUint32(at, true),
+            duration: view.getUint32(at + 4, true),
+            dose: view.getUint32(at + 8, true),
+            maximum: view.getUint32(at + 12, true),
+          } : {
+            timestamp: view.getUint32(at, true),
+            dose: view.getUint32(at + 4, true),
+            minimum: view.getUint32(at + 8, true),
+            maximum: view.getUint32(at + 12, true),
+          });
+        }
+        if (returned < requested) break;
+        fetched += returned;
+      }
+      if (fetched < batchEnd) break;
+      renderLogSummary();
+      elements.logsStatus.textContent = `Loading newer records… ${fetched} of ${additional}`;
+    }
+    if (generation !== logPageGeneration || selectedLogType !== type.id) return;
+    const existingTimestamps = new Set(logRecords.map((record) => record.timestamp));
+    const uniqueNewer = newerRecords.filter((record) => !existingTimestamps.has(record.timestamp));
+    logRecords = [...uniqueNewer, ...logRecords];
+    logPageTotal = count;
+    logStartOffset = 0;
+    renderLogSummary();
+    saveLogView();
+  } catch (error) {
+    elements.logsStatus.textContent = error.message;
+  } finally {
+    logRefreshBusy = false;
   }
 }
 
@@ -964,11 +1211,12 @@ async function loadLogInfo() {
     };
     renderDebugLogInfo();
     if (logInfo.calendarValid) {
-      elements.logDate.value = new Date(logInfo.calendarSeconds * 1000)
+      elements.logDate.value = new Date(Date.UTC(2000, 0, 1) +
+        logInfo.calendarSeconds * 1000)
         .toISOString().slice(0, 10);
     }
     updateDeviceDateTime();
-    selectedLogType = 'days';
+    selectedLogType = logInfo.spi ? 'minutes' : 'days';
     renderLogTabs();
     elements.logsStatus.textContent = 'Physical records on device';
     if (!logInfo.spi) {
@@ -1137,12 +1385,14 @@ function updateDeviceDateTime(uptimeText = null) {
   if (!logInfo?.calendarValid) {
     elements.deviceDate.textContent = '—';
     elements.deviceTime.textContent = '—';
+    elements.logsDeviceTime.textContent = '—';
   } else {
     const date = new Date(Date.UTC(2000, 0, 1) + logInfo.calendarSeconds * 1000);
     elements.deviceDate.textContent = [date.getUTCFullYear(),
       String(date.getUTCMonth() + 1).padStart(2, '0'),
       String(date.getUTCDate()).padStart(2, '0')].join('-');
     elements.deviceTime.textContent = `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
+    elements.logsDeviceTime.textContent = `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}:${String(date.getUTCSeconds()).padStart(2, '0')}`;
   }
   renderSettingsClock();
   if (uptimeText !== null) elements.overviewUptime.textContent = uptimeText;
@@ -2274,6 +2524,7 @@ async function connectDevice(portOverride = null) {
   rateStatsHistory.length = 0;
   logInfo = null;
   logRecords = [];
+  logViewCache.clear();
   logStartOffset = 0;
   logPageTotal = 0;
   elements.settingsList.replaceChildren();
@@ -2290,6 +2541,7 @@ async function connectDevice(portOverride = null) {
       deviceSettings = null;
       logInfo = null;
       logRecords = [];
+      logViewCache.clear();
       logStartOffset = 0;
       logPageTotal = 0;
       elements.settingsList.replaceChildren();
@@ -2311,7 +2563,11 @@ async function connectDevice(portOverride = null) {
     await loadSettings();
     await loadLogInfo();
     await refreshStatus();
-    pollTimer = setInterval(refreshStatus, 1000);
+    pollTimer = setInterval(() => {
+      refreshStatus();
+      refreshLatestLogRecord();
+      refreshLogCounts();
+    }, 1000);
   } catch (error) {
     if (serial) await serial.disconnect();
     serial = null;
@@ -2319,6 +2575,7 @@ async function connectDevice(portOverride = null) {
     deviceSettings = null;
     logInfo = null;
     logRecords = [];
+    logViewCache.clear();
     logPageTotal = 0;
     elements.settingsList.replaceChildren();
     elements.logTabs.replaceChildren();
@@ -2341,6 +2598,7 @@ async function disconnectDevice() {
   deviceSettings = null;
   logInfo = null;
   logRecords = [];
+  logViewCache.clear();
   logPageTotal = 0;
   elements.settingsList.replaceChildren();
   elements.logTabs.replaceChildren();

@@ -151,6 +151,8 @@ button { font: inherit; }
 .log-tab.active { color: var(--green); background: rgba(0,229,139,.09); }
 .log-content { min-height: 100px; padding: 14px 0; color: var(--muted); font: 11px "DM Mono", Consolas, monospace; }
 .log-date-tools { display: flex; align-items: center; justify-content: flex-end; gap: 9px; padding: 10px 0 2px; color: var(--muted); font-size: 11px; }
+.logs-device-clock { margin-right: auto; font-size: 10px; letter-spacing: .04em; }
+.logs-device-clock strong { margin-left: 5px; color: #d8e2e4; font: 500 11px "DM Mono", Consolas, monospace; letter-spacing: 0; }
 .log-date-tools input { min-height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; color: #d8e2e4; background: #111a1f; font: 11px "DM Mono", Consolas, monospace; }
 .log-grid { min-width: 620px; display: grid; grid-template-columns: 1.1fr repeat(4, minmax(90px, 1fr)); gap: 8px; align-items: center; }
 .log-grid-header { padding: 8px 10px; color: var(--muted); font-size: 10px; text-transform: uppercase; }

@@ -102,6 +102,7 @@ static uint32_t alert_seconds_since_save;
 static bool alert_active;
 static uint32_t last_live_minute_save;
 static bool graph_hours_cover_current_day;
+static uint32_t graph_hour_current_seconds;
 static uint32_t last_live_day_save;
 
 static uint8_t crc8(const uint8_t *data, uint16_t length)
@@ -967,6 +968,7 @@ void log_storage_init(bool use_spi)
     day_calendar_key_valid = false;
     last_live_minute_save = 0u;
     last_live_day_save = 0u;
+    graph_hour_current_seconds = 0u;
     storage_spi = use_spi && spi_nor_is_ready();
     storage_spi_requested = use_spi;
     storage_spi_retry_at = board_millis + 1000u;
@@ -1152,6 +1154,7 @@ void log_storage_checkpoint(uint32_t calendar_seconds, bool calendar_valid,
                             bool usb_powered, bool screen_woke)
 {
     if (!storage_ready || !calendar_valid) return;
+    graph_hour_current_seconds = calendar_seconds % 3600u;
     const uint32_t spi_elapsed = calendar_seconds - last_live_minute_save;
     const uint32_t day_elapsed = calendar_seconds - last_live_day_save;
     if (storage_spi && ((usb_powered && spi_elapsed >= 10u) ||
@@ -1174,6 +1177,7 @@ void log_storage_restore_live(uint32_t calendar_seconds, bool calendar_valid)
     uint16_t sequence;
 
     if (!storage_ready || !calendar_valid) return;
+    graph_hour_current_seconds = calendar_seconds % 3600u;
     last_live_minute_save = calendar_seconds;
     last_live_day_save = calendar_seconds;
     if (!storage_spi) return;
@@ -1604,15 +1608,14 @@ bool log_storage_graph_page(log_graph_period_t period, uint16_t offset,
         const uint32_t sectors_to_scan = hour_ring.records_per_sector == 0u ?
             0u : (hour_ring.total_records + hour_ring.records_per_sector - 1u) /
             hour_ring.records_per_sector;
+        bool day_marker_seen = false;
         if (!spi_nor_is_ready() || !hour_ring.initialized) {
             *count = used;
             return true;
         }
         uint8_t header[NOR_SECTOR_HEADER_SIZE];
         for (uint16_t back = 0u; back < hour_ring.sector_count &&
-             back < sectors_to_scan &&
-             used < capacity && (!graph_hours_cover_current_day ||
-             offset != 0u); ++back) {
+             back < sectors_to_scan && used < capacity; ++back) {
             const uint16_t sector = (uint16_t)((hour_ring.active_sector +
                 hour_ring.sector_count - back) % hour_ring.sector_count);
             const uint32_t base = (uint32_t)(hour_ring.base_sector + sector) *
@@ -1634,14 +1637,17 @@ bool log_storage_graph_page(log_graph_period_t period, uint16_t offset,
                 }
                 if (!decode_hour(record, &sequence)) continue;
                 if ((record[9] & 0xF0u) == 0xC0u) {
-                    graph_hours_cover_current_day = true;
-                    if (offset == 0u) break;
+                    if (!day_marker_seen) {
+                        graph_hours_cover_current_day = true;
+                    }
+                    day_marker_seen = true;
                     continue;
                 }
                 /* A0 holds a partial hour closed by reboot/time change. It
                  * still contributes to today's dose and graph statistics. */
                 if ((record[9] & 0xF0u) != 0xA0u &&
                     (record[9] & 0xF0u) != 0xB0u) continue;
+                if (day_marker_seen) graph_hours_cover_current_day = false;
                 if (seen++ < offset) continue;
                 dose[used] = get_bits(record, 16u, 24u);
                 graph_pack_min_max(
@@ -1703,7 +1709,7 @@ uint32_t log_storage_graph_current_seconds(log_graph_period_t period)
 {
     if (period == LOG_GRAPH_MINUTES) return minute_seconds;
     if (period == LOG_GRAPH_HOURS) {
-        return (uint32_t)hour_minutes * 60u + minute_seconds;
+        return graph_hour_current_seconds;
     }
     return day_seconds;
 }
