@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1115">
   <title>Device Monitor</title>
-  <link rel="stylesheet" href="style.css?v=20261023-8">
+  <link rel="stylesheet" href="style.css?v=20261023-10">
 </head>
 <body>
   <main class="shell">
@@ -112,15 +112,16 @@
     </section>
 
     <section id="firmware-page" class="page placeholder-page" hidden>
-      <h2>Reboot</h2>
-      <p>Choose which mode to start. Bootloader entry is experimental because the board’s RTS/DTR wiring is not confirmed.</p>
-      <div class="actions reboot-actions">
-        <button id="reboot-firmware" class="button button-primary" type="button">Firmware</button>
-        <button id="reboot-bootloader" class="button" type="button">Bootloader</button>
-      </div>
-      <p id="reboot-status" class="reboot-status" role="status" aria-live="polite">Select a device port to begin.</p>
-      <div class="firmware-tools">
-        <h2>Flash firmware</h2>
+      <details class="firmware-tools firmware-section" name="firmware-sections" open>
+        <summary>Flash firmware</summary>
+        <div id="local-build-flash" class="local-build-flash" hidden>
+          <div class="local-build-copy">
+            <p>Flash the latest compiled <code>.pio/build/geiger2/firmware.bin</code>. This uses the existing image checks and does not run PlatformIO.</p>
+            <p class="backup-reminder">Recommended: dump and save a FLASH backup before programming.</p>
+          </div>
+          <button id="flash-local-build" class="button button-primary" type="button">Flash current build</button>
+        </div>
+        <p class="backup-reminder">Recommended: dump and save a FLASH backup before programming.</p>
         <div class="firmware-controls">
           <div class="firmware-file-control">
             <label for="firmware-file">Firmware image (.hex or .bin)</label>
@@ -131,9 +132,18 @@
           <label class="verify-option"><input id="firmware-verify" type="checkbox" checked> Verify after programming</label>
           <output id="firmware-image-status" class="firmware-image-status" data-kind="unknown" aria-live="polite">No image selected.</output>
         </div>
-      </div>
-      <div class="firmware-dumps">
-        <h2>Dumps</h2>
+      </details>
+      <details class="firmware-section reboot-section" name="firmware-sections">
+        <summary>Reboot</summary>
+        <p>Choose which mode to start. Bootloader entry is experimental because the board’s RTS/DTR wiring is not confirmed.</p>
+        <div class="actions reboot-actions">
+          <button id="reboot-firmware" class="button button-primary" type="button">Firmware</button>
+          <button id="reboot-bootloader" class="button" type="button">Bootloader</button>
+        </div>
+        <p id="reboot-status" class="reboot-status" role="status" aria-live="polite">Select a device port to begin.</p>
+      </details>
+      <details class="firmware-dumps firmware-section" name="firmware-sections">
+        <summary>Dumps</summary>
         <p>FLASH and EEPROM are read through the STM32 ROM bootloader. SPI needs a connected compatible firmware with SPI logging enabled.</p>
         <div class="dump-controls">
           <button id="dump-flash" class="button" type="button">FLASH</button>
@@ -141,14 +151,14 @@
           <button id="dump-spi" class="button" type="button" disabled>SPI</button>
         </div>
         <p id="dump-status" class="dump-status" role="status" aria-live="polite">Select a device port to read FLASH or EEPROM. SPI dump is unavailable until a compatible device is connected.</p>
-      </div>
-      <div class="firmware-activity">
+      </details>
+      <section class="firmware-activity">
         <h2>Activity</h2>
         <div class="firmware-log-window">
           <div class="firmware-log-toolbar"><button id="clear-firmware-log" class="button button-quiet" type="button">Clear</button></div>
           <pre id="firmware-log" class="firmware-log" role="log" aria-live="polite"></pre>
         </div>
-      </div>
+      </section>
     </section>
 
     <section id="instructions-page" class="page placeholder-page" hidden>
@@ -158,6 +168,6 @@
 
     <footer>Protocol V1</footer>
   </main>
-  <script defer src="app.js?v=20261023-10"></script>
+  <script defer src="app.js?v=20261023-13"></script>
 </body>
 </html>

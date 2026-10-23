@@ -202,6 +202,8 @@ const elements = {
   logsStatus: document.querySelector('#logs-status'),
   loadMoreLogs: document.querySelector('#load-more-logs'),
   firmwarePage: document.querySelector('#firmware-page'),
+  localBuildFlash: document.querySelector('#local-build-flash'),
+  flashLocalBuild: document.querySelector('#flash-local-build'),
   rebootFirmware: document.querySelector('#reboot-firmware'),
   rebootBootloader: document.querySelector('#reboot-bootloader'),
   rebootStatus: document.querySelector('#reboot-status'),
@@ -1216,7 +1218,8 @@ elements.loadLogDate.addEventListener('click', loadLogNearDate);
 elements.firmwareTab.addEventListener('click', () => selectPage('firmware'));
 elements.rebootFirmware.addEventListener('click', rebootToFirmware);
 elements.rebootBootloader.addEventListener('click', rebootToBootloader);
-elements.firmwareFile.addEventListener('change', loadFirmwareImage);
+elements.firmwareFile.addEventListener('change', () => loadFirmwareImage());
+elements.flashLocalBuild.addEventListener('click', flashLocalBuild);
 elements.clearFirmware.addEventListener('click', clearFirmwareSelection);
 elements.flashFirmware.addEventListener('click', flashSelectedFirmware);
 elements.dumpFlash.addEventListener('click', () => dumpRomMemory(
@@ -1236,6 +1239,7 @@ document.querySelectorAll('[data-debug-page]').forEach((button) => {
 selectDebugPage(selectedDebugPage);
 selectPage(window.location.hash.slice(1) || 'overview', false);
 window.addEventListener('resize', drawRateChart);
+detectLocalBuild();
 
 function appendFirmwareLog(message, level = 'normal') {
   const timestamp = new Date().toLocaleTimeString();
@@ -1372,8 +1376,8 @@ function setFirmwareImageStatus(text, kind = 'unknown') {
   elements.firmwareImageStatus.dataset.kind = kind;
 }
 
-async function loadFirmwareImage() {
-  const file = elements.firmwareFile.files?.[0];
+async function loadFirmwareImage(fileOverride = undefined) {
+  const file = fileOverride === undefined ? elements.firmwareFile.files?.[0] : fileOverride;
   selectedFirmwareImage = null;
   elements.flashFirmware.disabled = true;
   if (!file) {
@@ -1413,6 +1417,60 @@ async function loadFirmwareImage() {
   } catch (error) {
     setFirmwareImageStatus(`Invalid image · ${error.message}`, 'invalid');
     appendFirmwareLog(`Image rejected: ${error.message}`, 'error');
+  }
+}
+
+function isLocalDevelopmentHost() {
+  return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(window.location.hostname);
+}
+
+function localBuildUrl() {
+  return new URL('../.pio/build/geiger2/firmware.bin', document.baseURI);
+}
+
+async function detectLocalBuild() {
+  if (!['http:', 'https:'].includes(window.location.protocol) || !isLocalDevelopmentHost()) return;
+  try {
+    const response = await fetch(localBuildUrl(), { cache: 'no-store' });
+    if (!response.ok) return;
+    const contentLength = response.headers.get('content-length');
+    if (contentLength !== null && Number(contentLength) > STM32_FLASH_SIZE) return;
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength === 0 || bytes.byteLength > STM32_FLASH_SIZE) return;
+    elements.localBuildFlash.hidden = false;
+  } catch {
+    // Static servers that don't expose the project build directory simply hide this shortcut.
+  }
+}
+
+let localBuildFlashBusy = false;
+
+async function flashLocalBuild() {
+  if (firmwareFlashBusy) {
+    await flashSelectedFirmware();
+    return;
+  }
+  if (localBuildFlashBusy) return;
+  localBuildFlashBusy = true;
+  elements.flashLocalBuild.disabled = true;
+  try {
+    const response = await fetch(localBuildUrl(), { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Could not read the local build (HTTP ${response.status}).`);
+    const bytes = await response.arrayBuffer();
+    const file = new File([bytes], 'firmware.bin', { type: 'application/octet-stream' });
+    await loadFirmwareImage(file);
+    if (!selectedFirmwareImage) throw new Error('The local build failed firmware image validation.');
+    localBuildFlashBusy = false;
+    elements.flashLocalBuild.disabled = false;
+    elements.flashLocalBuild.textContent = 'Stop';
+    await flashSelectedFirmware();
+  } catch (error) {
+    appendFirmwareLog(`Local build flash failed: ${error.message}`, 'error');
+    setFirmwareImageStatus(`Invalid local build · ${error.message}`, 'invalid');
+  } finally {
+    localBuildFlashBusy = false;
+    elements.flashLocalBuild.disabled = firmwareFlashBusy;
+    if (!firmwareFlashBusy) elements.flashLocalBuild.textContent = 'Flash current build';
   }
 }
 
@@ -1724,6 +1782,8 @@ async function flashSelectedFirmware() {
   }
   firmwareFlashBusy = true;
   firmwareStopRequested = false;
+  elements.flashLocalBuild.disabled = false;
+  elements.flashLocalBuild.textContent = 'Stop';
   elements.firmwareFile.disabled = true;
   elements.clearFirmware.disabled = true;
   elements.firmwareVerify.disabled = true;
@@ -1839,6 +1899,8 @@ async function flashSelectedFirmware() {
     elements.rebootBootloader.disabled = false;
     elements.flashFirmware.textContent = 'Flash';
     elements.flashFirmware.classList.remove('button-stop');
+    elements.flashLocalBuild.disabled = false;
+    elements.flashLocalBuild.textContent = 'Flash current build';
     if (success) {
       elements.firmwareFile.value = '';
       selectedFirmwareImage = null;

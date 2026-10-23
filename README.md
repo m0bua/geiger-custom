@@ -6,7 +6,15 @@ STM32L051C8T6 firmware for the Geiger-2. The current prototype displays rolling 
 
 The LCD has two main pages: dose rate in µSv/h with CPM, and accumulated dose. A long right-click on Dose opens the current rate graph; short clicks select its range. A long right-click from Rate opens `TIME → SETTINGS → DEBUG`. In that menu, short right/left clicks navigate and long left-click returns. TIME displays uptime until a calendar time is set; the RTC clock now works after an RCC register address fix. Main pages include solar and battery percentages. The backlight times out after 10 seconds. A detector pulse briefly flashes the LED in the current dose-rate color. LCD uses SPI2 on PB13/PB15, PA8 reset, PB11 D/C, and active-low PA11 CS. Physical dose calibration and HV control remain open. SPI logging is implemented; long-term write/erase reliability on the physical NOR chip still needs verification.
 
-The repository also contains a working browser console in [`app/`](app/README.md): live Overview, log browsing, supported settings, and Debug over Web Serial. It has no build step or external dependencies. Firmware update and time synchronization through the app are not implemented yet.
+The repository also contains a working browser console in [`app/`](app/README.md): live Overview, log browsing, supported settings, Debug, firmware flashing, reboot, and memory dumps over Web Serial. It has no build step or external dependencies.
+
+To run the browser console locally, start a static server from the repository root:
+
+```powershell
+python -m http.server 8000
+```
+
+Then open <http://localhost:8000/app/>. This also enables the local-build flash shortcut when `.pio/build/geiger2/firmware.bin` is present.
 
 ## Layout
 
