@@ -76,6 +76,28 @@ button { font: inherit; }
 .information-card p, .information-card li { color: #aebbc0; font-size: 12px; line-height: 1.6; }
 .information-card p { margin: 8px 0 0; }
 .information-card ol, .information-card ul { display: grid; gap: 6px; margin: 0; padding-left: 22px; }
+.manual-card > summary { color: #d8e2e4; font-size: 13px; font-weight: 600; cursor: pointer; list-style: none; }
+.manual-card > summary::-webkit-details-marker { display: none; }
+.manual-card > summary::after { float: right; color: var(--muted); content: "+"; font: 18px/1 "DM Mono", Consolas, monospace; }
+.manual-card[open] > summary::after { content: "−"; }
+.manual-card > :not(summary) { margin-top: 12px; }
+.device-manual > summary { display: flex; align-items: center; gap: 10px; color: #d8e2e4; font-size: 13px; font-weight: 600; cursor: pointer; list-style: none; }
+.device-manual > summary::-webkit-details-marker, .manual-chapter > summary::-webkit-details-marker { display: none; }
+.device-manual > summary::before { content: "☰"; color: var(--green); font-size: 18px; line-height: 1; }
+.device-manual > summary::after { margin-left: auto; color: var(--muted); content: "+"; font: 18px/1 "DM Mono", Consolas, monospace; }
+.device-manual[open] > summary::after, .manual-chapter[open] > summary::after { content: "−"; }
+.device-manual-content { display: grid; gap: 10px; margin-top: 14px; }
+.manual-chapter { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #0b1115; }
+.manual-chapter > summary { color: #d8e2e4; font-size: 12px; font-weight: 600; cursor: pointer; list-style: none; }
+.manual-chapter > summary::after { float: right; color: var(--muted); content: "+"; font: 16px/1 "DM Mono", Consolas, monospace; }
+.manual-chapter > :not(summary) { margin-top: 10px; }
+.manual-screen-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; margin-top: 14px; }
+.manual-screen-grid figure { min-width: 0; margin: 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #0b1115; }
+.manual-screen-grid figcaption { margin-bottom: 8px; color: #d8e2e4; font-size: 11px; }
+.manual-screen-grid img { display: block; width: 100%; height: auto; }
+.manual-screen-single { max-width: 420px; margin: 12px 0 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #0b1115; }
+.manual-screen-single figcaption { margin-bottom: 8px; color: #d8e2e4; font-size: 11px; }
+.manual-screen-single img { display: block; width: 100%; height: auto; }
 .information-card code, .information-page code { color: #d8e2e4; font: 11px "DM Mono", Consolas, monospace; }
 .app-version { margin: 0; color: var(--muted); font-size: 12px; }
 .app-version strong { color: #d8e2e4; font-weight: 600; }

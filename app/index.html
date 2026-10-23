@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1115">
   <title>Device Monitor</title>
-  <link rel="stylesheet" href="style.css?v=20261023-13">
+  <link rel="stylesheet" href="style.css?v=20261023-14">
 </head>
 <body>
   <main class="shell">
@@ -177,28 +177,91 @@
 
     <section id="manual-page" class="page information-page" hidden>
       <h2>Manual</h2>
-      <section class="information-card">
-        <h3>Start here</h3>
+      <details class="information-card manual-card">
+        <summary>Start here</summary>
         <ol>
           <li>Serve the repository locally with <code>python -m http.server 8000</code>, then open <code>http://localhost:8000/app/</code>.</li>
           <li>Connect the device with <strong>Connect</strong>. Opening the serial port can restart the device; the app waits for it to answer.</li>
           <li>Use the tabs to view readings, browse logs, edit supported settings, inspect diagnostics, or manage firmware.</li>
         </ol>
-      </section>
-      <section class="information-card">
-        <h3>Firmware and backups</h3>
+      </details>
+      <details class="information-card manual-card">
+        <summary>Firmware and backups</summary>
         <p>Before flashing, use <strong>Firmware → Dumps → FLASH</strong> and save the downloaded backup. The local-build button flashes the latest existing <code>.pio/build/geiger2/firmware.bin</code>; it does not compile the firmware.</p>
         <p>Manual flashing accepts validated STM32 <code>.hex</code> and <code>.bin</code> images. Read the image status and keep <strong>Verify after programming</strong> enabled. Reboot and dump controls are in the collapsible sections below Flash firmware.</p>
-      </section>
-      <section class="information-card">
-        <h3>Readings and data</h3>
+      </details>
+      <details class="information-card manual-card">
+        <summary>Readings and data</summary>
         <ul>
           <li><strong>Overview:</strong> current rate, dose today, solar and battery readings, device clock, and recent rate chart.</li>
           <li><strong>Logs:</strong> browse day, minute, hour, and alert records when available. Load older pages as needed.</li>
           <li><strong>Settings:</strong> read and change settings supported by the connected firmware.</li>
           <li><strong>Debug:</strong> inspect uptime, counters, clock, memory, log counts, and raw voltage readings.</li>
         </ul>
-      </section>
+      </details>
+      <details class="information-card device-manual">
+        <summary>Geiger-2 device manual</summary>
+        <div class="device-manual-content">
+        <p>This guide describes the device display and its two buttons. The illustrations are representative screen layouts; values shown in them are examples.</p>
+        <details class="manual-chapter">
+        <summary>Button gestures</summary>
+        <ul>
+          <li><strong>Short press:</strong> press and release before the configured long-press threshold.</li>
+          <li><strong>Long press:</strong> hold until the device recognizes it. The threshold is configurable in Settings → LONG PRESS.</li>
+          <li><strong>Left button:</strong> usually moves backward, changes a value, or cancels.</li>
+          <li><strong>Right button:</strong> usually moves forward, changes a value, or confirms.</li>
+        </ul>
+        <p>On the two main screens, short Right switches between Level and Dose. Long Right opens the extra-screen group. While held there, it advances through Time, Settings, and Debug; release when the desired page appears. Long Left exits a menu or returns to the main screen. On the Level screen, long Left toggles the flashlight.</p>
+        </details>
+
+        <details class="manual-chapter">
+        <summary>1 · Level screen</summary>
+        <p>The large value is the current dose rate. The top row shows device time, solar input, and battery status. The smaller second row can show CPM/CPS, a rolling rate statistic, or a CNT warm-up progress bar, depending on Settings. The letter at the top indicates the selected indication mode; a flashlight marker appears when its manual light is on. The counter color and LEDs can change with the configured thresholds.</p>
+        <p><strong>Short Left</strong> cycles the indication modes. <strong>Short Right</strong> opens Dose. <strong>Long Left</strong> toggles the flashlight. <strong>Long Right</strong> opens the extra screens.</p>
+        <div class="manual-screen-grid">
+          <figure><figcaption>1.0.1 · Blue rate display with CNT progress</figcaption><img src="../docs/renders/screens/1.0.1-rate-blue-cnt.svg" alt="Rate screen with blue counter and CNT progress bar" loading="lazy"></figure>
+          <figure><figcaption>1.0.2 · Green rate display with CPM</figcaption><img src="../docs/renders/screens/1.0.2-rate-green-cpm.svg" alt="Rate screen with green counter and CPM row" loading="lazy"></figure>
+        </div>
+        </details>
+
+        <details class="manual-chapter">
+        <summary>1.1 · Time</summary>
+        <p>Shows the device clock, calendar date, and uptime. Long Right opens the editable fields. Short Left/Right moves between year, month, day, hour, minute, and SAVE. Long Right starts editing a field; short Left/Right changes its value; long Right accepts it. On SAVE, long Right writes the calendar. Long Left cancels the current field edit; if no field is being edited, it closes the field list. Long Left again returns to the main screen.</p>
+        <figure class="manual-screen-single"><figcaption>1.1 · Time and uptime</figcaption><img src="../docs/renders/screens/1.1-time.svg" alt="Time screen showing clock, date, and uptime" loading="lazy"></figure>
+        </details>
+
+        <details class="manual-chapter">
+        <summary>1.2 · Settings</summary>
+        <p>Long Right opens the settings list. Short Left/Right moves the highlight. Long Right activates the highlighted item. Simple options with up to three choices change immediately. For options with more choices, long Right enters value editing; short Left/Right cycles through values, long Right saves, and long Left cancels. The list includes display and LED behavior, click sounds, brightness and screen timeout, units and prefixes, secondary rows, dose period and alarms, SPI logging, long-press timing, reset/cleanup actions, Power Off, and Reboot. Some items depend on the selected units or hardware.</p>
+        <div class="manual-screen-grid">
+          <figure><figcaption>1.2.1 · Settings with a simple option selected</figcaption><img src="../docs/renders/screens/1.2.1-settings-simple.svg" alt="Settings screen with a simple option highlighted" loading="lazy"></figure>
+          <figure><figcaption>1.2.2 · Settings with a multi-value option selected</figcaption><img src="../docs/renders/screens/1.2.2-settings-many-options.svg" alt="Settings screen editing LED brightness with multiple choices" loading="lazy"></figure>
+        </div>
+        </details>
+
+        <details class="manual-chapter">
+        <summary>1.3 · Debug</summary>
+        <p>Shows diagnostic information across four views: DEBUG (uptime, pulse count, RTC and clock), DEBUG MEM (memory and SPI status), DEBUG LOGS (minute, hour, day, and alert record counts), and DEBUG VOLT (battery, solar, and USB readings). Long Right cycles through the diagnostic views. Short Left/Right moves between Time, Settings, and Debug.</p>
+        </details>
+
+        <details class="manual-chapter">
+        <summary>2 · Dose</summary>
+        <p>Shows accumulated dose for the period selected by DOSE PERIOD in Settings: uptime, current day, or total. The unit and optional second row are configurable. The second row can show a count, rate-like value, another period total, or be turned off in Settings. Short Left cycles the indication modes; short Right returns to Level; long Right opens the graph pages.</p>
+        <figure class="manual-screen-single"><figcaption>2 · Accumulated dose</figcaption><img src="../docs/renders/screens/2-dose.svg" alt="Dose screen showing accumulated dose and a secondary row" loading="lazy"></figure>
+        </details>
+
+        <details class="manual-chapter">
+        <summary>2.1 · Graphs</summary>
+        <p>Long Right from Dose opens the graph view. Short Left/Right selects a graph type: SEC, MIN, HOUR, DAY, or ALERTS. SEC displays a rolling rate history; long Right steps its window through 10, 30, 60, and 90 seconds. Logged MIN, HOUR, and DAY views show stored history when available. ALERTS shows recorded alarm events. Some log types require SPI logging to be enabled; available history also depends on what the device has recorded.</p>
+        <p>For a log graph, long Right enables the data cursor. Short Left/Right moves between records; the selected record’s date and statistics are shown. Long Right exits cursor selection. Long Left returns from the selected record to graph selection, then returns to Dose.</p>
+        <div class="manual-screen-grid">
+          <figure><figcaption>2.1 · 90-second rate graph</figcaption><img src="../docs/renders/screens/2.1-graph-90s.svg" alt="Rate graph with a 90-second window" loading="lazy"></figure>
+          <figure><figcaption>2.2 · Day graph with a selected record</figcaption><img src="../docs/renders/screens/2.2-graph-days.svg" alt="Day history graph with selected column and date" loading="lazy"></figure>
+        </div>
+        <p class="information-note">Screen colors, values, times, battery and solar percentages in these SVG renders are illustrative. They are not live readings or calibration references.</p>
+        </details>
+        </div>
+      </details>
       <p class="information-note">Web Serial requires a supported browser and a secure context such as localhost or HTTPS.</p>
     </section>
 
