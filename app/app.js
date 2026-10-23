@@ -795,7 +795,8 @@ function renderLogSummary() {
     return;
   }
   elements.logsStatus.textContent = `${(logStartOffset + logRecords.length).toLocaleString('en-US')} of ${logPageTotal.toLocaleString('en-US')} records`;
-  const maxDose = Math.max(1, logRecords.reduce((maximum, record) =>
+  const displayRecords = mergeAggregateLogPeriods(logRecords, selectedLogType);
+  const maxDose = Math.max(1, displayRecords.reduce((maximum, record) =>
     Math.max(maximum, record.dose), 0));
   const header = document.createElement('div');
   header.className = 'log-grid log-grid-header';
@@ -803,7 +804,7 @@ function renderLogSummary() {
     '<span>Date</span><span>Duration</span><span>Dose</span><span>Average</span><span>Maximum</span>' :
     '<span>Date</span><span>Dose</span><span>Minimum</span><span>Average</span><span>Maximum</span>';
   elements.logContent.append(header);
-  logRecords.forEach((record, index) => {
+  displayRecords.forEach((record, index) => {
     const row = document.createElement('div');
     const severity = record.maximum >= 136 ? 'red' : (record.maximum >= 61 ? 'yellow' : 'normal');
     row.className = `log-grid log-record severity-${severity}`;
@@ -818,6 +819,32 @@ function renderLogSummary() {
     elements.logContent.append(row);
   });
   elements.loadMoreLogs.hidden = logPageLoading || logStartOffset + logRecords.length >= logPageTotal;
+}
+
+function mergeAggregateLogPeriods(records, type) {
+  if (type === 'alerts' || records.length < 2) return records;
+  const periodSeconds = type === 'minutes' ? 60 :
+    (type === 'hours' ? 3600 : 86400);
+  const merged = [];
+  const byPeriod = new Map();
+  records.forEach((record) => {
+    if (!record.timestamp) {
+      merged.push({ ...record });
+      return;
+    }
+    const period = Math.floor(record.timestamp / periodSeconds);
+    const existing = byPeriod.get(period);
+    if (!existing) {
+      const entry = { ...record };
+      byPeriod.set(period, entry);
+      merged.push(entry);
+      return;
+    }
+    existing.dose += record.dose;
+    existing.minimum = Math.min(existing.minimum, record.minimum);
+    existing.maximum = Math.max(existing.maximum, record.maximum);
+  });
+  return merged;
 }
 
 function logValueCells(record, index) {
