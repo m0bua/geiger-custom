@@ -513,10 +513,14 @@ const rateStatsHistory = [];
 const remoteSettings = [
   { id: 0, label: 'LED', options: ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED'] },
   { id: 1, label: 'CLICKS', options: ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED'] },
-  { id: 2, label: 'SCREEN ALARM', options: ['OFF', 'YELLOW', 'RED'] },
-  { id: 3, label: 'LIGHT ALARM', options: ['OFF', 'YELLOW', 'RED'] },
-  { id: 4, label: 'SOUND ALARM', options: ['OFF', 'YELLOW', 'RED'] },
-  { id: 16, label: 'DOSE ALARM', options: ['OFF', 'AUTO-Y', 'AUTO-R', '5', '7', '10', '30', '50', '100', '500', '1000'] },
+  { id: 2, label: 'RATE SCREEN', options: ['OFF', 'YELLOW', 'RED', 'CUSTOM'] },
+  { id: 3, label: 'RATE LIGHT', options: ['OFF', 'YELLOW', 'RED', 'CUSTOM'] },
+  { id: 4, label: 'RATE SOUND', options: ['OFF', 'YELLOW', 'RED', 'CUSTOM'] },
+  { id: 16, label: 'RATE CUSTOM', options: ['0.3 µSv/h', '0.4 µSv/h', '0.5 µSv/h', '0.7 µSv/h', '0.9 µSv/h', '1 µSv/h', '2 µSv/h', '5 µSv/h', '10 µSv/h'] },
+  { id: 24, label: 'DOSE SCREEN', options: ['OFF', 'YELLOW', 'RED', 'CUSTOM'] },
+  { id: 25, label: 'DOSE LIGHT', options: ['OFF', 'YELLOW', 'RED', 'CUSTOM'] },
+  { id: 26, label: 'DOSE SOUND', options: ['OFF', 'YELLOW', 'RED', 'CUSTOM'] },
+  { id: 27, label: 'DOSE CUSTOM', options: ['5 µSv', '7 µSv', '10 µSv', '30 µSv', '50 µSv', '100 µSv', '500 µSv', '1000 µSv'] },
   { id: 17, label: 'ALARM STOP', options: ['CLEAR', 'BUTTON'] },
   { id: 5, label: 'LED BRIGHT', options: ['AUTO', '1%', '3%', '5%', '10%', '25%', '50%', '80%', '100%'] },
   { id: 6, label: 'SCREEN BRIGHT', options: ['AUTO', '1%', '3%', '5%', '10%', '25%', '50%', '80%', '100%'] },
@@ -1164,6 +1168,14 @@ function updateSpiDumpAvailability() {
 }
 
 function settingsOptions(setting) {
+  if (deviceSettings?.length !== 28) {
+    if (setting.id >= 24) return setting.options;
+    if (setting.id >= 2 && setting.id <= 4) return ['OFF', 'YELLOW', 'RED'];
+    if (setting.id === 16) {
+      return ['OFF', 'AUTO-Y', 'AUTO-R', '5 µSv', '7 µSv', '10 µSv',
+        '30 µSv', '50 µSv', '100 µSv', '500 µSv', '1000 µSv'];
+    }
+  }
   if ((setting.id === 10 || setting.id === 11) && deviceSettings?.[9] === 1) {
     return ['CPM', 'CPS'];
   }
@@ -1172,6 +1184,7 @@ function settingsOptions(setting) {
     return deviceSettings?.[9] === 1 ? ['µSv', 'R', 'OFF', ...stats] :
       ['CPM', 'CPS', 'OFF', ...stats];
   }
+  if (setting.id === 16) return setting.options;
   if (setting.id === 22) {
     const unit = deviceSettings?.[9] ?? 0;
     const period = deviceSettings?.[23] ?? 1;
@@ -1199,6 +1212,15 @@ function settingsOptions(setting) {
   return setting.options;
 }
 
+function settingLabel(setting) {
+  if (deviceSettings?.length === 28) return setting.label;
+  if (setting.id === 2) return 'SCREEN ALARM';
+  if (setting.id === 3) return 'LIGHT ALARM';
+  if (setting.id === 4) return 'SOUND ALARM';
+  if (setting.id === 16) return 'DOSE ALARM';
+  return setting.label;
+}
+
 function renderSettings() {
   elements.settingsList.replaceChildren();
   const rows = [];
@@ -1211,7 +1233,7 @@ function renderSettings() {
     row.className = 'setting-row';
     const label = document.createElement('label');
     label.htmlFor = `setting-${setting.id}`;
-    label.textContent = setting.label;
+    label.textContent = settingLabel(setting);
     const select = document.createElement('select');
     select.id = `setting-${setting.id}`;
     select.dataset.settingId = String(setting.id);
@@ -1262,7 +1284,7 @@ async function loadSettings() {
   try {
     const payload = await serial.request(OP_GET_SETTINGS);
     if (payload.length < 2 || payload[0] !== 0 ||
-        ![21, 22, 24].includes(payload[1]) ||
+        ![21, 22, 24, 28].includes(payload[1]) ||
         payload.length !== payload[1] + 2) {
       throw new ProtocolError('Invalid settings response.');
     }
