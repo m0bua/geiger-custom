@@ -4,12 +4,15 @@ STM32L051C8T6 firmware for the Geiger-2. The current prototype displays rolling 
 
 ## Status
 
-The LCD has two main pages: dose rate in µSv/h with CPM, and accumulated dose. Short right-click switches them; long right-click opens `TIME → SETTINGS → DEBUG`. In that menu, short right/left clicks navigate and long left-click returns. TIME displays uptime until a calendar time is set; the RTC clock now works after an RCC register address fix. Main pages include solar and battery percentages. The backlight times out after 10 seconds. A detector pulse briefly flashes the LED in the current dose-rate color. LCD uses SPI2 on PB13/PB15, PA8 reset, PB11 D/C, and active-low PA11 CS. See [display status](docs/docs/LCD_AND_DISPLAY.md). Physical dose calibration, HV control, and external flash writes remain open.
+The LCD has two main pages: dose rate in µSv/h with CPM, and accumulated dose. A long right-click on Dose opens the current rate graph; short clicks select its range. A long right-click from Rate opens `TIME → SETTINGS → DEBUG`. In that menu, short right/left clicks navigate and long left-click returns. TIME displays uptime until a calendar time is set; the RTC clock now works after an RCC register address fix. Main pages include solar and battery percentages. The backlight times out after 10 seconds. A detector pulse briefly flashes the LED in the current dose-rate color. LCD uses SPI2 on PB13/PB15, PA8 reset, PB11 D/C, and active-low PA11 CS. Physical dose calibration and HV control remain open. SPI logging is implemented; long-term write/erase reliability on the physical NOR chip still needs verification.
+
+The repository also contains a working browser console in [`app/`](app/README.md): live Overview, log browsing, supported settings, and Debug over Web Serial. It has no build step or external dependencies. Firmware update and time synchronization through the app are not implemented yet.
 
 ## Layout
 
 - `include/` — portable application interfaces and configuration types.
 - `src/` — measurement/configuration logic and the STM32L051 board implementation.
+- `app/` — browser client (HTML/CSS/JavaScript) and run instructions.
 - `include/board_config.h` — board pin constants and hardware configuration.
 - `board/` — board notes and mapping status.
 - `linker/` and `startup_stm32l051.S` — initial STM32L051C8 startup and memory map.
@@ -18,7 +21,7 @@ The LCD has two main pages: dose rate in µSv/h with CPM, and accumulated dose. 
 
 1. Verify detector rate against a longer reference measurement and calibrate the dose coefficient.
 2. Map and verify HV control, battery/solar ADC scaling, speaker, and remaining board signals.
-3. Confirm the exact SPI NOR part and geometry before defining any erase or journal operations.
+3. Confirm the SPI NOR geometry and verify journal read/write/erase behavior on the actual chip before relying on long-term retention.
 
 ## Build with PlatformIO
 

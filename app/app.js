@@ -11,9 +11,162 @@ const CAP_GET_SETTINGS = 1 << 1;
 const CAP_SET_SETTING = 1 << 2;
 const MAX_PAYLOAD = 64;
 const LOG_BATCH_SIZE = 6;
+const STM32_FLASH_BASE = 0x08000000;
+const STM32_FLASH_SIZE = 64 * 1024;
+const STM32_FLASH_PAGE_SIZE = 128;
+const STM32_DEVICE_ID = 0x0417;
+const STM32_FLASH_PAGE_COUNT = STM32_FLASH_SIZE / STM32_FLASH_PAGE_SIZE;
+const PROJECT_IMAGE_MARKER = Uint8Array.of(0x4d, 0x47, 0x32, 0x46, 0x57, 0x49, 0x44, 0x31); // MG2FWID1
+// Exact 790-byte common block in the four supplied stock HEX variants.
+const STOCK_FAMILY_SIGNATURE_OFFSET = 0x106;
+const STOCK_FAMILY_SIGNATURE_LENGTH = 790;
+const STOCK_FAMILY_SIGNATURE_SHA256 = '6dee8762ae06eb90f6400ed805221ea6d4cccf54ae69c9f7d04f7d65e0c401b0';
+const KNOWN_STOCK_IMAGE_SHA256 = 'cee27644cccea4023118f97d1a990be3bf6acb44748d61c0811f4cee0ed53386';
+// SHA-256 of the canonical 64 KiB flash image (gaps filled with 0xFF), not the source file.
+// Maintain these lists for this JS protocol; clear/review them when the protocol changes.
+const COMPATIBLE_PROJECT_IMAGE_SHA256 = new Set([
+  'ca1447612d433d5dfdfcb7d2c7f14d9a4a98fde337fbb9160b896aa1b77fbe81',
+]);
+// Known project builds with a non-breaking protocol/settings difference (for example,
+// a changed settings list) while core operations remain usable. Add hashes only after review.
+const PARTIALLY_COMPATIBLE_PROJECT_IMAGE_SHA256 = new Set([]);
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function checkFirmwareStopRequested() {
+  if (firmwareStopRequested) throw new Error('Update stopped by user.');
+}
+
+class Stm32Bootloader {
+  constructor(port) {
+    this.port = port;
+    this.reader = port.readable.getReader();
+    this.writer = port.writable.getWriter();
+    this.buffer = [];
+  }
+
+  async write(bytes) {
+    await this.writer.write(Uint8Array.from(bytes));
+  }
+
+  async readBytes(length, timeoutMs = 3000) {
+    while (this.buffer.length < length) {
+      const result = await Promise.race([
+        this.reader.read(),
+        delay(timeoutMs).then(() => { throw new Error('Timed out waiting for STM32 ROM bootloader.'); }),
+      ]);
+      if (result.done) throw new Error('Serial port closed while waiting for bootloader response.');
+      this.buffer.push(...result.value);
+    }
+    return Uint8Array.from(this.buffer.splice(0, length));
+  }
+
+  async expectAck(context, timeoutMs = 3000) {
+    const [value] = await this.readBytes(1, timeoutMs);
+    if (value === 0x1f) throw new Error(`STM32 ROM bootloader returned NACK during ${context}.`);
+    if (value !== 0x79) throw new Error(`Unexpected bootloader response 0x${value.toString(16).padStart(2, '0')} during ${context}.`);
+  }
+
+  async command(command, complement, context) {
+    await this.write([command, complement]);
+    await this.expectAck(context);
+  }
+
+  async getCommands() {
+    await this.command(0x00, 0xff, 'Get');
+    const length = (await this.readBytes(1))[0] + 1;
+    const response = await this.readBytes(length);
+    await this.expectAck('Get completion');
+    return { version: response[0], commands: response.slice(1) };
+  }
+
+  async getDeviceId() {
+    await this.command(0x02, 0xfd, 'Get ID');
+    const length = (await this.readBytes(1))[0] + 1;
+    const response = await this.readBytes(length);
+    await this.expectAck('Get ID completion');
+    if (response.length < 2) throw new Error('Bootloader returned a malformed device ID.');
+    return (response[0] << 8) | response[1];
+  }
+
+  async erasePages(pageNumbers, commands) {
+    if (commands.includes(0x44)) {
+      // Chunk page lists to keep each serial request comfortably bounded.
+      for (let offset = 0; offset < pageNumbers.length; offset += 255) {
+        checkFirmwareStopRequested();
+        const batch = pageNumbers.slice(offset, offset + 255);
+        await this.command(0x44, 0xbb, 'extended erase');
+        const count = batch.length - 1;
+        const body = [(count >> 8) & 0xff, count & 0xff];
+        for (const page of batch) body.push((page >> 8) & 0xff, page & 0xff);
+        body.push(body.reduce((checksum, byte) => checksum ^ byte, 0));
+        await this.write(body);
+        await this.expectAck('extended erase', 60000);
+      }
+      return;
+    }
+    if (!commands.includes(0x43)) {
+      throw new Error('The bootloader does not support erasing this firmware image safely.');
+    }
+    if (pageNumbers.some((page) => page > 255)) {
+      throw new Error('The bootloader only supports 8-bit page numbers; this image needs extended erase for pages above 255. No pages were erased.');
+    }
+    // Standard erase can list at most 255 pages per request (0xFF is reserved).
+    for (let offset = 0; offset < pageNumbers.length; offset += 255) {
+      checkFirmwareStopRequested();
+      const batch = pageNumbers.slice(offset, offset + 255);
+      await this.command(0x43, 0xbc, 'erase');
+      const body = [batch.length - 1, ...batch];
+      body.push(body.reduce((checksum, byte) => checksum ^ byte, 0));
+      await this.write(body);
+      await this.expectAck('erase', 60000);
+    }
+  }
+
+  async writePage(address, data) {
+    await this.command(0x31, 0xce, 'Write Memory');
+    const addr = [
+      (address >>> 24) & 0xff,
+      (address >>> 16) & 0xff,
+      (address >>> 8) & 0xff,
+      address & 0xff,
+    ];
+    addr.push(addr.reduce((checksum, byte) => checksum ^ byte, 0));
+    await this.write(addr);
+    await this.expectAck('Write Memory address');
+    const body = [data.length - 1, ...data];
+    body.push(body.reduce((checksum, byte) => checksum ^ byte, 0));
+    await this.write(body);
+    await this.expectAck('Write Memory data');
+  }
+
+  async readMemory(address, length) {
+    await this.command(0x11, 0xee, 'Read Memory');
+    const addr = [
+      (address >>> 24) & 0xff,
+      (address >>> 16) & 0xff,
+      (address >>> 8) & 0xff,
+      address & 0xff,
+    ];
+    addr.push(addr.reduce((checksum, byte) => checksum ^ byte, 0));
+    await this.write(addr);
+    await this.expectAck('Read Memory address');
+    const count = length - 1;
+    await this.write([count, count ^ 0xff]);
+    await this.expectAck('Read Memory length');
+    return this.readBytes(length, 10000);
+  }
+
+  async close(closePort = true) {
+    try { await this.reader.cancel(); } catch { /* stream may already be closed */ }
+    try { this.reader.releaseLock(); } catch { /* already released */ }
+    try { this.writer.releaseLock(); } catch { /* already released */ }
+    if (closePort) {
+      try { await this.port.close(); } catch { /* already closed */ }
+    }
+  }
 }
 
 const elements = {
@@ -44,6 +197,16 @@ const elements = {
   logsStatus: document.querySelector('#logs-status'),
   loadMoreLogs: document.querySelector('#load-more-logs'),
   firmwarePage: document.querySelector('#firmware-page'),
+  rebootFirmware: document.querySelector('#reboot-firmware'),
+  rebootBootloader: document.querySelector('#reboot-bootloader'),
+  rebootStatus: document.querySelector('#reboot-status'),
+  firmwareFile: document.querySelector('#firmware-file'),
+  firmwareImageStatus: document.querySelector('#firmware-image-status'),
+  clearFirmware: document.querySelector('#clear-firmware'),
+  clearFirmwareLog: document.querySelector('#clear-firmware-log'),
+  firmwareVerify: document.querySelector('#firmware-verify'),
+  flashFirmware: document.querySelector('#flash-firmware'),
+  firmwareLog: document.querySelector('#firmware-log'),
   instructionsPage: document.querySelector('#instructions-page'),
   settingsStatus: document.querySelector('#settings-status'),
   settingsList: document.querySelector('#settings-list'),
@@ -180,13 +343,15 @@ class SerialProtocol {
     this.discardFrame = false;
   }
 
-  async connect() {
+  async connect(portOverride = null) {
     if (!('serial' in navigator)) {
       throw new Error('Web Serial is not available in this browser. Try a supported desktop browser.');
     }
-    this.port = await navigator.serial.requestPort();
+    this.port = portOverride || await navigator.serial.requestPort();
+    selectedSerialPort = this.port;
     this.portInfo = this.port.getInfo?.() || {};
     await this.port.open({ baudRate: 115200, dataBits: 8, parity: 'none', stopBits: 1, flowControl: 'none', bufferSize: 256 });
+    portMayBeOpen = true;
     // Restore the previously working behavior: release DTR/RTS after open.
     // This can reboot the device; HELLO is retried after its startup delay.
     await this.port.setSignals({ dataTerminalReady: false, requestToSend: false });
@@ -284,7 +449,10 @@ class SerialProtocol {
       this.writer = null;
     }
     if (this.port) {
-      try { await this.port.close(); } catch { /* already closed */ }
+      try {
+        await this.port.close();
+        portMayBeOpen = false;
+      } catch { portMayBeOpen = true; /* expose a retry through the Disconnect button */ }
       this.port = null;
     }
     this.readTask = null;
@@ -292,6 +460,12 @@ class SerialProtocol {
 }
 
 let serial = null;
+let selectedSerialPort = null;
+let bootloaderPortOpen = false;
+let portMayBeOpen = false;
+let selectedFirmwareImage = null;
+let firmwareFlashBusy = false;
+let firmwareStopRequested = false;
 let pollTimer = 0;
 let polling = false;
 let protocolCapabilities = 0;
@@ -422,13 +596,17 @@ function showNotice(message, kind = '') {
   elements.notice.querySelector('p').textContent = message;
 }
 
-function selectPage(page) {
+function selectPage(page, updateUrl = true) {
   const pages = ['overview', 'debug', 'settings', 'logs', 'instructions', 'firmware'];
+  if (!pages.includes(page)) return;
   for (const name of pages) {
     const active = name === page;
     elements[`${name}Page`].hidden = !active;
     elements[`${name}Tab`].classList.toggle('active', active);
     elements[`${name}Tab`].setAttribute('aria-selected', String(active));
+  }
+  if (updateUrl && window.location.hash !== `#${page}`) {
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${page}`);
   }
   if (page === 'overview') drawRateChart();
   if (page === 'settings' && serial && deviceSettings === null) loadSettings();
@@ -767,13 +945,14 @@ async function loadLogInfo() {
 }
 
 function setConnection(state, label) {
+  const canDisconnect = state === 'connected' || state === 'disconnect-pending';
   elements.connection.dataset.state = state;
   elements.connectionLabel.textContent = label;
   elements.connect.disabled = state === 'connecting';
-  elements.connect.textContent = state === 'connected' ? 'Disconnect' :
+  elements.connect.textContent = canDisconnect ? 'Disconnect' :
     (state === 'connecting' ? 'Connecting…' : 'Connect');
-  elements.connect.classList.toggle('button-primary', state !== 'connected');
-  elements.connect.classList.toggle('button-quiet', state === 'connected');
+  elements.connect.classList.toggle('button-primary', !canDisconnect);
+  elements.connect.classList.toggle('button-quiet', canDisconnect);
 }
 
 function formatUptime(seconds) {
@@ -1005,6 +1184,7 @@ async function requestHelloAfterBoot(protocol) {
       }
     }
   }
+  if (lastError) lastError.code = 'APP_HELLO_NO_RESPONSE';
   throw lastError;
 }
 
@@ -1015,14 +1195,503 @@ elements.logsTab.addEventListener('click', () => selectPage('logs'));
 elements.loadMoreLogs.addEventListener('click', () => loadLogPage(false));
 elements.loadLogDate.addEventListener('click', loadLogNearDate);
 elements.firmwareTab.addEventListener('click', () => selectPage('firmware'));
+elements.rebootFirmware.addEventListener('click', rebootToFirmware);
+elements.rebootBootloader.addEventListener('click', rebootToBootloader);
+elements.firmwareFile.addEventListener('change', loadFirmwareImage);
+elements.clearFirmware.addEventListener('click', clearFirmwareSelection);
+elements.flashFirmware.addEventListener('click', flashSelectedFirmware);
 elements.instructionsTab.addEventListener('click', () => selectPage('instructions'));
+elements.clearFirmwareLog.addEventListener('click', () => { elements.firmwareLog.textContent = ''; });
+window.addEventListener('hashchange', () => {
+  const page = window.location.hash.slice(1);
+  selectPage(page || 'overview', false);
+});
 document.querySelectorAll('[data-debug-page]').forEach((button) => {
   button.addEventListener('click', () => selectDebugPage(button.dataset.debugPage));
 });
 selectDebugPage(selectedDebugPage);
+selectPage(window.location.hash.slice(1) || 'overview', false);
 window.addEventListener('resize', drawRateChart);
 
-async function connectDevice() {
+function appendFirmwareLog(message, level = 'normal') {
+  const timestamp = new Date().toLocaleTimeString();
+  const line = document.createElement('span');
+  if (level !== 'normal') {
+    line.className = `log-${level}`;
+    if (level === 'success') line.style.setProperty('color', '#00e58b', 'important');
+    if (level === 'partial') line.style.setProperty('color', '#b8d94c', 'important');
+    if (level === 'warning') line.style.setProperty('color', '#f2c94c', 'important');
+    if (level === 'error') line.style.setProperty('color', '#ff7474', 'important');
+  }
+  line.textContent = `[${timestamp}] ${message}\n`;
+  elements.firmwareLog.append(line);
+  elements.firmwareLog.scrollTop = elements.firmwareLog.scrollHeight;
+}
+
+function setRebootStatus(message, level = 'normal') {
+  elements.rebootStatus.textContent = message;
+  elements.rebootStatus.dataset.level = level;
+}
+
+function parseIntelHex(text) {
+  const image = new Uint8Array(STM32_FLASH_SIZE).fill(0xff);
+  const present = new Uint8Array(STM32_FLASH_SIZE);
+  let upperAddress = 0;
+  let eof = false;
+  for (const [lineIndex, rawLine] of text.split(/\r?\n/).entries()) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (eof || line[0] !== ':' || (line.length & 1) !== 1) throw new Error(`Invalid Intel HEX record on line ${lineIndex + 1}.`);
+    const record = new Uint8Array((line.length - 1) / 2);
+    for (let i = 0; i < record.length; i += 1) {
+      const pair = line.slice(1 + i * 2, 3 + i * 2);
+      if (!/^[0-9a-f]{2}$/i.test(pair)) throw new Error(`Invalid Intel HEX byte on line ${lineIndex + 1}.`);
+      record[i] = Number.parseInt(pair, 16);
+    }
+    const length = record[0];
+    if (record.length !== length + 5 || record.reduce((sum, byte) => (sum + byte) & 0xff, 0) !== 0) {
+      throw new Error(`Intel HEX length/checksum error on line ${lineIndex + 1}.`);
+    }
+    const address = (record[1] << 8) | record[2];
+    const type = record[3];
+    const data = record.subarray(4, 4 + length);
+    if (type === 0x00) {
+      const absolute = upperAddress + address;
+      if (absolute < STM32_FLASH_BASE || absolute + length > STM32_FLASH_BASE + STM32_FLASH_SIZE) {
+        throw new Error(`HEX data at 0x${absolute.toString(16)} is outside STM32L051 flash.`);
+      }
+      const offset = absolute - STM32_FLASH_BASE;
+      for (let i = 0; i < length; i += 1) {
+        if (present[offset + i]) throw new Error(`Overlapping HEX data at 0x${(absolute + i).toString(16)}.`);
+        image[offset + i] = data[i];
+        present[offset + i] = 1;
+      }
+    } else if (type === 0x01) {
+      if (length !== 0 || address !== 0) throw new Error(`Malformed HEX EOF record on line ${lineIndex + 1}.`);
+      eof = true;
+    } else if (type === 0x02) {
+      if (length !== 2 || address !== 0) throw new Error(`Malformed HEX segment address on line ${lineIndex + 1}.`);
+      upperAddress = (((data[0] << 8) | data[1]) << 4);
+    } else if (type === 0x04) {
+      if (length !== 2 || address !== 0) throw new Error(`Malformed HEX linear address on line ${lineIndex + 1}.`);
+      upperAddress = (((data[0] << 8) | data[1]) << 16);
+    } else if (type === 0x03 || type === 0x05) {
+      if (length !== 4 || address !== 0) throw new Error(`Malformed HEX start-address record on line ${lineIndex + 1}.`);
+    } else {
+      throw new Error(`Unsupported Intel HEX record type ${type} on line ${lineIndex + 1}.`);
+    }
+  }
+  if (!eof) throw new Error('Intel HEX EOF record is missing.');
+  return { image, present };
+}
+
+function validateFirmwareImage(image, present) {
+  if (!present.slice(0, 8).every(Boolean)) throw new Error('Firmware image is missing its initial vector table.');
+  const view = new DataView(image.buffer, image.byteOffset, image.byteLength);
+  const stack = view.getUint32(0, true);
+  const reset = view.getUint32(4, true);
+  const resetAddress = reset & ~1;
+  if ((stack & 3) !== 0 || stack < 0x20000000 || stack > 0x20002000) {
+    throw new Error(`Invalid initial stack pointer 0x${stack.toString(16)} for STM32L051.`);
+  }
+  if ((reset & 1) === 0 || resetAddress < STM32_FLASH_BASE || resetAddress >= STM32_FLASH_BASE + STM32_FLASH_SIZE || !present[resetAddress - STM32_FLASH_BASE]) {
+    throw new Error(`Invalid reset vector 0x${reset.toString(16)} for STM32L051 flash.`);
+  }
+  const pageNumbers = new Set();
+  for (let i = 0; i < present.length; i += 1) if (present[i]) pageNumbers.add(Math.floor(i / STM32_FLASH_PAGE_SIZE));
+  if (pageNumbers.size === 0) throw new Error('Firmware image contains no data.');
+  return [...pageNumbers].sort((a, b) => a - b).map((number) => ({
+    number,
+    address: STM32_FLASH_BASE + number * STM32_FLASH_PAGE_SIZE,
+    data: image.slice(number * STM32_FLASH_PAGE_SIZE, (number + 1) * STM32_FLASH_PAGE_SIZE),
+  }));
+}
+
+async function classifyFirmwareImage(image, present) {
+  let hasProjectMarker = false;
+  for (let offset = 0; offset <= image.length - PROJECT_IMAGE_MARKER.length; offset += 1) {
+    let matches = true;
+    for (let i = 0; i < PROJECT_IMAGE_MARKER.length; i += 1) {
+      if (!present[offset + i] || image[offset + i] !== PROJECT_IMAGE_MARKER[i]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      hasProjectMarker = true;
+      break;
+    }
+  }
+
+  if (!globalThis.crypto?.subtle) return hasProjectMarker ? 'ours-incompatible' : 'unknown';
+  const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', image));
+  const hash = [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  if (COMPATIBLE_PROJECT_IMAGE_SHA256.has(hash)) return 'ours';
+  if (PARTIALLY_COMPATIBLE_PROJECT_IMAGE_SHA256.has(hash)) return 'ours-partial';
+
+  const stockSignatureEnd = STOCK_FAMILY_SIGNATURE_OFFSET + STOCK_FAMILY_SIGNATURE_LENGTH;
+  const stockSignaturePresent = present.subarray(STOCK_FAMILY_SIGNATURE_OFFSET, stockSignatureEnd);
+  if (stockSignaturePresent.length === STOCK_FAMILY_SIGNATURE_LENGTH && stockSignaturePresent.every(Boolean)) {
+    const signatureHash = new Uint8Array(await globalThis.crypto.subtle.digest(
+      'SHA-256', image.subarray(STOCK_FAMILY_SIGNATURE_OFFSET, stockSignatureEnd),
+    ));
+    const signatureHex = [...signatureHash].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    if (signatureHex === STOCK_FAMILY_SIGNATURE_SHA256) return 'stock';
+  }
+  if (hash === KNOWN_STOCK_IMAGE_SHA256) return 'stock';
+  if (hasProjectMarker) return 'ours-incompatible';
+  return 'unknown';
+}
+
+function setFirmwareImageStatus(text, kind = 'unknown') {
+  elements.firmwareImageStatus.textContent = text;
+  elements.firmwareImageStatus.dataset.kind = kind;
+}
+
+async function loadFirmwareImage() {
+  const file = elements.firmwareFile.files?.[0];
+  selectedFirmwareImage = null;
+  elements.flashFirmware.disabled = true;
+  if (!file) {
+    setFirmwareImageStatus('No image selected.');
+    return;
+  }
+  setFirmwareImageStatus('Checking image…');
+  try {
+    const extension = file.name.toLowerCase().split('.').pop();
+    if (extension !== 'hex' && extension !== 'bin') throw new Error('Choose a .hex or .bin firmware image.');
+    const buffer = await file.arrayBuffer();
+    let parsed;
+    if (extension === 'hex') {
+      parsed = parseIntelHex(new TextDecoder().decode(buffer));
+    } else {
+      if (buffer.byteLength === 0 || buffer.byteLength > STM32_FLASH_SIZE) throw new Error('BIN must contain between 1 byte and 64 KiB.');
+      const image = new Uint8Array(STM32_FLASH_SIZE).fill(0xff);
+      const present = new Uint8Array(STM32_FLASH_SIZE);
+      image.set(new Uint8Array(buffer));
+      present.fill(1, 0, buffer.byteLength);
+      parsed = { image, present };
+    }
+    const pages = validateFirmwareImage(parsed.image, parsed.present);
+    const identity = await classifyFirmwareImage(parsed.image, parsed.present);
+    const imageBytes = parsed.present.reduce((sum, byte) => sum + byte, 0);
+    const identityLabels = {
+      ours: 'Our firmware · JS-compatible',
+      'ours-partial': 'Our firmware · partially compatible',
+      'ours-incompatible': 'Our firmware · compatibility unknown',
+      stock: 'Stock firmware',
+      unknown: 'Unknown firmware',
+    };
+    selectedFirmwareImage = { name: file.name, extension, pages, identity };
+    setFirmwareImageStatus(`${identityLabels[identity]} · ${imageBytes.toLocaleString()} / ${STM32_FLASH_SIZE.toLocaleString()} flash bytes · ${pages.length}/${STM32_FLASH_PAGE_COUNT} pages`, identity);
+    appendFirmwareLog(`Image accepted: ${identityLabels[identity]}; ${imageBytes.toLocaleString()} flash data bytes in ${pages.length} page(s), within the ${STM32_FLASH_SIZE.toLocaleString()}-byte flash.`);
+    elements.flashFirmware.disabled = firmwareFlashBusy;
+  } catch (error) {
+    setFirmwareImageStatus(`Invalid image · ${error.message}`, 'invalid');
+    appendFirmwareLog(`Image rejected: ${error.message}`, 'error');
+  }
+}
+
+function clearFirmwareSelection() {
+  elements.firmwareFile.value = '';
+  selectedFirmwareImage = null;
+  elements.flashFirmware.disabled = true;
+  setFirmwareImageStatus('No image selected.');
+  appendFirmwareLog('Firmware image selection cleared.');
+}
+
+async function openBootloaderForImage(mode) {
+  const port = selectedSerialPort || await navigator.serial.requestPort();
+  selectedSerialPort = port;
+  clearInterval(pollTimer);
+  pollTimer = 0;
+  if (serial) {
+    await serial.disconnect();
+    serial = null;
+  }
+  // This is the known-working ROM entry state. File-specific levels are tried
+  // only after synchronization, so a BIN signal cannot strand the app before ACK.
+  const entrySignals = { dataTerminalReady: true, requestToSend: false };
+  if (bootloaderPortOpen) {
+    const client = new Stm32Bootloader(port);
+    try {
+      const info = await client.getCommands();
+      appendFirmwareLog(`ROM bootloader is already active (version 0x${info.version.toString(16)}).`, 'success');
+      return { client, info, port };
+    } catch (error) {
+      await client.close(false);
+      try { await port.close(); portMayBeOpen = false; } catch { portMayBeOpen = true; }
+      bootloaderPortOpen = false;
+      appendFirmwareLog(`Existing bootloader session did not answer: ${error.message}`, 'error');
+    }
+  }
+
+  // First check whether ROM mode is already active, without applying a reset pulse.
+  try {
+    await port.open({ baudRate: 115200, dataBits: 8, parity: 'even', stopBits: 1, flowControl: 'none', bufferSize: 512 });
+    portMayBeOpen = true;
+    await port.setSignals(entrySignals);
+    await delay(250);
+    const client = new Stm32Bootloader(port);
+    try {
+      await client.write([0x7f]);
+      await client.expectAck('ROM synchronization', 1200);
+      const info = await client.getCommands();
+      bootloaderPortOpen = true;
+      appendFirmwareLog(`ROM bootloader already active (version 0x${info.version.toString(16)}).`, 'success');
+      return { client, info, port };
+    } catch (error) {
+      await client.close(false);
+      appendFirmwareLog(`Bootloader probe: ${error.message}`, 'error');
+    }
+    await port.close();
+    portMayBeOpen = false;
+  } catch (error) {
+    try { await port.close(); portMayBeOpen = false; } catch { portMayBeOpen = true; }
+    appendFirmwareLog(`Bootloader probe could not open the port: ${error.message}`, 'error');
+  }
+
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    checkFirmwareStopRequested();
+    let client = null;
+    try {
+      appendFirmwareLog(`Bootloader entry attempt ${attempt}/3 (RTS low, DTR high).`);
+      await port.open({ baudRate: 115200, dataBits: 8, parity: 'even', stopBits: 1, flowControl: 'none', bufferSize: 512 });
+      portMayBeOpen = true;
+      await port.setSignals({ dataTerminalReady: true, requestToSend: true });
+      await delay(1000);
+      checkFirmwareStopRequested();
+      await port.setSignals(entrySignals);
+      await delay(250);
+      client = new Stm32Bootloader(port);
+      await client.write([0x7f]);
+      await client.expectAck('ROM synchronization', 1500);
+      const info = await client.getCommands();
+      bootloaderPortOpen = true;
+      appendFirmwareLog(`ROM bootloader synchronized (version 0x${info.version.toString(16)}).`, 'success');
+      return { client, info, port };
+    } catch (error) {
+      lastError = error;
+      if (client) await client.close(false);
+      try { await port.close(); portMayBeOpen = false; } catch { portMayBeOpen = true; }
+      appendFirmwareLog(`Attempt ${attempt} failed: ${error.message}`, 'error');
+    }
+  }
+  bootloaderPortOpen = false;
+  throw new Error(`Could not enter STM32 ROM bootloader after three attempts${lastError ? `: ${lastError.message}` : '.'}`);
+}
+
+async function applyBinSignalModeOrFallback(session) {
+  const { port } = session;
+  const binClient = session.client;
+  checkFirmwareStopRequested();
+  appendFirmwareLog('Trying BIN signal mode (RTS low, DTR low) after ROM synchronization…');
+  await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+  await delay(250);
+
+  try {
+    checkFirmwareStopRequested();
+    const info = await binClient.getCommands();
+    session.info = info;
+    appendFirmwareLog('BIN signal mode kept the ROM bootloader link active.', 'success');
+    return false;
+  } catch (error) {
+    await binClient.close(false);
+    if (firmwareStopRequested) throw error;
+    appendFirmwareLog(`BIN signal mode dropped the ROM link (${error.message}); retrying with the confirmed ROM-entry state.`, 'error');
+  }
+
+  await port.close();
+  portMayBeOpen = false;
+  await port.open({ baudRate: 115200, dataBits: 8, parity: 'even', stopBits: 1, flowControl: 'none', bufferSize: 512 });
+  portMayBeOpen = true;
+  await port.setSignals({ dataTerminalReady: true, requestToSend: true });
+  await delay(1000);
+  await port.setSignals({ dataTerminalReady: true, requestToSend: false });
+  await delay(250);
+  const fallbackClient = new Stm32Bootloader(port);
+  try {
+    await fallbackClient.write([0x7f]);
+    await fallbackClient.expectAck('ROM synchronization after BIN signal fallback', 1500);
+    const info = await fallbackClient.getCommands();
+    session.client = fallbackClient;
+    session.info = info;
+    appendFirmwareLog('ROM bootloader recovered. Continuing BIN write with the stable RTS low/DTR high state.', 'success');
+    return true;
+  } catch (error) {
+    await fallbackClient.close(false);
+    throw new Error(`Could not recover the ROM bootloader after BIN signal mode: ${error.message}`);
+  }
+}
+
+async function flashSelectedFirmware() {
+  if (firmwareFlashBusy) {
+    firmwareStopRequested = true;
+    elements.flashFirmware.disabled = true;
+    elements.flashFirmware.textContent = 'Stopping…';
+    appendFirmwareLog('Stop requested; waiting for the current ROM operation to finish.');
+    return;
+  }
+  if (!selectedFirmwareImage) return;
+  if (!('serial' in navigator)) {
+    appendFirmwareLog('Web Serial is unavailable in this browser.', 'error');
+    return;
+  }
+  firmwareFlashBusy = true;
+  firmwareStopRequested = false;
+  elements.firmwareFile.disabled = true;
+  elements.clearFirmware.disabled = true;
+  elements.firmwareVerify.disabled = true;
+  elements.flashFirmware.disabled = false;
+  elements.flashFirmware.textContent = 'Stop';
+  elements.flashFirmware.classList.add('button-stop');
+  elements.rebootFirmware.disabled = true;
+  elements.rebootBootloader.disabled = true;
+  elements.firmwareLog.textContent = '';
+  appendFirmwareLog(`Starting update for ${selectedFirmwareImage.name}.`);
+  let session = null;
+  let success = false;
+  let startupResult = 'not-checked';
+  const imageIdentity = selectedFirmwareImage.identity;
+  try {
+    session = await openBootloaderForImage(selectedFirmwareImage.extension);
+    checkFirmwareStopRequested();
+    let client = session.client;
+    let info = session.info;
+    const deviceId = await client.getDeviceId();
+    appendFirmwareLog(`Device ID: 0x${deviceId.toString(16).padStart(4, '0')}.`, 'success');
+    if (deviceId !== STM32_DEVICE_ID) throw new Error(`Expected STM32L051 device ID 0x${STM32_DEVICE_ID.toString(16)}, received 0x${deviceId.toString(16)}. No flash pages were erased.`);
+    const hasWrite = info.commands.includes(0x31);
+    const hasErase = info.commands.includes(0x44) || info.commands.includes(0x43);
+    appendFirmwareLog(`ROM commands: Write=${hasWrite}, extended erase=${info.commands.includes(0x44)}, standard erase=${info.commands.includes(0x43)}, read=${info.commands.includes(0x11)}.`);
+    if (!hasWrite || !hasErase) throw new Error('ROM bootloader does not report the required erase/write commands.');
+    const verify = elements.firmwareVerify.checked;
+    if (verify && !info.commands.includes(0x11)) throw new Error('Verify is enabled, but this ROM bootloader does not support Read Memory.');
+    let binModeFallback = false;
+    if (selectedFirmwareImage.extension === 'bin') {
+      binModeFallback = await applyBinSignalModeOrFallback(session);
+      client = session.client;
+      info = session.info;
+    }
+    const signalText = selectedFirmwareImage.extension === 'hex'
+      ? 'RTS low, DTR high'
+      : (binModeFallback ? 'RTS low, DTR high (stable fallback)' : 'RTS low, DTR low');
+    appendFirmwareLog(`Signal mode: ${signalText}. ${verify ? 'Read-back verification is enabled.' : 'Read-back verification is disabled.'}`);
+    setRebootStatus('Erasing only pages covered by the selected image…');
+    const pages = selectedFirmwareImage.pages;
+    await client.erasePages(pages.map((page) => page.number), info.commands);
+    checkFirmwareStopRequested();
+    appendFirmwareLog(`Erased ${pages.length} page(s) containing image data.`, 'success');
+    for (let i = 0; i < pages.length; i += 1) {
+      checkFirmwareStopRequested();
+      const page = pages[i];
+      await client.writePage(page.address, page.data);
+      if (verify) {
+        const actual = await client.readMemory(page.address, page.data.length);
+        for (let j = 0; j < actual.length; j += 1) {
+          if (actual[j] !== page.data[j]) throw new Error(`Verification mismatch at 0x${(page.address + j).toString(16)}.`);
+        }
+      }
+      checkFirmwareStopRequested();
+      if (i === pages.length - 1 || (i + 1) % Math.max(1, Math.floor(pages.length / 10)) === 0) {
+        appendFirmwareLog(`${verify ? 'Programmed and verified' : 'Programmed'} ${i + 1}/${pages.length} page(s).`);
+      }
+    }
+    checkFirmwareStopRequested();
+    success = true;
+    appendFirmwareLog(`Firmware update complete${verify ? '; read-back verification passed' : ''}.`, 'success');
+    setRebootStatus('Firmware written. Starting the application…');
+  } catch (error) {
+    if (firmwareStopRequested) {
+      appendFirmwareLog('Update stopped by user after the current ROM operation.', 'normal');
+      setRebootStatus('Update stopped. The device remains in bootloader mode.');
+    } else {
+      appendFirmwareLog(`Update failed: ${error.message}`, 'error');
+      setRebootStatus(`Update failed: ${error.message}`, 'error');
+    }
+  } finally {
+    const port = session?.port || selectedSerialPort;
+    if (session) {
+      await session.client.close(false);
+      if (success) {
+        try {
+          elements.flashFirmware.disabled = true;
+          elements.flashFirmware.textContent = 'Starting…';
+          elements.flashFirmware.classList.remove('button-stop');
+          if (imageIdentity === 'ours' || imageIdentity === 'ours-partial') {
+            appendFirmwareLog(imageIdentity === 'ours-partial'
+              ? 'Starting partially compatible firmware and checking HELLO only…'
+              : 'Starting our firmware and checking for HELLO…');
+            await startFirmwareAndVerify(port);
+            startupResult = imageIdentity === 'ours-partial' ? 'partial-app-verified' : 'app-verified';
+          } else if (imageIdentity === 'stock') {
+            appendFirmwareLog('Starting stock firmware and checking fwid in 115200 8E1…');
+            const version = await startStockFirmwareAndVerify(port);
+            appendFirmwareLog(`Stock firmware answered fwid: ${version}.`, 'success');
+            startupResult = 'stock-verified';
+          } else {
+            const skipReason = imageIdentity === 'ours-incompatible'
+              ? 'project image is not on the JS-compatible checksum list'
+              : 'image type is unknown';
+            appendFirmwareLog(`Skipping the app protocol check because the ${skipReason}; sending the firmware-start signal only.`);
+            await sendFirmwareStartSignal(port);
+            startupResult = 'unverified';
+          }
+        } catch (error) {
+          startupResult = 'failed';
+          const checkName = imageIdentity === 'stock' ? 'Stock fwid check' : (imageIdentity === 'ours' || imageIdentity === 'ours-partial') ? 'Application HELLO check' : 'Firmware-start signal';
+          appendFirmwareLog(`${checkName} failed: ${error.message}`, 'warning');
+        }
+      }
+    }
+    const closed = await disconnectPortAfterAction(port);
+    firmwareFlashBusy = false;
+    firmwareStopRequested = false;
+    elements.firmwareFile.disabled = false;
+    elements.clearFirmware.disabled = false;
+    elements.firmwareVerify.disabled = false;
+    elements.rebootFirmware.disabled = false;
+    elements.rebootBootloader.disabled = false;
+    elements.flashFirmware.textContent = 'Flash';
+    elements.flashFirmware.classList.remove('button-stop');
+    if (success) {
+      elements.firmwareFile.value = '';
+      selectedFirmwareImage = null;
+      appendFirmwareLog('Firmware image selection cleared.');
+      if (startupResult === 'app-verified') {
+        appendFirmwareLog('Application responded to HELLO. Serial port disconnected.', 'success');
+        setRebootStatus('Firmware update complete; application started and serial port disconnected.', 'success');
+      } else if (startupResult === 'partial-app-verified') {
+        appendFirmwareLog('Partially compatible firmware answered HELLO; other protocol features may differ.', 'partial');
+        setRebootStatus('Partial-compatibility firmware answered HELLO; other protocol features may differ.', 'partial');
+      } else if (startupResult === 'stock-verified') {
+        setRebootStatus('Firmware update complete; stock fwid response received.', 'success');
+      } else if (startupResult === 'unverified') {
+        const skippedType = imageIdentity === 'ours-incompatible' ? 'unlisted project firmware' : 'unknown firmware';
+        appendFirmwareLog(`Startup verification skipped for ${skippedType}.`, 'warning');
+        setRebootStatus(`Image programmed and verified; start signal sent. Startup check skipped for ${skippedType}.`, 'warning');
+      } else if (imageIdentity === 'stock') {
+        setRebootStatus('Stock image programmed and verified, but its fwid response was not confirmed.', 'warning');
+      } else if (imageIdentity === 'ours') {
+        setRebootStatus('Our image programmed and verified, but the application did not answer HELLO.', 'warning');
+      } else if (imageIdentity === 'ours-partial') {
+        setRebootStatus('Partial-compatibility image programmed and verified, but it did not answer HELLO.', 'warning');
+      } else if (imageIdentity === 'ours-incompatible') {
+        setRebootStatus('Our image programmed and verified, but the firmware-start signal failed.', 'warning');
+      } else {
+        setRebootStatus('Unknown image programmed and verified, but the firmware-start signal failed.', 'warning');
+      }
+    }
+    elements.flashFirmware.disabled = !selectedFirmwareImage;
+    if (!closed) {
+      appendFirmwareLog('Port remains open; press Disconnect in the top-right to retry closing it.', 'error');
+      setRebootStatus(`${elements.rebootStatus.textContent} Port is still open; press Disconnect to retry.`, 'error');
+    }
+  }
+}
+
+async function connectDevice(portOverride = null) {
   protocolCapabilities = 0;
   deviceSettings = null;
   logInfo = null;
@@ -1051,7 +1720,9 @@ async function connectDevice() {
       setConnection('disconnected', 'Connection lost');
       showNotice(error.message, 'error');
     });
-    await serial.connect();
+    await serial.connect(portOverride);
+    bootloaderPortOpen = false;
+    elements.rebootFirmware.disabled = false;
     setConnection('connected', 'Connected');
     showNotice('Waiting 1 second before HELLO…', '');
     const hello = await requestHelloAfterBoot(serial);
@@ -1064,6 +1735,7 @@ async function connectDevice() {
   } catch (error) {
     if (serial) await serial.disconnect();
     serial = null;
+    elements.rebootFirmware.disabled = false;
     deviceSettings = null;
     logInfo = null;
     logRecords = [];
@@ -1072,7 +1744,7 @@ async function connectDevice() {
     elements.logTabs.replaceChildren();
     elements.logContent.textContent = '';
     elements.settingsStatus.textContent = 'Connect to read settings.';
-    setConnection('disconnected', 'Disconnected');
+    setConnection(portMayBeOpen ? 'disconnect-pending' : 'disconnected', portMayBeOpen ? 'Disconnect required' : 'Disconnected');
     showNotice(error.message || 'Could not connect to the device.', 'error');
   }
 }
@@ -1080,8 +1752,9 @@ async function connectDevice() {
 async function disconnectDevice() {
   clearInterval(pollTimer);
   pollTimer = 0;
-  if (serial) await serial.disconnect();
-  serial = null;
+  const closed = await disconnectPortAfterAction();
+  elements.rebootFirmware.disabled = false;
+  elements.rebootBootloader.disabled = false;
   polling = false;
   deviceSettings = null;
   logInfo = null;
@@ -1091,12 +1764,196 @@ async function disconnectDevice() {
   elements.logTabs.replaceChildren();
   elements.logContent.textContent = '';
   elements.settingsStatus.textContent = 'Connect to read settings.';
-  setConnection('disconnected', 'Disconnected');
-  showNotice('Port closed. Last readings remain visible.', '');
+  showNotice(closed ? 'Port closed. Last readings remain visible.' : 'Port is still open. Press Disconnect to retry closing it.', closed ? '' : 'error');
+}
+
+async function disconnectPortAfterAction(port = selectedSerialPort) {
+  clearInterval(pollTimer);
+  pollTimer = 0;
+  const activeSerial = serial;
+  serial = null;
+  if (activeSerial) await activeSerial.disconnect();
+  if (port && portMayBeOpen) {
+    try {
+      await port.close();
+      portMayBeOpen = false;
+    } catch { portMayBeOpen = true; }
+  }
+  bootloaderPortOpen = false;
+  const stillOpen = portMayBeOpen;
+  setConnection(stillOpen ? 'disconnect-pending' : 'disconnected', stillOpen ? 'Disconnect required' : 'Disconnected');
+  return !stillOpen;
+}
+
+async function sendFirmwareStartSignal(port) {
+  if (serial) {
+    await serial.disconnect();
+    serial = null;
+  }
+  if (!portMayBeOpen) {
+    await port.open({ baudRate: 115200, dataBits: 8, parity: 'none', stopBits: 1, flowControl: 'none', bufferSize: 256 });
+    portMayBeOpen = true;
+  }
+  await port.setSignals({ dataTerminalReady: false, requestToSend: true });
+  await delay(1000);
+  await port.close();
+  portMayBeOpen = false;
+}
+
+async function startFirmwareAndVerify(port) {
+  await sendFirmwareStartSignal(port);
+  let probe = null;
+  try {
+    probe = new SerialProtocol((frame) => probe?.dispatch(frame), () => {});
+    await probe.connect(port);
+    await requestHelloAfterBoot(probe);
+  } finally {
+    if (probe) await probe.disconnect();
+  }
+}
+
+async function startStockFirmwareAndVerify(port) {
+  await sendFirmwareStartSignal(port);
+  await port.open({ baudRate: 115200, dataBits: 8, parity: 'even', stopBits: 1, flowControl: 'none', bufferSize: 256 });
+  portMayBeOpen = true;
+  await delay(2000);
+
+  const writer = port.writable.getWriter();
+  try {
+    await writer.write(new TextEncoder().encode('fwid'));
+  } finally {
+    writer.releaseLock();
+  }
+
+  const reader = port.readable.getReader();
+  const response = [];
+  try {
+    while (response.length < 6) {
+      const result = await Promise.race([
+        reader.read(),
+        delay(3000).then(() => { throw new Error('Timed out waiting for the stock fwid response.'); }),
+      ]);
+      if (result.done) throw new Error('Serial port closed before the stock fwid response arrived.');
+      response.push(...result.value);
+    }
+  } finally {
+    try { await reader.cancel(); } catch { /* stream may already be closed */ }
+    try { reader.releaseLock(); } catch { /* already released */ }
+  }
+  const version = new TextDecoder().decode(Uint8Array.from(response.slice(0, 6)));
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`Unexpected stock fwid response: ${JSON.stringify(version)}.`);
+  return version;
+}
+
+async function rebootToFirmware() {
+  if (elements.rebootFirmware.disabled) return;
+  elements.rebootFirmware.disabled = true;
+  elements.rebootBootloader.disabled = true;
+  setRebootStatus('Starting firmware and checking for HELLO…');
+  showNotice('Sending the firmware-start signal and checking that the application responds.', '');
+  clearInterval(pollTimer);
+  pollTimer = 0;
+  setConnection('connecting', 'Starting firmware…');
+  let port = selectedSerialPort;
+  let actionError = null;
+  try {
+    if (!port) {
+      if (!('serial' in navigator)) throw new Error('Web Serial is unavailable in this browser.');
+      port = await navigator.serial.requestPort();
+      selectedSerialPort = port;
+    }
+
+    await startFirmwareAndVerify(port);
+    setRebootStatus('Firmware is running. Serial port disconnected.', 'success');
+    showNotice('Firmware responded to HELLO. Serial port disconnected.', 'success');
+  } catch (error) {
+    actionError = error;
+    const level = error.code === 'APP_HELLO_NO_RESPONSE' ? 'warning' : 'error';
+    setRebootStatus(`Firmware did not respond: ${error.message}`, level);
+    showNotice(`Firmware did not respond: ${error.message}`, level);
+  } finally {
+    const closed = await disconnectPortAfterAction(port);
+    if (!closed) {
+      const message = 'Serial port is still open. Press Disconnect in the top-right to retry.';
+      setRebootStatus(`${elements.rebootStatus.textContent} ${message}`, 'error');
+      showNotice(message, 'error');
+    } else if (actionError) {
+      setConnection('disconnected', 'Disconnected');
+    }
+    elements.rebootFirmware.disabled = false;
+    elements.rebootBootloader.disabled = false;
+  }
+}
+
+async function rebootToBootloader() {
+  elements.rebootBootloader.disabled = true;
+  elements.rebootFirmware.disabled = true;
+  let port = selectedSerialPort;
+  let actionError = null;
+  try {
+    if (!port) {
+      if (!('serial' in navigator)) throw new Error('Web Serial is unavailable in this browser.');
+      port = await navigator.serial.requestPort();
+      selectedSerialPort = port;
+    }
+    setRebootStatus('Trying the full updater sequence in 115200 8E1…');
+    showNotice('Bootloader test: RTS/DTR high-high, then RTS low with DTR high, then ROM sync.', '');
+    clearInterval(pollTimer);
+    pollTimer = 0;
+    if (serial) await serial.disconnect();
+    serial = null;
+    if (bootloaderPortOpen) {
+      try { await port.close(); portMayBeOpen = false; } catch { portMayBeOpen = true; }
+      bootloaderPortOpen = false;
+    }
+    setConnection('connecting', 'Testing bootloader…');
+    await port.open({ baudRate: 115200, dataBits: 8, parity: 'even', stopBits: 1, flowControl: 'none', bufferSize: 64 });
+    portMayBeOpen = true;
+    await port.setSignals({ dataTerminalReady: true, requestToSend: true });
+    await delay(1000);
+    await port.setSignals({ dataTerminalReady: true, requestToSend: false });
+    await delay(250);
+    const writer = port.writable.getWriter();
+    try { await writer.write(Uint8Array.of(0x7f)); }
+    finally { writer.releaseLock(); }
+    const reader = port.readable.getReader();
+    let response;
+    try {
+      response = await Promise.race([
+        reader.read(),
+        delay(1200).then(() => { throw new Error('No ROM ACK (0x79) received.'); }),
+      ]);
+    } finally {
+      if (!response) {
+        try { await reader.cancel(); } catch { /* stream may have ended */ }
+      }
+      try { reader.releaseLock(); } catch { /* already released */ }
+    }
+    if (response.done || !response.value?.includes(0x79)) {
+      throw new Error('No ROM ACK (0x79) received.');
+    }
+    setRebootStatus('ROM bootloader replied with ACK. Port disconnected; Flash can reconnect to it.', 'success');
+    showNotice('STM32 ROM bootloader detected. No firmware data was sent.', 'success');
+  } catch (error) {
+    actionError = error;
+    setRebootStatus(error.message, 'error');
+    showNotice(error.message, 'error');
+  } finally {
+    const closed = await disconnectPortAfterAction(port);
+    if (!closed) {
+      const message = 'Serial port is still open. Press Disconnect in the top-right to retry.';
+      setRebootStatus(`${elements.rebootStatus.textContent} ${message}`, 'error');
+      showNotice(message, 'error');
+    } else if (actionError) {
+      setConnection('disconnected', 'Bootloader not detected');
+    }
+    elements.rebootBootloader.disabled = false;
+    elements.rebootFirmware.disabled = false;
+  }
 }
 
 elements.connect.addEventListener('click', () => {
-  if (serial) disconnectDevice();
+  if (serial || bootloaderPortOpen || portMayBeOpen) disconnectDevice();
   else connectDevice();
 });
 

@@ -6,17 +6,18 @@
 
 ## Початок роботи
 
-1. [VSCODE_HANDOFF](docs/VSCODE_HANDOFF.md) — збірка, прошивання й актуальні наступні кроки.
-2. [LCD_AND_DISPLAY](docs/LCD_AND_DISPLAY.md) — підключення LCD і поточний екранний прототип.
-3. [STOCK_FIRMWARE](docs/STOCK_FIRMWARE.md) — GPIO, ADC, живлення та обмеження аналізу стоку.
-4. [STOCK_RATE_DOSE](docs/STOCK_RATE_DOSE.md) — детальний розбір алгоритмів швидкості, дози й кольорових порогів.
-5. [STOCK_BATTERY_ADC_AND_POWER](docs/STOCK_BATTERY_ADC_AND_POWER.md) — аналіз стокового ADC, шкали батареї та переходів живлення.
-6. [LCD_STOCK_GUIDE](docs/LCD_STOCK_GUIDE.md) — відновлена послідовність запуску LCD зі стокового HEX.
-7. [PRODUCT_AND_UI](docs/PRODUCT_AND_UI.md) — цільова специфікація екранів і взаємодії.
-8. [LOG_AND_STORAGE](docs/LOG_AND_STORAGE.md) — узгоджені вимоги до журналів, часу та сховища.
-9. [APP_AND_SETTINGS](docs/APP_AND_SETTINGS.md) — майбутні налаштування й вимоги до застосунку.
-10. [OPEN_ITEMS](docs/OPEN_ITEMS.md) — питання, які ще потребують рішення або вимірювання.
-11. [REFERENCE_INDEX](docs/REFERENCE_INDEX.md) — покажчик вихідних матеріалів і технічних індексів.
+1. [Застосунок](../app/README.md) — запуск браузерного клієнта, вкладки й обмеження.
+2. [VSCODE_HANDOFF](docs/VSCODE_HANDOFF.md) — збірка, прошивання й актуальні наступні кроки.
+3. [LCD_AND_DISPLAY](docs/LCD_AND_DISPLAY.md) — підключення LCD і поточний екранний прототип.
+4. [LOG_AND_STORAGE](docs/LOG_AND_STORAGE.md) — журнали, час, сховище й графіки.
+5. [APP_AND_SETTINGS](docs/APP_AND_SETTINGS.md) — реалізований застосунок і заплановані налаштування.
+6. [STOCK_FIRMWARE](docs/STOCK_FIRMWARE.md) — GPIO, ADC, живлення та обмеження аналізу стоку.
+7. [STOCK_RATE_DOSE](docs/STOCK_RATE_DOSE.md) — алгоритми швидкості, дози й кольорових порогів.
+8. [STOCK_BATTERY_ADC_AND_POWER](docs/STOCK_BATTERY_ADC_AND_POWER.md) — аналіз стокового ADC, шкали батареї та переходів живлення.
+9. [LCD_STOCK_GUIDE](docs/LCD_STOCK_GUIDE.md) — відновлена послідовність запуску LCD зі стокового HEX.
+10. [PRODUCT_AND_UI](docs/PRODUCT_AND_UI.md) — цільова специфікація екранів і взаємодії.
+11. [OPEN_ITEMS](docs/OPEN_ITEMS.md) — питання, які ще потребують рішення або вимірювання.
+12. [REFERENCE_INDEX](docs/REFERENCE_INDEX.md) — покажчик вихідних матеріалів і технічних індексів.
 
 ## Поточний стан
 
@@ -32,6 +33,12 @@ RTC запрацював після виправлення адреси регі
 зростає лінійно разом із відсотком сонячного входу.
 Фізична точність дозиметрії, відповідність ADC фізичній напрузі та керування HV
 ще не підтверджені вимірюваннями.
+
+У `app/` є робочий браузерний клієнт без зовнішніх залежностей: Overview,
+читання журналів, підтримувані налаштування та Debug. Він підключається через
+Web Serial і протокол v1; запуск та поточні обмеження описано в
+[`app/README.md`](../app/README.md). Оновлення прошивки та синхронізація часу
+через APP ще не реалізовані.
 
 ## Рендери цільового UI
 

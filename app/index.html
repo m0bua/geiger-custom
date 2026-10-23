@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1115">
   <title>Device Monitor</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20261023-6">
 </head>
 <body>
   <main class="shell">
@@ -112,8 +112,32 @@
     </section>
 
     <section id="firmware-page" class="page placeholder-page" hidden>
-      <h2>Firmware</h2>
-      <p>Firmware update is not available yet.</p>
+      <h2>Reboot</h2>
+      <p>Choose which mode to start. Bootloader entry is experimental because the board’s RTS/DTR wiring is not confirmed.</p>
+      <div class="actions reboot-actions">
+        <button id="reboot-firmware" class="button button-primary" type="button">Firmware</button>
+        <button id="reboot-bootloader" class="button" type="button">Bootloader</button>
+      </div>
+      <p id="reboot-status" class="reboot-status" role="status" aria-live="polite">Select a device port to begin.</p>
+      <div class="firmware-tools">
+        <h2>Flash firmware</h2>
+        <div class="firmware-controls">
+          <div class="firmware-file-control">
+            <label for="firmware-file">Firmware image (.hex or .bin)</label>
+            <div class="firmware-file-row">
+              <input id="firmware-file" type="file" accept=".hex,.bin,application/octet-stream,text/plain">
+              <button id="clear-firmware" class="button button-quiet" type="button">Clear</button>
+            </div>
+            <output id="firmware-image-status" class="firmware-image-status" data-kind="unknown" aria-live="polite">No image selected.</output>
+          </div>
+          <button id="flash-firmware" class="button button-primary" type="button" disabled>Flash</button>
+          <label class="verify-option"><input id="firmware-verify" type="checkbox" checked> Verify after programming</label>
+        </div>
+        <div class="firmware-log-window">
+          <div class="firmware-log-toolbar"><button id="clear-firmware-log" class="button button-quiet" type="button">Clear</button></div>
+          <pre id="firmware-log" class="firmware-log" role="log" aria-live="polite"></pre>
+        </div>
+      </div>
     </section>
 
     <section id="instructions-page" class="page placeholder-page" hidden>
@@ -123,6 +147,6 @@
 
     <footer>Protocol V1</footer>
   </main>
-  <script defer src="app.js"></script>
+  <script defer src="app.js?v=20261023-7"></script>
 </body>
 </html>

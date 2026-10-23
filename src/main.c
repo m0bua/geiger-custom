@@ -11,6 +11,11 @@
 #define BATTERY_IDLE_SAMPLE_INTERVAL_MS 600000u
 #define BATTERY_CRITICAL_SAMPLE_INTERVAL_MS 30000u
 
+/* Stable image marker used by the browser flasher to recognize project builds. */
+static const volatile uint8_t firmware_identity_marker[] = {
+    0x4du, 0x47u, 0x32u, 0x46u, 0x57u, 0x49u, 0x44u, 0x31u
+};
+
 static void dose_from_pulse_count(uint32_t pulse_count,
                                   uint32_t *dose_thousandths,
                                   uint32_t *dose_fraction)
@@ -91,6 +96,7 @@ int main(void)
     bool left_long_repeat_pending = false;
     bool right_long_repeat_pending = false;
 
+    (void)firmware_identity_marker[0];
     board_init();
     board_adc_init();
     board_rgb_set(0u);
