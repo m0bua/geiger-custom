@@ -511,8 +511,8 @@ const rateHistory = [];
 const rateStatsHistory = [];
 
 const remoteSettings = [
-  { id: 0, label: 'LED', options: ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED'] },
-  { id: 1, label: 'CLICKS', options: ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED'] },
+  { id: 0, label: 'LED', options: ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED', 'CUSTOM'] },
+  { id: 1, label: 'CLICKS', options: ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED', 'CUSTOM'] },
   { id: 2, label: 'RATE SCREEN', options: ['OFF', 'YELLOW', 'RED', 'CUSTOM'] },
   { id: 3, label: 'RATE LIGHT', options: ['OFF', 'YELLOW', 'RED', 'CUSTOM'] },
   { id: 4, label: 'RATE SOUND', options: ['OFF', 'YELLOW', 'RED', 'CUSTOM'] },
@@ -1119,7 +1119,9 @@ function renderSettingsClock() {
 }
 
 function updateRtcControls() {
-  const supported = !!serial && (protocolCapabilities & CAP_SET_RTC) !== 0;
+  const supported = !!serial &&
+    elements.connection.dataset.state === 'connected' &&
+    (protocolCapabilities & CAP_SET_RTC) !== 0;
   elements.syncClock.disabled = !supported || clockSyncBusy;
   if (!supported && !clockSyncBusy && (
     elements.settingsClockStatus.textContent.startsWith('This firmware') ||
@@ -1170,6 +1172,9 @@ function updateSpiDumpAvailability() {
 function settingsOptions(setting) {
   if (deviceSettings?.length !== 28) {
     if (setting.id >= 24) return setting.options;
+    if (setting.id === 0 || setting.id === 1) {
+      return ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED'];
+    }
     if (setting.id >= 2 && setting.id <= 4) return ['OFF', 'YELLOW', 'RED'];
     if (setting.id === 16) {
       return ['OFF', 'AUTO-Y', 'AUTO-R', '5 µSv', '7 µSv', '10 µSv',
@@ -1264,12 +1269,11 @@ function renderSettings() {
     row.append(label, select);
     rows.push(row);
   }
-  for (let index = 0; index < rows.length; index += 10) {
-    const pair = document.createElement('div');
-    pair.className = 'settings-pair';
-    pair.append(...rows.slice(index, index + 10));
-    elements.settingsList.append(pair);
-  }
+  const pair = document.createElement('div');
+  pair.className = 'settings-pair';
+  pair.style.setProperty('--settings-row-count', Math.ceil(rows.length / 2));
+  pair.append(...rows);
+  elements.settingsList.append(pair);
 }
 
 async function loadSettings() {

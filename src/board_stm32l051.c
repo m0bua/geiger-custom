@@ -1959,7 +1959,7 @@ static const char *const lcd_settings_labels[LCD_SETTINGS_COUNT] = {
 
 /* Share value lists instead of reserving eleven pointers for every item. */
 static const char *const indication_values[] = {
-    "OFF", "ON", "ALWAYS", "YELLOW", "RED"
+    "OFF", "ON", "ALWAYS", "YELLOW", "RED", "CUSTOM"
 };
 static const char *const alarm_values[] = { "OFF", "YELLOW", "RED", "CUSTOM" };
 static const char *const brightness_values[] = {
@@ -2038,7 +2038,7 @@ static const char *const *const lcd_settings_values[LCD_SETTINGS_COUNT] = {
 };
 
 static const uint8_t lcd_settings_value_counts[LCD_SETTINGS_COUNT] = {
-    5u, 5u, 4u, 4u, 4u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 3u, 2u, 1u, 2u,
+    6u, 6u, 4u, 4u, 4u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 3u, 2u, 1u, 2u,
     9u, 2u, 1u, 1u, 3u, 6u, 4u, 3u, 4u, 4u, 4u, 8u
 };
 
@@ -4772,7 +4772,7 @@ static void settings_dose_action_save(uint8_t setting)
 static void settings_clicks_load(void)
 {
     (void)settings_value_read(SETTINGS_CLICKS_EEPROM_BASE,
-        SETTINGS_CLICKS_MAGIC, 0x6Du, 5u,
+        SETTINGS_CLICKS_MAGIC, 0x6Du, 6u,
         &lcd_settings_value_index[SETTING_CLICKS]);
 }
 
@@ -4952,7 +4952,7 @@ static bool settings_alarm_record_read(uint8_t slot, uint8_t *sequence,
     *screen_alarm = record[3];
     if (*screen_alarm >= 4u || record[4] != (uint8_t)(0x39u ^ *sequence ^
         (*led_mode * 17u) ^ (*screen_alarm * 29u))) return false;
-    if (record[0] == SETTINGS_ALARM_V2_EEPROM_MAGIC) return *led_mode < 5u;
+    if (record[0] == SETTINGS_ALARM_V2_EEPROM_MAGIC) return *led_mode < 6u;
     if (record[0] == SETTINGS_ALARM_EEPROM_MAGIC && *led_mode < 3u) {
         /* Migrate old order ALWAYS/ON/OFF to OFF/ON/ALWAYS. */
         *led_mode = *led_mode == 0u ? 2u :
@@ -5519,6 +5519,17 @@ bool board_display_take_cleanup_feedback_dismissed(void)
     return dismissed;
 }
 
+static bool rate_custom_threshold_active(void)
+{
+    static const uint16_t custom_rate_tenths_usvh[] = {
+        3u, 4u, 5u, 7u, 9u, 10u, 20u, 50u, 100u
+    };
+    const uint8_t custom = lcd_settings_value_index[SETTING_RATE_CUSTOM];
+    return lcd_rate_window_ready &&
+        lcd_rate_value_thousandths >=
+            (uint32_t)custom_rate_tenths_usvh[custom] * 100u;
+}
+
 static bool indication_enabled(uint8_t mode, bool screen_on)
 {
     if (lcd_indication_mode == 0u) return false;
@@ -5527,6 +5538,7 @@ static bool indication_enabled(uint8_t mode, bool screen_on)
     if (mode == 3u) return lcd_rate_color == LCD_COUNTER_YELLOW ||
         lcd_rate_color == LCD_COUNTER_RED;
     if (mode == 4u) return lcd_rate_color == LCD_COUNTER_RED;
+    if (mode == 5u) return rate_custom_threshold_active();
     return false;
 }
 
@@ -5681,19 +5693,12 @@ void board_click_sound_service(void)
 
 static bool rate_alarm_for_mode(uint8_t mode)
 {
-    static const uint16_t custom_rate_tenths_usvh[] = {
-        3u, 4u, 5u, 7u, 9u, 10u, 20u, 50u, 100u
-    };
     if (mode == 1u) {
         return lcd_rate_color == LCD_COUNTER_YELLOW ||
             lcd_rate_color == LCD_COUNTER_RED;
     }
     if (mode == 2u) return lcd_rate_color == LCD_COUNTER_RED;
-    if (mode == 3u && lcd_rate_window_ready) {
-        const uint8_t custom = lcd_settings_value_index[SETTING_RATE_CUSTOM];
-        return lcd_rate_value_thousandths >=
-            (uint32_t)custom_rate_tenths_usvh[custom] * 100u;
-    }
+    if (mode == 3u) return rate_custom_threshold_active();
     return false;
 }
 

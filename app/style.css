@@ -165,7 +165,7 @@ button { font: inherit; }
 .log-actions { display: flex; justify-content: center; }
 #settings-status { color: var(--muted); font: 10px "DM Mono", Consolas, monospace; }
 .settings-list { display: flex; flex-direction: column; gap: 18px; }
-.settings-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(5, auto); grid-auto-flow: column; column-gap: 24px; }
+.settings-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(var(--settings-row-count), auto); grid-auto-flow: column; column-gap: 24px; }
 .setting-row { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid rgba(160,186,194,.08); }
 .setting-row label { color: #aebbc0; font-size: 12px; }
 .setting-row select { min-width: 110px; max-width: 48%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; color: #e6edf0; background: #111a1f; font: 11px "DM Mono", Consolas, monospace; }
