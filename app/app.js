@@ -232,16 +232,15 @@ const elements = {
   aboutPage: document.querySelector('#about-page'),
   settingsStatus: document.querySelector('#settings-status'),
   settingsList: document.querySelector('#settings-list'),
-  rate: document.querySelector('#rate'),
   rateFoot: document.querySelector('#rate-foot'),
   rateLabel: document.querySelector('#rate-label'),
   rateDose: document.querySelector('#rate-dose'),
   rateWarmup: document.querySelector('#rate-warmup'),
   rateWarmupFill: document.querySelector('#rate-warmup-fill'),
   rateUnit: document.querySelector('#rate-unit'),
+  doseLabel: document.querySelector('#dose-label'),
   dose: document.querySelector('#dose'),
   doseUnit: document.querySelector('#dose-unit'),
-  count: document.querySelector('#count'),
   doseFoot: document.querySelector('#dose-foot'),
   uptime: document.querySelector('#uptime'),
   debugBattery: document.querySelector('#debug-battery'),
@@ -509,6 +508,7 @@ let logPageGeneration = 0;
 let logInfoLoading = false;
 let clockSyncBusy = false;
 const rateHistory = [];
+const rateStatsHistory = [];
 
 const remoteSettings = [
   { id: 0, label: 'LED', options: ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED'] },
@@ -516,19 +516,22 @@ const remoteSettings = [
   { id: 2, label: 'SCREEN ALARM', options: ['OFF', 'YELLOW', 'RED'] },
   { id: 3, label: 'LIGHT ALARM', options: ['OFF', 'YELLOW', 'RED'] },
   { id: 4, label: 'SOUND ALARM', options: ['OFF', 'YELLOW', 'RED'] },
+  { id: 16, label: 'DOSE ALARM', options: ['OFF', 'AUTO-Y', 'AUTO-R', '5', '7', '10', '30', '50', '100', '500', '1000'] },
+  { id: 17, label: 'ALARM STOP', options: ['CLEAR', 'BUTTON'] },
   { id: 5, label: 'LED BRIGHT', options: ['AUTO', '1%', '3%', '5%', '10%', '25%', '50%', '80%', '100%'] },
   { id: 6, label: 'SCREEN BRIGHT', options: ['AUTO', '1%', '3%', '5%', '10%', '25%', '50%', '80%', '100%'] },
   { id: 7, label: 'SCREEN TIMER', options: ['1 s', '5 s', '10 s', '30 s', '60 s', '90 s'] },
+  { id: 20, label: 'TONE', options: ['STOCK', 'CLASSIC', 'MODERN'] },
   { id: 8, label: 'LEAD ZERO', options: ['SHOW', 'HIDE'] },
   { id: 9, label: 'UNIT', options: ['Sv', 'CNT', 'R'] },
   { id: 10, label: 'RATE PREFIX', options: ['m', 'µ', 'n', 'AUTO'] },
   { id: 11, label: 'DOSE PREFIX', options: ['m', 'µ', 'n', 'AUTO'] },
-  { id: 13, label: 'USE-SPI', options: ['OFF', 'ON'] },
+  { id: 12, label: 'RATE ROW 2', options: [] },
+  { id: 22, label: 'DOSE ROW 2', options: [] },
+  { id: 23, label: 'DOSE PERIOD', options: ['UPTIME', 'DAY', 'TOTAL'] },
   { id: 21, label: 'LONG PRESS', options: ['300 ms', '500 ms', '700 ms', '900 ms', '1100 ms', '1300 ms'] },
   { id: 15, label: 'HV', options: ['ON', 'OFF'] },
-  { id: 16, label: 'DOSE ALARM', options: ['OFF', 'AUTO-Y', 'AUTO-R', '5', '7', '10', '30', '50', '100', '500', '1000'] },
-  { id: 17, label: 'ALARM STOP', options: ['CLEAR', 'BUTTON'] },
-  { id: 20, label: 'TONE', options: ['STOCK', 'CLASSIC', 'MODERN'] },
+  { id: 13, label: 'USE-SPI', options: ['OFF', 'ON'] },
 ];
 
 function percentFromAdc(raw, empty, full) {
@@ -1164,15 +1167,46 @@ function settingsOptions(setting) {
   if ((setting.id === 10 || setting.id === 11) && deviceSettings?.[9] === 1) {
     return ['CPM', 'CPS'];
   }
+  if (setting.id === 12) {
+    const stats = ['MIN_M', 'AVG_M', 'MAX_M', 'MIN_H', 'AVG_H', 'MAX_H'];
+    return deviceSettings?.[9] === 1 ? ['µSv', 'R', 'OFF', ...stats] :
+      ['CPM', 'CPS', 'OFF', ...stats];
+  }
+  if (setting.id === 22) {
+    const unit = deviceSettings?.[9] ?? 0;
+    const period = deviceSettings?.[23] ?? 1;
+    const activeUnits = ['Sv', 'CNT', 'R'].filter((_, index) => index !== unit);
+    const activePeriods = period === 0 ? ['TIME', 'DAY', 'TOTAL'] :
+      ['UPTIME', 'DAY', 'TOTAL'].filter((_, index) => index !== period);
+    const activeValues = ['OFF', ...activeUnits, ...activePeriods];
+    const activeIndex = (label) => activeValues.indexOf(label);
+    const unitLabels = ['Sv', 'CNT', 'R'];
+    const periodLabels = ['TIME', 'UPTIME', 'DAY', 'TOTAL'];
+    return ['OFF', ...unitLabels, ...periodLabels].map((label, index) => {
+      const isUnit = index >= 1 && index <= 3;
+      const isPeriod = index >= 4;
+      const inactive = (isUnit && unitLabels.indexOf(label) === unit) ||
+        (isPeriod && ((period === 0 && label === 'UPTIME') ||
+          (period !== 0 && (label === 'TIME' ||
+            ['UPTIME', 'DAY', 'TOTAL'].indexOf(label) === period))));
+      return {
+        label,
+        value: inactive ? `inactive-${index}` : activeIndex(label),
+        disabled: inactive,
+      };
+    });
+  }
   return setting.options;
 }
 
 function renderSettings() {
   elements.settingsList.replaceChildren();
+  const rows = [];
   for (const setting of remoteSettings) {
-    if (setting.id === 11 && deviceSettings?.[9] === 1) continue;
     const available = deviceSettings !== null && setting.id < deviceSettings.length;
-    const options = settingsOptions(setting);
+    const options = settingsOptions(setting).map((option, index) =>
+      typeof option === 'string' ?
+        { label: option, value: index, disabled: false } : option);
     const row = document.createElement('div');
     row.className = 'setting-row';
     const label = document.createElement('label');
@@ -1188,19 +1222,31 @@ function renderSettings() {
       select.append(option);
       select.disabled = true;
       row.append(label, select);
-      elements.settingsList.append(row);
+      rows.push(row);
       continue;
     }
-    options.forEach((text, index) => {
+    options.forEach((item) => {
       const option = document.createElement('option');
-      option.value = String(index);
-      option.textContent = text;
+      option.value = String(item.value);
+      option.textContent = item.label;
+      option.disabled = item.disabled;
       select.append(option);
     });
     select.value = String(deviceSettings[setting.id]);
-    select.addEventListener('change', () => writeSetting(setting.id, Number(select.value), select));
+    const inactiveSetting = setting.id === 11 && deviceSettings[9] === 1;
+    select.disabled = inactiveSetting;
+    if (!inactiveSetting) {
+      select.addEventListener('change', () =>
+        writeSetting(setting.id, Number(select.value), select));
+    }
     row.append(label, select);
-    elements.settingsList.append(row);
+    rows.push(row);
+  }
+  for (let index = 0; index < rows.length; index += 10) {
+    const pair = document.createElement('div');
+    pair.className = 'settings-pair';
+    pair.append(...rows.slice(index, index + 10));
+    elements.settingsList.append(pair);
   }
 }
 
@@ -1216,7 +1262,7 @@ async function loadSettings() {
   try {
     const payload = await serial.request(OP_GET_SETTINGS);
     if (payload.length < 2 || payload[0] !== 0 ||
-        (payload[1] !== 21 && payload[1] !== 22) ||
+        ![21, 22, 24].includes(payload[1]) ||
         payload.length !== payload[1] + 2) {
       throw new ProtocolError('Invalid settings response.');
     }
@@ -1257,18 +1303,103 @@ async function writeSetting(settingId, value, control) {
   }
 }
 
+function formatDoseUptime(seconds) {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  if (days > 1) return `${days}D ${String(hours).padStart(2, '0')}H ${String(minutes).padStart(2, '0')}M`;
+  const elapsedHours = Math.floor(seconds / 3600);
+  return [elapsedHours, minutes, secs].map((part) => String(part).padStart(2, '0')).join(':');
+}
+
+function rateRowText(mode, unit, cpm, rateUsvh) {
+  if (unit === 1) {
+    if (mode === 2) return '';
+    if (mode === 0 || mode === 1) {
+      const symbol = mode === 0 ? 'Sv' : 'R';
+      const value = mode === 0 ? rateUsvh : rateUsvh * 100;
+      const formatted = formatRadiation(value, 1, symbol, true);
+      return `${formatted.value} ${formatted.unit}`;
+    }
+  } else {
+    if (mode === 2) return '';
+    if (mode === 0) return `${cpm.toLocaleString('en-US')} CPM`;
+    if (mode === 1) return `${(cpm / 60).toFixed(2)} CPS`;
+  }
+
+  if (mode < 3 || mode > 8) return '';
+  const windowSeconds = mode < 6 ? 60 : 3600;
+  const samples = rateStatsHistory.slice(-windowSeconds);
+  const values = samples.length ? samples : [cpm];
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const statistic = (mode - 3) % 3;
+  const value = statistic === 0 ? minimum : statistic === 1 ? average : maximum;
+  const tag = ['MIN_M', 'AVG_M', 'MAX_M', 'MIN_H', 'AVG_H', 'MAX_H'][mode - 3];
+  return `${tag} ${Math.round(value).toLocaleString('en-US')} CPM`;
+}
+
+function doseRowChoice(unit, period, mode) {
+  const choices = ['OFF'];
+  ['Sv', 'CNT', 'R'].forEach((_, value) => {
+    if (value !== unit) choices.push({ kind: 'unit', value });
+  });
+  if (period === 0) {
+    choices.push({ kind: 'time' }, { kind: 'period', value: 1 }, { kind: 'period', value: 2 });
+  } else {
+    [0, 1, 2].forEach((value) => {
+      if (value !== period) choices.push({ kind: 'period', value });
+    });
+  }
+  return choices[mode] || 'OFF';
+}
+
+function doseValueText(unit, pulses, dosePrefix) {
+  if (unit === 1) return `${pulses.toLocaleString('en-US')} CNT`;
+  const doseUsv = pulses * (400 / 3600) / 1000;
+  const symbol = unit === 2 ? 'R' : 'Sv';
+  const formatted = formatRadiation(doseUsv * (unit === 2 ? 100 : 1), dosePrefix, symbol, false, 6);
+  return `${formatted.value} ${formatted.unit}`;
+}
+
+function doseRowText(unit, period, mode, uptime, uptimePulses, dayPulses, totalPulses, dosePrefix) {
+  const choice = doseRowChoice(unit, period, mode);
+  if (choice === 'OFF') return '';
+  if (choice.kind === 'time') return formatDoseUptime(uptime);
+  if (choice.kind === 'unit') {
+    const pulses = period === 0 ? uptimePulses : period === 1 ? dayPulses : totalPulses;
+    return doseValueText(choice.value, pulses, dosePrefix);
+  }
+  const pulses = choice.value === 0 ? uptimePulses : choice.value === 1 ? dayPulses : totalPulses;
+  return doseValueText(unit, pulses, dosePrefix);
+}
+
 function handleStatus(payload) {
-  if (![25, 29, 31].includes(payload.length) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
+  if (![25, 29, 31, 35].includes(payload.length) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const uptimeSeconds = view.getUint32(1, true);
   const count = view.getUint32(5, true);
   const cpm = view.getUint32(9, true);
-  const doseNsv = view.getUint32(13, true) +
-    (payload.length >= 31 ? view.getUint16(29, true) / 3600 : 0);
+  const doseNsvWhole = view.getUint32(13, true);
+  const doseFraction = payload.length >= 31 ? view.getUint16(29, true) : 0;
+  const doseNsv = doseNsvWhole + doseFraction / 3600;
   const batteryRaw = view.getUint16(17, true);
   const solarRaw = view.getUint16(19, true);
   const usbRaw = view.getUint16(21, true);
   const countTotal = payload.length >= 29 ? view.getUint32(25, true) : count;
+  const lifetimePulses = payload.length >= 35 ? view.getUint32(31, true) : countTotal;
+  const dosePeriod = deviceSettings?.[23] ?? 1;
+  const doseRowMode = deviceSettings?.[22] ?? 0;
+  const derivedDosePulses = payload.length >= 31 ?
+    Math.min(0xffffffff, Math.floor((doseNsvWhole * 3600 + doseFraction + 200) / 400)) :
+      (dosePeriod === 0 ? countTotal : count);
+  const uptimePulses = countTotal;
+  const dayPulses = count;
+  const dosePulseCount = payload.length >= 35 ?
+    (dosePeriod === 0 ? uptimePulses : dosePeriod === 1 ? dayPulses : lifetimePulses) :
+    derivedDosePulses;
   rateLevel = countTotal < 25 ? 'blue' :
     (cpm * 666 > 90000 ? 'red' : (cpm * 666 >= 40000 ? 'yellow' : 'green'));
   const levelClass = `level-${rateLevel}`;
@@ -1292,16 +1423,15 @@ function handleStatus(payload) {
   const dosePrefix = deviceSettings?.[11] ?? 1;
   const rateUsvh = cpm * 0.00666 * (unit === 2 ? 100 : 1);
   const doseUsv = doseNsv / 1000 * (unit === 2 ? 100 : 1);
+  const dosePeriodLabels = ['DOSE UPTIME', 'DOSE TODAY', 'DOSE TOTAL'];
+  elements.doseLabel.textContent = dosePeriodLabels[dosePeriod] || 'DOSE TODAY';
 
   if (unit === 1) {
-    elements.rate.textContent = cpm.toLocaleString('en-US');
     elements.rateLabel.textContent = 'RATE';
     elements.rateDose.textContent = cpm.toLocaleString('en-US');
     elements.rateUnit.textContent = 'CPM';
-    elements.dose.textContent = count.toLocaleString('en-US');
+    elements.dose.textContent = dosePulseCount.toLocaleString('en-US');
     elements.doseUnit.textContent = 'CNT';
-    elements.rateFoot.hidden = true;
-    elements.doseFoot.hidden = true;
   } else {
     const symbol = unit === 2 ? 'R' : 'Sv';
     const rate = formatRadiation(rateUsvh, ratePrefix, symbol, true);
@@ -1311,10 +1441,17 @@ function handleStatus(payload) {
     elements.rateUnit.textContent = rate.unit;
     elements.dose.textContent = dose.value;
     elements.doseUnit.textContent = dose.unit;
-    elements.rateFoot.hidden = true;
-    elements.doseFoot.hidden = true;
   }
-  elements.count.textContent = count.toLocaleString('en-US');
+  rateStatsHistory.push(cpm);
+  if (rateStatsHistory.length > 3600) rateStatsHistory.shift();
+  const rateRowMode = deviceSettings?.[12] ?? 0;
+  const rateRow = rateRowText(rateRowMode, unit, cpm, rateUsvh);
+  elements.rateFoot.textContent = rateRow;
+  elements.rateFoot.hidden = rateRow.length === 0;
+  let doseRow = doseRowText(unit, dosePeriod, doseRowMode, uptimeSeconds,
+    uptimePulses, dayPulses, lifetimePulses, dosePrefix);
+  elements.doseFoot.textContent = doseRow;
+  elements.doseFoot.hidden = doseRow.length === 0;
   elements.debugCount.textContent = countTotal.toLocaleString('en-US');
   elements.uptime.textContent = `${uptime.days}D ${uptime.clock.slice(0, 5)}`;
   updateDeviceDateTime(`${uptime.days}D ${uptime.clock}`);
@@ -2107,6 +2244,8 @@ async function flashSelectedFirmware() {
 async function connectDevice(portOverride = null) {
   protocolCapabilities = 0;
   deviceSettings = null;
+  rateHistory.length = 0;
+  rateStatsHistory.length = 0;
   logInfo = null;
   logRecords = [];
   logStartOffset = 0;
@@ -2172,6 +2311,7 @@ async function disconnectDevice() {
   elements.rebootFirmware.disabled = false;
   elements.rebootBootloader.disabled = false;
   polling = false;
+  rateStatsHistory.length = 0;
   deviceSettings = null;
   logInfo = null;
   logRecords = [];

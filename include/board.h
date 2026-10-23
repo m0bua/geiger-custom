@@ -75,13 +75,17 @@ uint8_t board_display_rate_led_mask(void);
 void board_display_set_rate_led(void);
 void board_display_set_dose(uint32_t dose_thousandths,
                             uint32_t dose_fraction,
-                            uint32_t daily_pulse_count,
+                            uint32_t uptime_pulse_count,
+                            uint32_t day_pulse_count,
+                            uint32_t total_pulse_count,
                             uint32_t measurement_seconds);
-void board_display_set_session_rates(uint32_t average_rate_thousandths,
-                                     uint32_t maximum_rate_thousandths,
-                                     uint32_t average_cpm,
-                                     uint32_t maximum_cpm,
-                                     uint32_t session_count_total);
+uint8_t board_display_dose_period(void);
+void board_display_set_rate_stats(uint32_t minimum_minute,
+                                  uint32_t average_minute,
+                                  uint32_t maximum_minute,
+                                  uint32_t minimum_hour,
+                                  uint32_t average_hour,
+                                  uint32_t maximum_hour);
 void board_display_set_count(uint32_t count);
 uint32_t board_display_screen_timeout_ms(void);
 bool board_display_cleanup_feedback_active(void);

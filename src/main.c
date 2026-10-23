@@ -10,11 +10,103 @@
 #define BATTERY_ACTIVE_SAMPLE_INTERVAL_MS 30000u
 #define BATTERY_IDLE_SAMPLE_INTERVAL_MS 600000u
 #define BATTERY_CRITICAL_SAMPLE_INTERVAL_MS 30000u
+#define TOTAL_PULSE_CHECKPOINT_MS 60000u
+#define TOTAL_PULSE_MAGIC 0xC7u
+#define TOTAL_PULSE_SLOT_COUNT 2u
 
 /* Stable image marker used by the browser flasher to recognize project builds. */
 static const volatile uint8_t firmware_identity_marker[] = {
     0x4du, 0x47u, 0x32u, 0x46u, 0x57u, 0x49u, 0x44u, 0x31u
 };
+
+/* TOTAL dose uses the unused EEPROM gaps 10-15/30-31/62-63/72-79.
+ * Settings occupy 0-9, 16-29, 32-61, 64-71, 80-139; log storage starts at 140. */
+static const uint16_t total_pulse_addresses[TOTAL_PULSE_SLOT_COUNT][9] = {
+    {10u, 11u, 12u, 13u, 14u, 15u, 30u, 31u, 62u},
+    {63u, 72u, 73u, 74u, 75u, 76u, 77u, 78u, 79u}
+};
+
+static uint16_t total_pulse_crc(const uint8_t *bytes, uint8_t count)
+{
+    uint16_t crc = 0xFFFFu;
+    for (uint8_t i = 0u; i < count; ++i) {
+        crc ^= (uint16_t)bytes[i] << 8u;
+        for (uint8_t bit = 0u; bit < 8u; ++bit) {
+            crc = (crc & 0x8000u) != 0u ?
+                (uint16_t)((crc << 1u) ^ 0x1021u) : (uint16_t)(crc << 1u);
+        }
+    }
+    return crc;
+}
+
+static bool total_pulse_load(uint32_t *total, uint8_t *sequence)
+{
+    bool found = false;
+    uint32_t newest_total = 0u;
+    uint8_t newest_sequence = 0u;
+    for (uint8_t slot = 0u; slot < TOTAL_PULSE_SLOT_COUNT; ++slot) {
+        uint8_t record[9];
+        for (uint8_t i = 0u; i < 9u; ++i) {
+            if (!board_eeprom_read(total_pulse_addresses[slot][i], &record[i])) {
+                return false;
+            }
+        }
+        const uint32_t candidate = (uint32_t)record[1] |
+            ((uint32_t)record[2] << 8u) | ((uint32_t)record[3] << 16u) |
+            ((uint32_t)record[4] << 24u);
+        const uint16_t crc = total_pulse_crc(record, 5u);
+        if (record[7] != TOTAL_PULSE_MAGIC ||
+            record[8] != (uint8_t)~TOTAL_PULSE_MAGIC ||
+            record[5] != (uint8_t)crc || record[6] != (uint8_t)(crc >> 8u)) {
+            continue;
+        }
+        if (!found || (int8_t)(record[0] - newest_sequence) > 0) {
+            found = true;
+            newest_total = candidate;
+            newest_sequence = record[0];
+        }
+    }
+    if (found) {
+        *total = newest_total;
+        *sequence = newest_sequence;
+    }
+    return found;
+}
+
+static bool total_pulse_save(uint32_t total, uint8_t *sequence)
+{
+    const uint8_t next_sequence = (uint8_t)(*sequence + 1u);
+    const uint8_t slot = (uint8_t)(next_sequence % TOTAL_PULSE_SLOT_COUNT);
+    uint8_t record[9] = {next_sequence, (uint8_t)total,
+        (uint8_t)(total >> 8u), (uint8_t)(total >> 16u),
+        (uint8_t)(total >> 24u), 0u, 0u, TOTAL_PULSE_MAGIC,
+        (uint8_t)~TOTAL_PULSE_MAGIC};
+    const uint16_t crc = total_pulse_crc(record, 5u);
+    record[5] = (uint8_t)crc;
+    record[6] = (uint8_t)(crc >> 8u);
+    if (!board_eeprom_write(total_pulse_addresses[slot][7], 0u) ||
+        !board_eeprom_write(total_pulse_addresses[slot][8], 0u)) return false;
+    for (uint8_t i = 0u; i < 7u; ++i) {
+        if (!board_eeprom_write(total_pulse_addresses[slot][i], record[i])) {
+            return false;
+        }
+    }
+    if (!board_eeprom_write(total_pulse_addresses[slot][7], record[7]) ||
+        !board_eeprom_write(total_pulse_addresses[slot][8], record[8])) {
+        return false;
+    }
+    *sequence = next_sequence;
+    return true;
+}
+
+static uint32_t selected_dose_pulses(uint8_t period, uint32_t uptime_pulses,
+                                     uint32_t day_pulses,
+                                     uint32_t total_pulses)
+{
+    if (period == 0u) return uptime_pulses;
+    if (period == 2u) return total_pulses;
+    return day_pulses;
+}
 
 static void dose_from_pulse_count(uint32_t pulse_count,
                                   uint32_t *dose_thousandths,
@@ -53,15 +145,20 @@ int main(void)
     uint32_t pulses_since_start = 0u;
     uint32_t session_pulses_total = 0u;
     uint32_t session_elapsed_seconds = 0u;
-    uint32_t session_max_rate_thousandths = 0u;
-    uint32_t session_max_cpm = 0u;
+    uint32_t hour_min_cpm = UINT32_MAX;
+    uint32_t hour_max_cpm = 0u;
+    uint64_t hour_sum_cpm = 0u;
+    uint32_t hour_sample_count = 0u;
+    uint32_t hour_bucket = UINT32_MAX;
     uint8_t rate_window_seconds = 0u;
     uint32_t dose_thousandths = 0u;
     uint32_t dose_fraction = 0u;
     uint32_t dose_measurement_seconds = 0u;
-    uint32_t session_dose_thousandths = 0u;
-    uint32_t session_dose_fraction = 0u;
     uint32_t today_pulse_count = 0u;
+    uint32_t total_pulse_count = 0u;
+    uint32_t total_pulse_saved = 0u;
+    uint32_t next_total_checkpoint;
+    uint8_t total_pulse_sequence = 0u;
     uint16_t calendar_day_key = UINT16_MAX;
     bool calendar_day_valid = false;
     uint32_t minute_bins[60] = {0u};
@@ -107,6 +204,7 @@ int main(void)
     board_lcd_backlight_set(false);
     board_display_init();
     log_storage_init(board_display_use_spi());
+    (void)total_pulse_load(&total_pulse_count, &total_pulse_sequence);
     {
         uint32_t uptime_seconds;
         uint32_t calendar_seconds;
@@ -125,16 +223,27 @@ int main(void)
                     today_pulse_count = log_storage_today_recover_from_hours(
                         (uint8_t)((calendar_seconds % 86400u) / 3600u));
                 }
-                dose_measurement_seconds = calendar_seconds % 86400u;
-                dose_from_pulse_count(today_pulse_count,
+                dose_measurement_seconds = board_display_dose_period() == 1u ?
+                    calendar_seconds % 86400u : 0u;
+                dose_from_pulse_count(selected_dose_pulses(
+                        board_display_dose_period(), 0u, today_pulse_count,
+                        total_pulse_count),
                     &dose_thousandths, &dose_fraction);
             }
             log_storage_time_cutoff(uptime_seconds, calendar_seconds,
                 calendar_valid, LOG_CUTOFF_REASON_BOOT);
         }
     }
+    if (board_display_dose_period() == 0u) {
+        dose_measurement_seconds = board_uptime_seconds_get();
+    }
+    total_pulse_saved = total_pulse_count;
+    dose_from_pulse_count(selected_dose_pulses(board_display_dose_period(),
+            session_pulses_total, today_pulse_count, total_pulse_count),
+        &dose_thousandths, &dose_fraction);
     board_display_set_dose(dose_thousandths, dose_fraction,
-                           today_pulse_count,
+                           session_pulses_total, today_pulse_count,
+                           total_pulse_count,
                            dose_measurement_seconds);
     screen_alarm_active = board_display_screen_alarm_active();
     sound_alarm_active = board_display_sound_alarm_active();
@@ -148,6 +257,7 @@ int main(void)
     next_solar_sample = board_millis;
     next_battery_sample = board_millis;
     next_minute_tick = board_millis + 1000u;
+    next_total_checkpoint = board_millis + TOTAL_PULSE_CHECKPOINT_MS;
     cpm_history_init();
     next_cpm_history_tick = board_millis + 500u;
     screen_timeout_ms = board_display_screen_timeout_ms();
@@ -156,6 +266,13 @@ int main(void)
     for (;;) {
         protocol_v1_service();
         uint32_t now = board_millis;
+        if ((int32_t)(now - next_total_checkpoint) >= 0) {
+            if (total_pulse_count != total_pulse_saved &&
+                total_pulse_save(total_pulse_count, &total_pulse_sequence)) {
+                total_pulse_saved = total_pulse_count;
+            }
+            next_total_checkpoint = now + TOTAL_PULSE_CHECKPOINT_MS;
+        }
         const uint8_t button_wakeup_mask =
             board_take_button_wakeup_request();
         const uint8_t currently_pressed = backlight_on ? 0u :
@@ -462,12 +579,18 @@ int main(void)
                                 today_pulse_count =
                                     log_storage_today_pulse_count();
                             }
-                            dose_measurement_seconds =
-                                calendar_seconds % 86400u;
-                            dose_from_pulse_count(today_pulse_count,
+                            if (board_display_dose_period() == 1u) {
+                                dose_measurement_seconds =
+                                    calendar_seconds % 86400u;
+                            }
+                            dose_from_pulse_count(selected_dose_pulses(
+                                    board_display_dose_period(),
+                                    session_pulses_total, today_pulse_count,
+                                    total_pulse_count),
                                 &dose_thousandths, &dose_fraction);
                             board_display_set_dose(dose_thousandths,
-                                dose_fraction, today_pulse_count,
+                                dose_fraction, session_pulses_total,
+                                today_pulse_count, total_pulse_count,
                                 dose_measurement_seconds);
                         }
                         log_storage_checkpoint(calendar_seconds, true,
@@ -476,10 +599,10 @@ int main(void)
                         log_checkpoint_on_wake = false;
                     }
                 }
+                if (hv_enabled) {
                 if (session_elapsed_seconds < UINT32_MAX) {
                     ++session_elapsed_seconds;
                 }
-                if (hv_enabled) {
                 const uint32_t second_pulses =
                     detected_pulses - previous_minute_sample;
 
@@ -494,6 +617,11 @@ int main(void)
                 } else {
                     session_pulses_total += second_pulses;
                 }
+                if (UINT32_MAX - total_pulse_count < second_pulses) {
+                    total_pulse_count = UINT32_MAX;
+                } else {
+                    total_pulse_count += second_pulses;
+                }
                 minute_total -= minute_bins[minute_head];
                 minute_bins[minute_head] = second_pulses;
                 minute_total += second_pulses;
@@ -507,10 +635,6 @@ int main(void)
                 /* Rate = normalized CPM * 0.00666 µSv/h. */
                 const uint32_t rate_thousandths = (uint32_t)(
                     ((uint64_t)cpm * 666u + 50u) / 100u);
-                if (rate_thousandths > session_max_rate_thousandths) {
-                    session_max_rate_thousandths = rate_thousandths;
-                }
-                if (cpm > session_max_cpm) session_max_cpm = cpm;
                 latest_cpm = cpm;
                 log_storage_second(second_pulses);
                 today_pulse_count = calendar_day_valid ?
@@ -521,38 +645,63 @@ int main(void)
                 board_display_set_rate(rate_thousandths, cpm,
                                        pulses_since_start,
                                        pulses_since_start >= 25u);
-                if (dose_measurement_seconds < UINT32_MAX) {
-                    ++dose_measurement_seconds;
+                if (board_display_dose_period() == 1u) {
+                    if (dose_measurement_seconds < UINT32_MAX) {
+                        ++dose_measurement_seconds;
+                    }
+                } else if (board_display_dose_period() == 0u) {
+                    dose_measurement_seconds = board_uptime_seconds_get();
+                } else {
+                    dose_measurement_seconds = session_elapsed_seconds;
                 }
-                dose_from_pulse_count(today_pulse_count,
+                dose_from_pulse_count(selected_dose_pulses(
+                        board_display_dose_period(), session_pulses_total,
+                        today_pulse_count, total_pulse_count),
                     &dose_thousandths, &dose_fraction);
                 board_display_set_dose(dose_thousandths, dose_fraction,
+                                       session_pulses_total,
                                        today_pulse_count,
+                                       total_pulse_count,
                                        dose_measurement_seconds);
-                session_dose_fraction += rate_thousandths;
-                session_dose_thousandths += session_dose_fraction / 3600u;
-                session_dose_fraction %= 3600u;
                 } else {
                     log_storage_alert_sample(0u, 0u,
                         board_uptime_seconds_get(), false);
                 }
-                if (session_elapsed_seconds != 0u) {
-                    const uint64_t integrated_rate =
-                        (uint64_t)session_dose_thousandths * 3600u +
-                        session_dose_fraction;
-                    const uint64_t average_rate_wide = integrated_rate /
-                        session_elapsed_seconds;
-                    const uint64_t average_cpm_wide =
-                        ((uint64_t)session_pulses_total * 60u +
-                            session_elapsed_seconds / 2u) /
-                        session_elapsed_seconds;
-                    const uint32_t average_rate = average_rate_wide >
-                        UINT32_MAX ? UINT32_MAX : (uint32_t)average_rate_wide;
-                    const uint32_t average_cpm = average_cpm_wide >
-                        UINT32_MAX ? UINT32_MAX : (uint32_t)average_cpm_wide;
-                    board_display_set_session_rates(average_rate,
-                        session_max_rate_thousandths, average_cpm,
-                        session_max_cpm, session_pulses_total);
+                {
+                    uint32_t minute_min = UINT32_MAX;
+                    uint32_t minute_max = 0u;
+                    uint64_t minute_sum = 0u;
+                    uint32_t minute_samples = cpm_history_count();
+                    if (minute_samples > 120u) minute_samples = 120u;
+                    for (uint32_t age = 0u; age < minute_samples; ++age) {
+                        uint32_t sample;
+                        if (cpm_history_get((uint8_t)age, &sample)) {
+                            if (sample < minute_min) minute_min = sample;
+                            if (sample > minute_max) minute_max = sample;
+                            minute_sum += sample;
+                        }
+                    }
+                    if (minute_samples == 0u) minute_min = 0u;
+                    const uint32_t minute_average = minute_samples == 0u ? 0u :
+                        (uint32_t)(minute_sum / minute_samples);
+                    const uint32_t current_hour_bucket =
+                        board_uptime_seconds_get() / 3600u;
+                    if (current_hour_bucket != hour_bucket) {
+                        hour_bucket = current_hour_bucket;
+                        hour_min_cpm = UINT32_MAX;
+                        hour_max_cpm = 0u;
+                        hour_sum_cpm = 0u;
+                        hour_sample_count = 0u;
+                    }
+                    if (latest_cpm < hour_min_cpm) hour_min_cpm = latest_cpm;
+                    if (latest_cpm > hour_max_cpm) hour_max_cpm = latest_cpm;
+                    hour_sum_cpm += latest_cpm;
+                    if (hour_sample_count < UINT32_MAX) ++hour_sample_count;
+                    board_display_set_rate_stats(minute_min, minute_average,
+                        minute_max, hour_min_cpm == UINT32_MAX ? 0u : hour_min_cpm,
+                        hour_sample_count == 0u ? 0u :
+                            (uint32_t)(hour_sum_cpm / hour_sample_count),
+                        hour_max_cpm);
                 }
                 next_minute_tick += 1000u;
             }
@@ -702,6 +851,7 @@ int main(void)
                 (board_display_usb_connected() ? 2u : 0u);
             status.count_total = board_detector_count();
             status.dose_fraction_3600 = (uint16_t)dose_fraction;
+            status.dose_count_total = total_pulse_count;
             protocol_v1_set_status(&status);
         }
         protocol_v1_service();

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1115">
   <title>Device Monitor</title>
-  <link rel="stylesheet" href="style.css?v=20261023-11">
+  <link rel="stylesheet" href="style.css?v=20261023-12">
 </head>
 <body>
   <main class="shell">
@@ -46,12 +46,12 @@
           <div class="metric-label" id="rate-label">RATE · CALCULATED</div>
           <div class="metric-value"><span id="rate-dose">—</span><small id="rate-unit">CPM</small></div>
           <div id="rate-warmup" class="rate-warmup" role="progressbar" aria-label="Warm-up pulses" aria-valuemin="0" aria-valuemax="25" aria-valuenow="0" hidden><span id="rate-warmup-fill"></span></div>
-          <p class="metric-foot" id="rate-foot" hidden><span id="rate">—</span> CPM</p>
+          <p class="metric-foot" id="rate-foot" hidden></p>
         </article>
         <article class="metric">
-          <div class="metric-label">DOSE TODAY</div>
+          <div class="metric-label" id="dose-label">DOSE TODAY</div>
           <div class="metric-value"><span id="dose">—</span><small id="dose-unit">CNT</small></div>
-          <p class="metric-foot" id="dose-foot" hidden><span id="count">—</span> CNT</p>
+          <p class="metric-foot" id="dose-foot" hidden></p>
         </article>
       </section>
       <section class="chart-panel" aria-label="Recent rate history">
@@ -225,6 +225,6 @@
 
     <footer>Protocol V1</footer>
   </main>
-  <script defer src="app.js?v=20261023-23"></script>
+  <script defer src="app.js?v=20261023-30"></script>
 </body>
 </html>

@@ -210,7 +210,8 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         write_u16(&response[23], current_status.flags);
         write_u32(&response[25], current_status.count_total);
         write_u16(&response[29], current_status.dose_fraction_3600);
-        response_length = 31u;
+        write_u32(&response[31], current_status.dose_count_total);
+        response_length = 35u;
     } else if (opcode == PROTOCOL_V1_OP_GET_SETTINGS &&
                payload_length == 0u) {
         const uint8_t count = board_display_settings_remote_count();

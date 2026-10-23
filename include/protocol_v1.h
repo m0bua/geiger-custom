@@ -17,6 +17,7 @@ typedef struct {
     uint16_t flags;
     uint32_t count_total;
     uint16_t dose_fraction_3600;
+    uint32_t dose_count_total;
 } protocol_v1_status_t;
 
 enum {

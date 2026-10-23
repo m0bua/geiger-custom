@@ -1,5 +1,6 @@
 Залишилось:
 - логи: перевірити для кожного актуальний (поточний запис)
+- після бутлодеру в додатку початок прошивки через platformio перезапускає в прошивку
 - js-manual
 - js-changelog
 - gh-worker
@@ -12,6 +13,7 @@
 - кастомні пороги червоного і жовтого
 - затемнення перед вимкненням екрану
 - кольори тем
+- рефактор логів: записи-поточний цикл 2-5 штук - курсор
 
 LED: OFF/ON/{ALWAYS}/YELLOW/RED
 CLICKS: {OFF}/ON/ALWAYS/YELLOW/RED
@@ -29,8 +31,9 @@ LEAD ZERO: {SHOW}/HIDE
 UNIT: {Sv}/CNT/R
 RATE PREFFIX: if(Sv/R): m/{u}/n/AUTO else: {CPM}/CPS
 DOSE PREF: if(Sv/R): m/u/n/{AUTO} else: {CPM}/CPS
-RATE ROW 2: if(Sv/R): {CPM}/CPS/OFF else: {uS}/R/OFF
-DOSE ROW 2: if(Sv/R): {CPM}/CPS/OFF else: {uS}/R/OFF
+DOSE PERIOD: UPTIME/{DAY}/TOTAL
+RATE ROW 2: if(Sv/R): {CPM}/CPS/OFF else: {uS}/R/OFF + MIN_M/AVG_M/MAX_M/MIN_H/AVG_H/MAX_H
+DOSE ROW 2: if(Sv/R): {CNT}/OFF else: {uS}/R/OFF
 HV: {ON}/OFF
 USE-SPI: {OFF}/ON
 RESET: - SETTINGS/MIN-LOG/HOUR-LOG/DAY-LOG/ERROR-LOG/LOGS/EEPROM-LOGS/EEPROM/SPI/ALL
