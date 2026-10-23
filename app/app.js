@@ -8,9 +8,11 @@ const OP_SET_SETTING = 4;
 const OP_GET_LOG_INFO = 5;
 const OP_GET_LOG_PAGE = 6;
 const OP_GET_SPI_DUMP_PAGE = 7;
+const OP_SET_RTC = 8;
 const CAP_GET_SETTINGS = 1 << 1;
 const CAP_SET_SETTING = 1 << 2;
 const CAP_GET_SPI_DUMP = 1 << 5;
+const CAP_SET_RTC = 1 << 6;
 const MAX_PAYLOAD = 64;
 const LOG_BATCH_SIZE = 6;
 const STM32_FLASH_BASE = 0x08000000;
@@ -182,6 +184,13 @@ const elements = {
   rateChart: document.querySelector('#rate-chart'),
   deviceDate: document.querySelector('#device-date'),
   deviceTime: document.querySelector('#device-time'),
+  settingsDeviceDate: document.querySelector('#settings-device-date'),
+  settingsDeviceTime: document.querySelector('#settings-device-time'),
+  settingsSystemDate: document.querySelector('#settings-system-date'),
+  settingsSystemTime: document.querySelector('#settings-system-time'),
+  settingsClockDifference: document.querySelector('#settings-clock-difference'),
+  settingsClockStatus: document.querySelector('#settings-clock-status'),
+  syncClock: document.querySelector('#sync-clock'),
   overviewUptime: document.querySelector('#overview-uptime'),
   solarPercent: document.querySelector('#solar-percent'),
   batteryPercent: document.querySelector('#battery-percent'),
@@ -227,6 +236,8 @@ const elements = {
   rateFoot: document.querySelector('#rate-foot'),
   rateLabel: document.querySelector('#rate-label'),
   rateDose: document.querySelector('#rate-dose'),
+  rateWarmup: document.querySelector('#rate-warmup'),
+  rateWarmupFill: document.querySelector('#rate-warmup-fill'),
   rateUnit: document.querySelector('#rate-unit'),
   dose: document.querySelector('#dose'),
   doseUnit: document.querySelector('#dose-unit'),
@@ -496,6 +507,7 @@ let logPageLoading = false;
 let logPageReloadPending = false;
 let logPageGeneration = 0;
 let logInfoLoading = false;
+let clockSyncBusy = false;
 const rateHistory = [];
 
 const remoteSettings = [
@@ -512,6 +524,7 @@ const remoteSettings = [
   { id: 10, label: 'RATE PREFIX', options: ['m', 'µ', 'n', 'AUTO'] },
   { id: 11, label: 'DOSE PREFIX', options: ['m', 'µ', 'n', 'AUTO'] },
   { id: 13, label: 'USE-SPI', options: ['OFF', 'ON'] },
+  { id: 21, label: 'LONG PRESS', options: ['300 ms', '500 ms', '700 ms', '900 ms', '1100 ms', '1300 ms'] },
   { id: 15, label: 'HV', options: ['ON', 'OFF'] },
   { id: 16, label: 'DOSE ALARM', options: ['OFF', 'AUTO-Y', 'AUTO-R', '5', '7', '10', '30', '50', '100', '500', '1000'] },
   { id: 17, label: 'ALARM STOP', options: ['CLEAR', 'BUTTON'] },
@@ -524,7 +537,7 @@ function percentFromAdc(raw, empty, full) {
   return 100 - Math.floor(((full - raw) * 100) / (full - empty));
 }
 
-function formatRadiation(valueUsv, prefixSetting, symbol, perHour) {
+function formatRadiation(valueUsv, prefixSetting, symbol, perHour, digitLimit = null) {
   const prefixes = [
     { name: 'm', factor: 0.001 },
     { name: 'µ', factor: 1 },
@@ -544,8 +557,10 @@ function formatRadiation(valueUsv, prefixSetting, symbol, perHour) {
   const value = valueUsv * selected.factor;
   const integerDigits = Math.max(0, Math.floor(Math.log10(Math.abs(value))) + 1);
   const maxDecimals = perHour ? 3 : 5;
+  const decimalsAvailable = digitLimit === null ? 5 - integerDigits :
+    digitLimit - Math.max(1, integerDigits);
   const digits = value === 0 ? 0 : Math.max(0,
-    Math.min(maxDecimals, 5 - integerDigits));
+    Math.min(maxDecimals, decimalsAvailable));
   const text = value.toFixed(digits).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
   return { value: text, unit: `${selected.name}${symbol}${perHour ? '/h' : ''}` };
 }
@@ -625,6 +640,7 @@ function selectPage(page, updateUrl = true) {
   }
   if (page === 'overview') drawRateChart();
   if (page === 'settings' && serial && deviceSettings === null) loadSettings();
+  if (page === 'settings' && serial && logInfo === null) loadLogInfo();
   if (page === 'logs' && serial && logInfo === null) loadLogInfo();
   else if (page === 'logs' && serial && logInfo && logRecords.length === 0) loadLogPage(true);
 }
@@ -960,6 +976,51 @@ async function loadLogInfo() {
   }
 }
 
+async function synchronizeDeviceClock() {
+  if (!serial || (protocolCapabilities & CAP_SET_RTC) === 0 || clockSyncBusy) return;
+  const systemNow = new Date();
+  if (systemNow.getFullYear() < 2000 || systemNow.getFullYear() > 2099) {
+    elements.settingsClockStatus.dataset.level = 'error';
+    elements.settingsClockStatus.textContent = 'System date must be between 2000 and 2099.';
+    return;
+  }
+
+  clockSyncBusy = true;
+  elements.syncClock.textContent = 'Synchronizing…';
+  elements.settingsClockStatus.dataset.level = '';
+  elements.settingsClockStatus.textContent = 'Writing system time to the device…';
+  updateRtcControls();
+  try {
+    const secondsSince2000 = localCalendarSeconds(systemNow);
+    const request = new Uint8Array(4);
+    new DataView(request.buffer).setUint32(0, secondsSince2000, true);
+    const syncStartedAt = Date.now();
+    const response = await serial.request(OP_SET_RTC, request, 5000);
+    if (response.length !== 1 || response[0] !== 0) {
+      throw new ProtocolError('The device rejected the clock update.');
+    }
+    while (logInfoLoading) await delay(20);
+    await loadLogInfo();
+    if (logInfo) {
+      logInfo.calendarValid = true;
+      logInfo.calendarSeconds = secondsSince2000 +
+        Math.floor((Date.now() - syncStartedAt) / 1000);
+      updateDeviceDateTime();
+    } else {
+      renderSettingsClock();
+    }
+    elements.settingsClockStatus.dataset.level = 'success';
+    elements.settingsClockStatus.textContent = 'Device clock synchronized to system time.';
+  } catch (error) {
+    elements.settingsClockStatus.dataset.level = 'error';
+    elements.settingsClockStatus.textContent = error.message;
+  } finally {
+    clockSyncBusy = false;
+    elements.syncClock.textContent = 'Synchronize';
+    updateRtcControls();
+  }
+}
+
 function setConnection(state, label) {
   const canDisconnect = state === 'connected' || state === 'disconnect-pending';
   elements.connection.dataset.state = state;
@@ -969,6 +1030,7 @@ function setConnection(state, label) {
     (state === 'connecting' ? 'Connecting…' : 'Connect');
   elements.connect.classList.toggle('button-primary', !canDisconnect);
   elements.connect.classList.toggle('button-quiet', canDisconnect);
+  updateRtcControls();
 }
 
 function formatUptime(seconds) {
@@ -982,6 +1044,86 @@ function formatUptime(seconds) {
   };
 }
 
+function localCalendarSeconds(date) {
+  return Math.floor((date.getTime() - date.getTimezoneOffset() * 60000) / 1000) -
+    946684800;
+}
+
+function formatLocalDate(date) {
+  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')].join('-');
+}
+
+function formatLocalTime(date) {
+  return [date.getHours(), date.getMinutes(), date.getSeconds()]
+    .map((part) => String(part).padStart(2, '0')).join(':');
+}
+
+function formatDeviceDate(date) {
+  return [date.getUTCFullYear(), String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0')].join('-');
+}
+
+function formatDeviceTime(date) {
+  return [date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds()]
+    .map((part) => String(part).padStart(2, '0')).join(':');
+}
+
+function formatClockDifference(milliseconds) {
+  let remaining = Math.abs(milliseconds);
+  const units = [
+    [86400000, 'd'],
+    [3600000, 'h'],
+    [60000, 'm'],
+    [1000, 's'],
+    [1, 'ms'],
+  ];
+  const parts = [];
+  for (const [unitMs, label] of units) {
+    const value = Math.floor(remaining / unitMs);
+    remaining %= unitMs;
+    if (value > 0) parts.push(`${value}${label}`);
+  }
+  return parts.join(' ') || '0ms';
+}
+
+function renderSettingsClock() {
+  const systemNow = new Date();
+  elements.settingsSystemDate.textContent = formatLocalDate(systemNow);
+  elements.settingsSystemTime.textContent = formatLocalTime(systemNow);
+  if (!logInfo?.calendarValid) {
+    elements.settingsDeviceDate.textContent = 'NOT SET';
+    elements.settingsDeviceTime.textContent = '—';
+    elements.settingsClockDifference.textContent = '—';
+    elements.settingsClockDifference.dataset.state = 'neutral';
+    return;
+  }
+
+  const deviceDate = new Date(Date.UTC(2000, 0, 1) + logInfo.calendarSeconds * 1000);
+  elements.settingsDeviceDate.textContent = formatDeviceDate(deviceDate);
+  elements.settingsDeviceTime.textContent = formatDeviceTime(deviceDate);
+  const differenceMs = logInfo.calendarSeconds * 1000 -
+    localCalendarSeconds(systemNow) * 1000 - systemNow.getMilliseconds();
+  const sign = differenceMs > 0 ? '+' : (differenceMs < 0 ? '−' : '');
+  elements.settingsClockDifference.textContent =
+    `${sign}${formatClockDifference(differenceMs)}`;
+  elements.settingsClockDifference.dataset.state = differenceMs > 0 ? 'positive' :
+    (differenceMs < 0 ? 'negative' : 'neutral');
+}
+
+function updateRtcControls() {
+  const supported = !!serial && (protocolCapabilities & CAP_SET_RTC) !== 0;
+  elements.syncClock.disabled = !supported || clockSyncBusy;
+  if (!supported && !clockSyncBusy && (
+    elements.settingsClockStatus.textContent.startsWith('This firmware') ||
+    elements.settingsClockStatus.textContent.startsWith('Clock synchronization is available.') ||
+    elements.settingsClockStatus.textContent.startsWith('Connect to compare or synchronize')
+  )) {
+    elements.settingsClockStatus.dataset.level = '';
+    elements.settingsClockStatus.textContent = '';
+  }
+}
+
 function updateDeviceDateTime(uptimeText = null) {
   if (!logInfo?.calendarValid) {
     elements.deviceDate.textContent = '—';
@@ -993,6 +1135,7 @@ function updateDeviceDateTime(uptimeText = null) {
       String(date.getUTCDate()).padStart(2, '0')].join('-');
     elements.deviceTime.textContent = `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
   }
+  renderSettingsClock();
   if (uptimeText !== null) elements.overviewUptime.textContent = uptimeText;
 }
 
@@ -1006,6 +1149,7 @@ function handleHello(payload) {
     throw new ProtocolError(`Unsupported protocol or capabilities (version ${protocolVersion}, payload ${maxPayload}).`);
   }
   protocolCapabilities = capabilities;
+  updateRtcControls();
   updateSpiDumpAvailability();
 }
 
@@ -1025,9 +1169,9 @@ function settingsOptions(setting) {
 
 function renderSettings() {
   elements.settingsList.replaceChildren();
-  if (!deviceSettings) return;
   for (const setting of remoteSettings) {
-    if (setting.id === 11 && deviceSettings[9] === 1) continue;
+    if (setting.id === 11 && deviceSettings?.[9] === 1) continue;
+    const available = deviceSettings !== null && setting.id < deviceSettings.length;
     const options = settingsOptions(setting);
     const row = document.createElement('div');
     row.className = 'setting-row';
@@ -1037,6 +1181,16 @@ function renderSettings() {
     const select = document.createElement('select');
     select.id = `setting-${setting.id}`;
     select.dataset.settingId = String(setting.id);
+    if (!available) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'Unavailable';
+      select.append(option);
+      select.disabled = true;
+      row.append(label, select);
+      elements.settingsList.append(row);
+      continue;
+    }
     options.forEach((text, index) => {
       const option = document.createElement('option');
       option.value = String(index);
@@ -1054,13 +1208,16 @@ async function loadSettings() {
   if (!serial) return;
   if ((protocolCapabilities & (CAP_GET_SETTINGS | CAP_SET_SETTING)) !==
       (CAP_GET_SETTINGS | CAP_SET_SETTING)) {
-    elements.settingsStatus.textContent = 'Firmware settings transfer is not supported.';
+    elements.settingsStatus.textContent = '';
+    renderSettings();
     return;
   }
   elements.settingsStatus.textContent = 'Reading…';
   try {
     const payload = await serial.request(OP_GET_SETTINGS);
-    if (payload.length < 2 || payload[0] !== 0 || payload[1] !== 21 || payload.length !== 23) {
+    if (payload.length < 2 || payload[0] !== 0 ||
+        (payload[1] !== 21 && payload[1] !== 22) ||
+        payload.length !== payload[1] + 2) {
       throw new ProtocolError('Invalid settings response.');
     }
     deviceSettings = Array.from(payload.subarray(2));
@@ -1101,12 +1258,13 @@ async function writeSetting(settingId, value, control) {
 }
 
 function handleStatus(payload) {
-  if ((payload.length !== 25 && payload.length !== 29) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
+  if (![25, 29, 31].includes(payload.length) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const uptimeSeconds = view.getUint32(1, true);
   const count = view.getUint32(5, true);
   const cpm = view.getUint32(9, true);
-  const doseNsv = view.getUint32(13, true);
+  const doseNsv = view.getUint32(13, true) +
+    (payload.length >= 31 ? view.getUint16(29, true) / 3600 : 0);
   const batteryRaw = view.getUint16(17, true);
   const solarRaw = view.getUint16(19, true);
   const usbRaw = view.getUint16(21, true);
@@ -1116,6 +1274,10 @@ function handleStatus(payload) {
   const levelClass = `level-${rateLevel}`;
   elements.rateDose.classList.remove('level-blue', 'level-green', 'level-yellow', 'level-red');
   elements.rateDose.classList.add(levelClass);
+  const warmupPulses = Math.min(countTotal, 25);
+  elements.rateWarmup.hidden = rateLevel !== 'blue';
+  elements.rateWarmup.setAttribute('aria-valuenow', String(warmupPulses));
+  elements.rateWarmupFill.style.width = `${(warmupPulses / 25) * 100}%`;
   const uptime = formatUptime(uptimeSeconds);
   if (logInfo?.calendarValid) {
     if (logInfo.calendarAnchorUptime === null) {
@@ -1143,7 +1305,7 @@ function handleStatus(payload) {
   } else {
     const symbol = unit === 2 ? 'R' : 'Sv';
     const rate = formatRadiation(rateUsvh, ratePrefix, symbol, true);
-    const dose = formatRadiation(doseUsv, dosePrefix, symbol, false);
+    const dose = formatRadiation(doseUsv, dosePrefix, symbol, false, 6);
     elements.rateLabel.textContent = 'RATE';
     elements.rateDose.textContent = rate.value;
     elements.rateUnit.textContent = rate.unit;
@@ -1215,6 +1377,7 @@ async function requestHelloAfterBoot(protocol) {
 elements.overviewTab.addEventListener('click', () => selectPage('overview'));
 elements.debugTab.addEventListener('click', () => selectPage('debug'));
 elements.settingsTab.addEventListener('click', () => selectPage('settings'));
+elements.syncClock.addEventListener('click', synchronizeDeviceClock);
 elements.logsTab.addEventListener('click', () => selectPage('logs'));
 elements.loadMoreLogs.addEventListener('click', () => loadLogPage(false));
 elements.loadLogDate.addEventListener('click', loadLogNearDate);

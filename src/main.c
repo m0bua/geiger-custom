@@ -701,6 +701,7 @@ int main(void)
             status.flags = (hv_enabled ? 1u : 0u) |
                 (board_display_usb_connected() ? 2u : 0u);
             status.count_total = board_detector_count();
+            status.dose_fraction_3600 = (uint16_t)dose_fraction;
             protocol_v1_set_status(&status);
         }
         protocol_v1_service();

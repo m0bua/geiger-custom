@@ -20,6 +20,7 @@ bool board_eeprom_read(uint16_t offset, uint8_t *value);
 bool board_eeprom_write(uint16_t offset, uint8_t value);
 bool board_rtc_log_time(uint32_t *uptime_seconds, uint32_t *calendar_seconds,
                         bool *calendar_valid);
+bool board_rtc_set_time(uint32_t seconds_since_2000);
 uint8_t board_rtc_debug_status(void);
 uint8_t board_rtc_clock_source(void);
 uint32_t board_uptime_seconds_get(void);

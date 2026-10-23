@@ -16,6 +16,7 @@ typedef struct {
     uint16_t usb_raw;
     uint16_t flags;
     uint32_t count_total;
+    uint16_t dose_fraction_3600;
 } protocol_v1_status_t;
 
 enum {
@@ -25,7 +26,8 @@ enum {
     PROTOCOL_V1_OP_SET_SETTING = 4u,
     PROTOCOL_V1_OP_GET_LOG_INFO = 5u,
     PROTOCOL_V1_OP_GET_LOG_PAGE = 6u,
-    PROTOCOL_V1_OP_GET_SPI_DUMP_PAGE = 7u
+    PROTOCOL_V1_OP_GET_SPI_DUMP_PAGE = 7u,
+    PROTOCOL_V1_OP_SET_RTC = 8u
 };
 
 void protocol_v1_transport_init(void);

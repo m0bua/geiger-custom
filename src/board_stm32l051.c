@@ -326,12 +326,13 @@ typedef enum {
     SETTING_SCREEN_TIMER, SETTING_LEAD_ZERO, SETTING_UNIT, SETTING_RATE_PREFIX,
     SETTING_DOSE_PREFIX, SETTING_RATE_ROW_2, SETTING_USE_SPI, SETTING_RESET,
     SETTING_HV, SETTING_DOSE_ALARM, SETTING_ALARM_STOP, SETTING_POWER_OFF,
-    SETTING_REBOOT, SETTING_TONE, SETTING_COUNT
+    SETTING_REBOOT, SETTING_TONE, SETTING_LONG_PRESS, SETTING_COUNT
 } setting_id_t;
 
 static uint8_t lcd_settings_value_index[SETTING_COUNT] = {
     [SETTING_LED] = 2u, [SETTING_SCREEN_TIMER] = 2u,
-    [SETTING_RATE_PREFIX] = 1u, [SETTING_DOSE_PREFIX] = 1u
+    [SETTING_RATE_PREFIX] = 1u, [SETTING_DOSE_PREFIX] = 1u,
+    [SETTING_LONG_PRESS] = 3u
 };
 static bool click_sound_active;
 static uint8_t click_sound_profile;
@@ -698,6 +699,16 @@ static bool rtc_write_calendar(const rtc_calendar_t *calendar,
             LOG_CUTOFF_REASON_CLOCK_SET);
     }
     return true;
+}
+
+bool board_rtc_set_time(uint32_t seconds_since_2000)
+{
+    rtc_calendar_t calendar;
+    if (!rtc_calendar_from_seconds_since_2000(seconds_since_2000, &calendar)) {
+        return false;
+    }
+    calendar.second = (uint8_t)(seconds_since_2000 % 60u);
+    return rtc_write_calendar(&calendar, true);
 }
 
 static void board_rtc_init(void)
@@ -1733,6 +1744,9 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
             value[value_length++] = ':';
             value[value_length++] = (char)('0' + (minutes % 60u) / 10u);
             value[value_length++] = (char)('0' + minutes % 10u);
+            value[value_length++] = ':';
+            value[value_length++] = (char)('0' + (seconds % 60u) / 10u);
+            value[value_length++] = (char)('0' + seconds % 10u);
         } else if (row == 2u) {
             label = "CNT";
             value_length = lcd_debug_u32_digits(value, detector_pulse_count);
@@ -1865,7 +1879,7 @@ static const char *const lcd_settings_labels[LCD_SETTINGS_COUNT] = {
     "LED", "CLICKS", "SCREEN ALARM", "LIGHT ALARM", "SOUND ALARM", "LED BRIGHT",
     "SCREEN BRIGHT", "SCREEN TIMER", "LEAD ZERO", "UNIT", "RATE PREFIX",
     "DOSE PREF", "RATE ROW 2", "USE-SPI", "RESET", "HV", "DOSE ALARM",
-    "ALARM STOP", "POWER OFF", "REBOOT", "TONE"
+    "ALARM STOP", "POWER OFF", "REBOOT", "TONE", "LONG PRESS"
 };
 
 /* Share value lists instead of reserving eleven pointers for every item. */
@@ -1889,18 +1903,24 @@ static const char *const dose_alarm_values[] = {
 };
 static const char *const stop_values[] = { "CLEAR", "BUTTON" };
 static const char *const tone_values[] = { "STOCK", "CLASSIC", "MODERN" };
+static const char *const long_press_values[] = {
+    "300MS", "500MS", "700MS", "900MS", "1100MS", "1300MS"
+};
+static const uint16_t long_press_milliseconds[] = {
+    300u, 500u, 700u, 900u, 1100u, 1300u
+};
 
 static const char *const *const lcd_settings_values[LCD_SETTINGS_COUNT] = {
     indication_values, indication_values, alarm_values, alarm_values,
     alarm_values, brightness_values, brightness_values, timer_values,
     zero_values, unit_values, prefix_values, prefix_values, row_values,
     off_on_values, empty_values, on_off_values, dose_alarm_values, stop_values,
-    empty_values, empty_values, tone_values
+    empty_values, empty_values, tone_values, long_press_values
 };
 
 static const uint8_t lcd_settings_value_counts[LCD_SETTINGS_COUNT] = {
     5u, 5u, 3u, 3u, 3u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 3u, 2u, 1u, 2u,
-    11u, 2u, 1u, 1u, 3u
+    11u, 2u, 1u, 1u, 3u, 6u
 };
 
 static uint8_t lcd_settings_value_count(uint8_t item)
@@ -1944,7 +1964,7 @@ static uint8_t lcd_settings_visible_to_item(uint8_t visible_index)
 {
     static const uint8_t item_order[LCD_SETTINGS_COUNT] = {
         0u, 1u, 2u, 3u, 4u, 16u, 17u, 5u, 6u, 7u, 20u,
-        8u, 9u, 10u, 11u, 12u, 15u, 13u, 14u, 18u, 19u
+        8u, 9u, 10u, 11u, 12u, 21u, 15u, 13u, 14u, 18u, 19u
     };
     uint8_t visible = 0u;
 
@@ -4487,6 +4507,8 @@ static bool board_eeprom_clear_all(void)
 #define SETTINGS_ALARM_STOP_MAGIC 0xBAu
 #define SETTINGS_SPI_EEPROM_BASE 136u
 #define SETTINGS_SPI_EEPROM_MAGIC 0xBCu
+#define SETTINGS_LONG_PRESS_EEPROM_BASE 140u
+#define SETTINGS_LONG_PRESS_MAGIC 0xBDu
 
 static bool settings_value_read(uint16_t offset, uint8_t magic, uint8_t salt,
                                  uint8_t count, uint8_t *value)
@@ -4538,6 +4560,44 @@ static bool settings_spi_save(void)
             SETTINGS_SPI_EEPROM_MAGIC, 0xA5u, value)) return false;
     settings_spi_enabled = value != 0u;
     return true;
+}
+
+static bool settings_long_press_save(void);
+
+static void settings_long_press_load(void)
+{
+    const uint8_t count = (uint8_t)(sizeof(long_press_milliseconds) /
+                                    sizeof(long_press_milliseconds[0]));
+    if (settings_value_read(SETTINGS_LONG_PRESS_EEPROM_BASE,
+            SETTINGS_LONG_PRESS_MAGIC, 0x37u, count,
+            &lcd_settings_value_index[SETTING_LONG_PRESS])) {
+        return;
+    }
+
+    /* Migrate the previous 500/800/1000/1200/1500 ms option index. */
+    uint8_t old_index;
+    if (settings_value_read(SETTINGS_LONG_PRESS_EEPROM_BASE,
+            SETTINGS_LONG_PRESS_MAGIC, 0x36u, 5u, &old_index)) {
+        static const uint8_t migrated_index[] = { 1u, 3u, 3u, 4u, 5u };
+        lcd_settings_value_index[SETTING_LONG_PRESS] =
+            migrated_index[old_index];
+        (void)settings_long_press_save();
+    }
+}
+
+static bool settings_long_press_save(void)
+{
+    return settings_value_write(SETTINGS_LONG_PRESS_EEPROM_BASE,
+        SETTINGS_LONG_PRESS_MAGIC, 0x37u,
+        lcd_settings_value_index[SETTING_LONG_PRESS]);
+}
+
+static uint16_t settings_long_press_ms(void)
+{
+    const uint8_t index = lcd_settings_value_index[SETTING_LONG_PRESS];
+    const uint8_t count = (uint8_t)(sizeof(long_press_milliseconds) /
+                                    sizeof(long_press_milliseconds[0]));
+    return long_press_milliseconds[index < count ? index : 3u];
 }
 
 /* EEPROM retains the old MODERN/CLASSIC ordering for compatibility. */
@@ -5030,6 +5090,9 @@ static void lcd_settings_apply_current(void)
     if (lcd_settings_selected == 1u) settings_clicks_save();
     if (lcd_settings_selected == 4u) settings_sound_alarm_save();
     if (lcd_settings_selected == 20u) settings_click_tone_save();
+    if (lcd_settings_selected == SETTING_LONG_PRESS) {
+        (void)settings_long_press_save();
+    }
     if (lcd_settings_selected == 17u) settings_alarm_stop_save();
     if (lcd_settings_selected == 13u) {
         (void)settings_spi_save();
@@ -5115,7 +5178,7 @@ static bool settings_reset_all(void)
     static const uint8_t record_magic_offsets[] = {
         0u, 5u, 16u, 23u, 32u, 41u, 64u, 68u, 80u, 85u,
         96u, 100u, 104u, 108u, 112u, 116u, 120u, 124u, 128u, 132u,
-        SETTINGS_SPI_EEPROM_BASE
+        SETTINGS_SPI_EEPROM_BASE, SETTINGS_LONG_PRESS_EEPROM_BASE
     };
 
     for (uint8_t i = 0u;
@@ -6334,6 +6397,7 @@ void board_display_init(void)
     settings_eeprom_load();
     settings_spi_load();
     settings_clicks_load();
+    settings_long_press_load();
     settings_click_tone_load();
     settings_sound_alarm_load();
     settings_alarm_stop_load();
@@ -6859,6 +6923,9 @@ clock_change_failed:
 uint8_t board_buttons_sample_10ms(void)
 {
     const uint32_t now = board_millis;
+    const uint16_t long_press_ms = settings_long_press_ms();
+    button_input_set_long_press_ms(&left_button, long_press_ms);
+    button_input_set_long_press_ms(&right_button, long_press_ms);
     const uint8_t left = button_input_update(&left_button,
         button_pressed(GPIOB_BASE, BOARD_BUTTON_LEFT_PIN), now);
     const uint8_t right = button_input_update(&right_button,

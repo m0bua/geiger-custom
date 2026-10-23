@@ -37,14 +37,15 @@
         <div class="header-reading"><span>BATTERY</span><strong id="battery-percent">—%</strong></div>
       </section>
       <section class="device-clock" aria-label="Device time">
-        <div><span>DATE</span><strong id="device-date">—</strong></div>
         <div><span>TIME</span><strong id="device-time">—</strong></div>
+        <div><span>DATE</span><strong id="device-date">—</strong></div>
         <div><span>UPTIME</span><strong id="overview-uptime">—</strong></div>
       </section>
       <section class="metrics" aria-label="Live readings">
         <article class="metric metric-primary">
           <div class="metric-label" id="rate-label">RATE · CALCULATED</div>
           <div class="metric-value"><span id="rate-dose">—</span><small id="rate-unit">CPM</small></div>
+          <div id="rate-warmup" class="rate-warmup" role="progressbar" aria-label="Warm-up pulses" aria-valuemin="0" aria-valuemax="25" aria-valuenow="0" hidden><span id="rate-warmup-fill"></span></div>
           <p class="metric-foot" id="rate-foot" hidden><span id="rate">—</span> CPM</p>
         </article>
         <article class="metric">
@@ -96,6 +97,17 @@
 
     <section id="settings-page" class="page settings-panel" hidden>
       <div class="panel-heading"><h2>Settings</h2><span id="settings-status">Connect to read settings.</span></div>
+      <section class="settings-clock" aria-label="Device and system clock">
+        <div class="settings-clock-grid">
+          <div><span>DEVICE TIME</span><strong id="settings-device-time">—</strong></div>
+          <div><span>DEVICE DATE</span><strong id="settings-device-date">—</strong></div>
+          <div><span>DIFFERENCE</span><strong id="settings-clock-difference">—</strong></div>
+          <div><span>SYSTEM TIME</span><strong id="settings-system-time">—</strong></div>
+          <div><span>SYSTEM DATE</span><strong id="settings-system-date">—</strong></div>
+          <button id="sync-clock" class="button button-primary" type="button" disabled>Synchronize</button>
+        </div>
+        <p id="settings-clock-status" role="status" aria-live="polite">Connect to compare or synchronize the device clock.</p>
+      </section>
       <div id="settings-list" class="settings-list"></div>
       <p class="settings-note">Rate Row 2 and device actions are not remotely editable yet.</p>
     </section>
@@ -213,6 +225,6 @@
 
     <footer>Protocol V1</footer>
   </main>
-  <script defer src="app.js?v=20261023-14"></script>
+  <script defer src="app.js?v=20261023-23"></script>
 </body>
 </html>

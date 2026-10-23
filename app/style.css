@@ -50,13 +50,17 @@ button { font: inherit; }
 .metric { min-height: 142px; padding: 18px; }
 .metric-primary { border-color: rgba(0,229,139,.22); background: radial-gradient(ellipse at 10% 0%, rgba(0,229,139,.07), transparent 65%), var(--panel); }
 .metric-label { color: #91a1a6; font: 500 10px "DM Mono", Consolas, monospace; letter-spacing: .11em; }
-.metric-value { display: flex; align-items: baseline; gap: 8px; margin-top: 22px; font: 500 40px/1 "DM Mono", Consolas, monospace; letter-spacing: -.06em; }
+.metric-value { display: grid; grid-template-columns: 1fr auto 1fr; align-items: baseline; margin-top: 22px; font: 500 40px/1 "DM Mono", Consolas, monospace; letter-spacing: -.06em; }
+.metric-value > span { grid-column: 2; justify-self: center; }
+.metric-value > small { grid-column: 3; justify-self: end; }
 .metric-primary .metric-value { color: var(--green); }
 .metric-value .level-blue { color: #287bff; }
 .metric-value .level-green { color: #00e58b; }
 .metric-value .level-yellow { color: #f0d35e; }
 .metric-value .level-red { color: #ff6666; }
 .metric-value small { color: #89999e; font: 500 12px "DM Mono", Consolas, monospace; letter-spacing: .04em; }
+.rate-warmup { height: 4px; margin-top: 15px; overflow: hidden; border-radius: 99px; background: rgba(40,123,255,.16); }
+.rate-warmup span { display: block; width: 0; height: 100%; border-radius: inherit; background: #287bff; transition: width .2s ease; }
 .metric-uptime { font-size: 25px; }
 .metric-foot { margin: 10px 0 0; color: #9aa9ae; font: 14px "DM Mono", Consolas, monospace; }
 .chart-panel { height: 360px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(17,26,31,.8); }
@@ -130,6 +134,17 @@ button { font: inherit; }
 .dump-status[data-level="warning"] { color: #f2c94c; }
 .dump-status[data-level="error"] { color: #ff7474; }
 .settings-panel { padding: 18px; border: 1px solid var(--line); border-radius: 11px; background: rgba(17,26,31,.8); }
+.settings-clock { margin: 14px 0 16px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: rgba(8,14,17,.42); }
+.settings-clock-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: end; }
+.settings-clock-grid > div { display: grid; gap: 5px; min-width: 0; }
+.settings-clock-grid span { color: #819096; font: 500 9px "DM Mono", Consolas, monospace; letter-spacing: .08em; }
+.settings-clock-grid strong { overflow: hidden; color: #dce6e8; font: 500 12px "DM Mono", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+#settings-clock-difference[data-state="positive"] { color: var(--green); }
+#settings-clock-difference[data-state="negative"] { color: #ff7474; }
+.settings-clock-grid .button { justify-self: start; }
+.settings-clock > p { margin: 10px 0 0; color: var(--muted); font-size: 10px; }
+.settings-clock > p[data-level="success"] { color: var(--green); }
+.settings-clock > p[data-level="error"] { color: #ff7474; }
 .logs-panel { padding: 18px; border: 1px solid var(--line); border-radius: 11px; background: rgba(17,26,31,.8); }
 .log-tabs { display: flex; gap: 5px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .log-tab { padding: 7px 11px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; cursor: pointer; }
@@ -199,6 +214,7 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .detail-grid { grid-template-columns: repeat(2, 1fr); }
   .debug-subpage { grid-template-columns: minmax(0, 1fr); }
   .settings-list { grid-template-columns: 1fr; }
+  .settings-clock-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .log-tabs { overflow-x: auto; }
   .log-tab { padding-inline: 8px; }
   .log-date-tools { justify-content: flex-start; flex-wrap: wrap; }

@@ -195,7 +195,8 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         response[3] = PROTOCOL_V1_VERSION;
         write_u16(&response[4], PROTOCOL_V1_MAX_PAYLOAD);
         write_u32(&response[6], (1u << 0u) | (1u << 1u) |
-            (1u << 2u) | (1u << 3u) | (1u << 4u) | (1u << 5u));
+            (1u << 2u) | (1u << 3u) | (1u << 4u) | (1u << 5u) |
+            (1u << 6u));
         response_length = 10u;
     } else if (opcode == PROTOCOL_V1_OP_GET_STATUS && payload_length == 0u) {
         /* status, uptime, today's CNT, CPM, dose in nSv, ADC raw, flags */
@@ -208,7 +209,8 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         write_u16(&response[21], current_status.usb_raw);
         write_u16(&response[23], current_status.flags);
         write_u32(&response[25], current_status.count_total);
-        response_length = 29u;
+        write_u16(&response[29], current_status.dose_fraction_3600);
+        response_length = 31u;
     } else if (opcode == PROTOCOL_V1_OP_GET_SETTINGS &&
                payload_length == 0u) {
         const uint8_t count = board_display_settings_remote_count();
@@ -223,6 +225,11 @@ static void handle_frame(uint8_t *frame, uint8_t length)
     } else if (opcode == PROTOCOL_V1_OP_SET_SETTING &&
                payload_length == 2u) {
         if (!board_display_setting_remote_write(frame[8], frame[9])) {
+            response[0] = PROTOCOL_STATUS_INVALID_VALUE;
+        }
+    } else if (opcode == PROTOCOL_V1_OP_SET_RTC) {
+        if (payload_length != 4u ||
+            !board_rtc_set_time(read_u32(&frame[8]))) {
             response[0] = PROTOCOL_STATUS_INVALID_VALUE;
         }
     } else if (opcode == PROTOCOL_V1_OP_GET_LOG_INFO &&

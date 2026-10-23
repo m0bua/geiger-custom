@@ -1,7 +1,7 @@
 Залишилось:
+- логи: перевірити для кожного актуальний (поточний запис)
 - js-manual
 - js-changelog
-- js синхронізація часу і показ розсинхрону
 - gh-worker
 - Другий рядок
 - Документація з рендерами
@@ -9,8 +9,9 @@
 - алерти: кастомні рівні фону
 - Швидке меню/швидкі дії
 - час довгого натискання
-- затемнення перед вимкненням екрану
 - кастомні пороги червоного і жовтого
+- затемнення перед вимкненням екрану
+- кольори тем
 
 LED: OFF/ON/{ALWAYS}/YELLOW/RED
 CLICKS: {OFF}/ON/ALWAYS/YELLOW/RED
@@ -31,7 +32,7 @@ DOSE PREF: if(Sv/R): m/u/n/{AUTO} else: {CPM}/CPS
 RATE ROW 2: if(Sv/R): {CPM}/CPS/OFF else: {uS}/R/OFF
 DOSE ROW 2: if(Sv/R): {CPM}/CPS/OFF else: {uS}/R/OFF
 HV: {ON}/OFF
-- USE-SPI: {OFF}/ON
+USE-SPI: {OFF}/ON
 RESET: - SETTINGS/MIN-LOG/HOUR-LOG/DAY-LOG/ERROR-LOG/LOGS/EEPROM-LOGS/EEPROM/SPI/ALL
 POWER OFF
 REBOOT
