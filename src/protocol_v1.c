@@ -29,6 +29,7 @@
 
 #define FRAME_KIND_REQUEST  1u
 #define FRAME_KIND_RESPONSE 2u
+#define SPI_DUMP_MAX_DATA 58u
 
 enum {
     PROTOCOL_STATUS_OK = 0u,
@@ -50,6 +51,12 @@ static bool cached_alert_episode_count_valid;
 static uint16_t read_u16(const uint8_t *p)
 {
     return (uint16_t)p[0] | (uint16_t)((uint16_t)p[1] << 8u);
+}
+
+static uint32_t read_u32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8u) |
+        ((uint32_t)p[2] << 16u) | ((uint32_t)p[3] << 24u);
 }
 
 static void write_u16(uint8_t *p, uint16_t value)
@@ -188,7 +195,7 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         response[3] = PROTOCOL_V1_VERSION;
         write_u16(&response[4], PROTOCOL_V1_MAX_PAYLOAD);
         write_u32(&response[6], (1u << 0u) | (1u << 1u) |
-            (1u << 2u) | (1u << 3u) | (1u << 4u));
+            (1u << 2u) | (1u << 3u) | (1u << 4u) | (1u << 5u));
         response_length = 10u;
     } else if (opcode == PROTOCOL_V1_OP_GET_STATUS && payload_length == 0u) {
         /* status, uptime, today's CNT, CPM, dose in nSv, ADC raw, flags */
@@ -350,6 +357,22 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         }
 log_page_done:
         ;
+    } else if (opcode == PROTOCOL_V1_OP_GET_SPI_DUMP_PAGE &&
+               payload_length == 5u) {
+        const uint32_t offset = read_u32(&frame[8]);
+        const uint8_t requested = frame[12];
+        const uint32_t capacity = spi_nor_size_bytes();
+        if (!board_display_use_spi() || !spi_nor_is_ready() ||
+            requested == 0u || requested > SPI_DUMP_MAX_DATA ||
+            offset > capacity || requested > capacity - offset ||
+            !spi_nor_read(offset, &response[6], requested)) {
+            response[0] = PROTOCOL_STATUS_INVALID_VALUE;
+            response_length = 1u;
+        } else {
+            write_u32(&response[1], offset);
+            response[5] = requested;
+            response_length = (uint16_t)(6u + requested);
+        }
     } else {
         response[0] = PROTOCOL_STATUS_UNKNOWN_OPCODE;
     }

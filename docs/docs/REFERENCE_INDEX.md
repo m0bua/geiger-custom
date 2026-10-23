@@ -6,7 +6,7 @@
 
 ## Вихідні матеріали
 
-- reference/source-material/Port-4.1.17(3).hex — оригінальна англомовна стокова прошивка, тільки для читання/аналізу.
+- reference/source-material/Port-4.1.17.hex — оригінальна англомовна стокова прошивка, тільки для читання/аналізу.
 - reference/source-material/Milerd_HiStand_Dosimeter_Manual_19-01-23_WEB.pdf — інструкція приладу.
 - reference/source-material/Geiger2-eeprom.bin — 2 KiB дамп, заповнений нулями.
 - reference/board-photos/ — десять вихідних фото плати, що були надані для аналізу.
@@ -24,7 +24,9 @@
 
 ## Звіти про застосунок і протокол
 
-- [GEIGER2_STOCK_APP_WEB_SERIAL_AND_CUSTOM_PROTOCOL_2026-10-21.md](GEIGER2_STOCK_APP_WEB_SERIAL_AND_CUSTOM_PROTOCOL_2026-10-21.md) — аналіз MilerdPort/стокового UART, кастомного протоколу та фізичних тестів Web Serial і native Windows на COM3.
+- [APP_WEB_SERIAL_AND_CUSTOM_PROTOCOL.md](APP_WEB_SERIAL_AND_CUSTOM_PROTOCOL.md) — аналіз MilerdPort/стокового UART, кастомного протоколу та фізичних тестів Web Serial і native Windows на COM3.
+- [POWER_SAVING_AND_CUSTOM_RECOMMENDATIONS.md](POWER_SAVING_AND_CUSTOM_RECOMMENDATIONS.md) — вимоги й досліди з енергоспоживанням.
+- [FLASHLIGHT_AND_SOUND_PORTING.md](FLASHLIGHT_AND_SOUND_PORTING.md) — статичний аналіз стокових функцій ліхтарика й звуку.
 
 Попередній SPI BIN не знайдений у доступних матеріалах під час складання цього пакета; його розмір і SHA-256 записані в STOCK_FIRMWARE.md за результатом попереднього аудиту. Не робити нових висновків про вільні адреси без самого дампу.
 

@@ -7,13 +7,18 @@ const OP_GET_SETTINGS = 3;
 const OP_SET_SETTING = 4;
 const OP_GET_LOG_INFO = 5;
 const OP_GET_LOG_PAGE = 6;
+const OP_GET_SPI_DUMP_PAGE = 7;
 const CAP_GET_SETTINGS = 1 << 1;
 const CAP_SET_SETTING = 1 << 2;
+const CAP_GET_SPI_DUMP = 1 << 5;
 const MAX_PAYLOAD = 64;
 const LOG_BATCH_SIZE = 6;
 const STM32_FLASH_BASE = 0x08000000;
 const STM32_FLASH_SIZE = 64 * 1024;
 const STM32_FLASH_PAGE_SIZE = 128;
+const STM32_EEPROM_BASE = 0x08080000;
+const STM32_EEPROM_SIZE = 2 * 1024;
+const SPI_DUMP_CHUNK_SIZE = 58;
 const STM32_DEVICE_ID = 0x0417;
 const STM32_FLASH_PAGE_COUNT = STM32_FLASH_SIZE / STM32_FLASH_PAGE_SIZE;
 const PROJECT_IMAGE_MARKER = Uint8Array.of(0x4d, 0x47, 0x32, 0x46, 0x57, 0x49, 0x44, 0x31); // MG2FWID1
@@ -207,6 +212,10 @@ const elements = {
   firmwareVerify: document.querySelector('#firmware-verify'),
   flashFirmware: document.querySelector('#flash-firmware'),
   firmwareLog: document.querySelector('#firmware-log'),
+  dumpFlash: document.querySelector('#dump-flash'),
+  dumpEeprom: document.querySelector('#dump-eeprom'),
+  dumpSpi: document.querySelector('#dump-spi'),
+  dumpStatus: document.querySelector('#dump-status'),
   instructionsPage: document.querySelector('#instructions-page'),
   settingsStatus: document.querySelector('#settings-status'),
   settingsList: document.querySelector('#settings-list'),
@@ -466,6 +475,7 @@ let portMayBeOpen = false;
 let selectedFirmwareImage = null;
 let firmwareFlashBusy = false;
 let firmwareStopRequested = false;
+let dumpBusy = false;
 let pollTimer = 0;
 let polling = false;
 let protocolCapabilities = 0;
@@ -941,6 +951,7 @@ async function loadLogInfo() {
     elements.logsStatus.textContent = error.message;
   } finally {
     logInfoLoading = false;
+    updateSpiDumpAvailability();
   }
 }
 
@@ -990,6 +1001,14 @@ function handleHello(payload) {
     throw new ProtocolError(`Unsupported protocol or capabilities (version ${protocolVersion}, payload ${maxPayload}).`);
   }
   protocolCapabilities = capabilities;
+  updateSpiDumpAvailability();
+}
+
+function updateSpiDumpAvailability() {
+  if (!elements.dumpSpi) return;
+  const supported = !!serial && (protocolCapabilities & CAP_GET_SPI_DUMP) !== 0 &&
+    !!logInfo?.spi && !!logInfo?.spiReady && (logInfo.spiSizeMb || 0) > 0;
+  elements.dumpSpi.disabled = dumpBusy || !supported;
 }
 
 function settingsOptions(setting) {
@@ -1200,6 +1219,11 @@ elements.rebootBootloader.addEventListener('click', rebootToBootloader);
 elements.firmwareFile.addEventListener('change', loadFirmwareImage);
 elements.clearFirmware.addEventListener('click', clearFirmwareSelection);
 elements.flashFirmware.addEventListener('click', flashSelectedFirmware);
+elements.dumpFlash.addEventListener('click', () => dumpRomMemory(
+  'FLASH', STM32_FLASH_BASE, STM32_FLASH_SIZE, 'flash'));
+elements.dumpEeprom.addEventListener('click', () => dumpRomMemory(
+  'EEPROM', STM32_EEPROM_BASE, STM32_EEPROM_SIZE, 'eeprom'));
+elements.dumpSpi.addEventListener('click', dumpSpiMemory);
 elements.instructionsTab.addEventListener('click', () => selectPage('instructions'));
 elements.clearFirmwareLog.addEventListener('click', () => { elements.firmwareLog.textContent = ''; });
 window.addEventListener('hashchange', () => {
@@ -1398,6 +1422,166 @@ function clearFirmwareSelection() {
   elements.flashFirmware.disabled = true;
   setFirmwareImageStatus('No image selected.');
   appendFirmwareLog('Firmware image selection cleared.');
+}
+
+function downloadDump(bytes, filename) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function makeDumpFilename(kind) {
+  const now = new Date();
+  const datePart = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')].join('-');
+  const timePart = [now.getHours(), now.getMinutes(), now.getSeconds()]
+    .map((part) => String(part).padStart(2, '0')).join('-');
+  return `${kind.toLowerCase()}-${datePart}_${timePart}.bin`;
+}
+
+function setDumpBusy(busy) {
+  dumpBusy = busy;
+  elements.dumpFlash.disabled = busy;
+  elements.dumpEeprom.disabled = busy;
+  updateSpiDumpAvailability();
+}
+
+function setDumpStatus(message, level = '') {
+  elements.dumpStatus.textContent = message;
+  elements.dumpStatus.dataset.level = level;
+}
+
+async function dumpRomMemory(label, address, length, filename) {
+  if (dumpBusy) return;
+  if (!('serial' in navigator)) {
+    setDumpStatus('Web Serial is unavailable in this browser.', 'error');
+    return;
+  }
+  let port = selectedSerialPort;
+  try {
+    if (!port) port = await navigator.serial.requestPort();
+  } catch (error) {
+    setDumpStatus(`Could not select the serial port: ${error.message}`, 'error');
+    return;
+  }
+  selectedSerialPort = port;
+  const wasConnected = !!serial;
+  const dumpFilename = makeDumpFilename(filename);
+  let session = null;
+  let attemptedBootloader = false;
+  let bytes = null;
+  let failure = null;
+  let restartFailure = null;
+  setDumpBusy(true);
+  setDumpStatus(`Reading ${label} through the STM32 ROM bootloader…`);
+  setConnection('connecting', 'Entering bootloader…');
+  appendFirmwareLog(`${label} dump requested (${length.toLocaleString()} bytes).`);
+  try {
+    attemptedBootloader = true;
+    session = await openBootloaderForImage('hex');
+    const deviceId = await session.client.getDeviceId();
+    if (deviceId !== STM32_DEVICE_ID) {
+      throw new Error(`Expected STM32L051 device ID 0x${STM32_DEVICE_ID.toString(16)}, received 0x${deviceId.toString(16)}.`);
+    }
+    if (!session.info.commands.includes(0x11)) {
+      throw new Error('The ROM bootloader does not support Read Memory.');
+    }
+    bytes = new Uint8Array(length);
+    const chunkSize = 256;
+    let nextProgress = 10;
+    for (let offset = 0; offset < length; offset += chunkSize) {
+      const count = Math.min(chunkSize, length - offset);
+      bytes.set(await session.client.readMemory(address + offset, count), offset);
+      const percent = Math.floor(((offset + count) * 100) / length);
+      if (percent >= nextProgress) {
+        appendFirmwareLog(`${label} read ${percent}%.`);
+        nextProgress = Math.floor(percent / 10 + 1) * 10;
+      }
+    }
+    appendFirmwareLog(`${label} dump read complete.`, 'success');
+  } catch (error) {
+    failure = error;
+    appendFirmwareLog(`${label} dump failed: ${error.message}`, 'error');
+  } finally {
+    if (session) await session.client.close(false);
+    bootloaderPortOpen = false;
+    if (attemptedBootloader) {
+      try {
+        await sendFirmwareStartSignal(port);
+        appendFirmwareLog('Firmware-start signal sent after dump.');
+      } catch (error) {
+        const restartError = new Error(`Could not send the firmware-start signal: ${error.message}`);
+        restartFailure = restartError;
+        appendFirmwareLog(restartError.message, 'error');
+      }
+    }
+    if (wasConnected && !portMayBeOpen) {
+      await connectDevice(port);
+    } else if (!portMayBeOpen) {
+      setConnection('disconnected', 'Disconnected');
+    } else {
+      setConnection('disconnect-pending', 'Disconnect required');
+    }
+    setDumpBusy(false);
+  }
+  if (failure) {
+    setDumpStatus(`${label} dump failed: ${failure.message}`, 'error');
+    return;
+  }
+  downloadDump(bytes, dumpFilename);
+  setDumpStatus(restartFailure
+    ? `${label} dump saved as ${dumpFilename}, but firmware restart failed: ${restartFailure.message}`
+    : `${label} dump saved as ${dumpFilename} (${length.toLocaleString()} bytes).`,
+  restartFailure ? 'warning' : 'success');
+}
+
+async function dumpSpiMemory() {
+  if (dumpBusy) return;
+  if (!serial || (protocolCapabilities & CAP_GET_SPI_DUMP) === 0 ||
+      !logInfo?.spi || !logInfo?.spiReady || !logInfo.spiSizeMb) {
+    setDumpStatus('SPI dump requires connected compatible firmware with SPI logging enabled and ready.', 'warning');
+    updateSpiDumpAvailability();
+    return;
+  }
+  const length = logInfo.spiSizeMb * 1024 * 1024;
+  const filename = makeDumpFilename('spi');
+  const bytes = new Uint8Array(length);
+  setDumpBusy(true);
+  setDumpStatus(`Reading SPI flash (${length.toLocaleString()} bytes)…`);
+  appendFirmwareLog(`SPI dump requested (${length.toLocaleString()} bytes).`);
+  try {
+    let nextProgress = 10;
+    for (let offset = 0; offset < length; offset += SPI_DUMP_CHUNK_SIZE) {
+      const count = Math.min(SPI_DUMP_CHUNK_SIZE, length - offset);
+      const request = new Uint8Array(5);
+      const requestView = new DataView(request.buffer);
+      requestView.setUint32(0, offset, true);
+      request[4] = count;
+      const response = await serial.request(OP_GET_SPI_DUMP_PAGE, request, 5000);
+      if (response.length !== count + 6 || response[0] !== 0 ||
+          new DataView(response.buffer, response.byteOffset, response.byteLength).getUint32(1, true) !== offset ||
+          response[5] !== count) {
+        throw new ProtocolError(`Invalid SPI dump response at offset 0x${offset.toString(16)}.`);
+      }
+      bytes.set(response.subarray(6), offset);
+      const percent = Math.floor(((offset + count) * 100) / length);
+      if (percent >= nextProgress) {
+        appendFirmwareLog(`SPI read ${percent}%.`);
+        nextProgress = Math.floor(percent / 10 + 1) * 10;
+      }
+    }
+    downloadDump(bytes, filename);
+    appendFirmwareLog(`SPI dump complete and saved as ${filename}.`, 'success');
+    setDumpStatus(`SPI dump saved as ${filename} (${length.toLocaleString()} bytes).`, 'success');
+  } catch (error) {
+    appendFirmwareLog(`SPI dump failed: ${error.message}`, 'error');
+    setDumpStatus(`SPI dump failed: ${error.message}`, 'error');
+  } finally {
+    setDumpBusy(false);
+  }
 }
 
 async function openBootloaderForImage(mode) {
@@ -1701,6 +1885,7 @@ async function connectDevice(portOverride = null) {
   elements.settingsList.replaceChildren();
   elements.logTabs.replaceChildren();
   elements.logContent.textContent = '';
+  updateSpiDumpAvailability();
   setConnection('connecting', 'Connecting…');
   showNotice('Select the device port. The app will wait if opening it restarts the device.', '');
   try {
@@ -1716,6 +1901,7 @@ async function connectDevice(portOverride = null) {
       elements.settingsList.replaceChildren();
       elements.logTabs.replaceChildren();
       elements.logContent.textContent = '';
+      updateSpiDumpAvailability();
       elements.settingsStatus.textContent = 'Connect to read settings.';
       setConnection('disconnected', 'Connection lost');
       showNotice(error.message, 'error');
@@ -1743,6 +1929,7 @@ async function connectDevice(portOverride = null) {
     elements.settingsList.replaceChildren();
     elements.logTabs.replaceChildren();
     elements.logContent.textContent = '';
+    updateSpiDumpAvailability();
     elements.settingsStatus.textContent = 'Connect to read settings.';
     setConnection(portMayBeOpen ? 'disconnect-pending' : 'disconnected', portMayBeOpen ? 'Disconnect required' : 'Disconnected');
     showNotice(error.message || 'Could not connect to the device.', 'error');
@@ -1763,6 +1950,7 @@ async function disconnectDevice() {
   elements.settingsList.replaceChildren();
   elements.logTabs.replaceChildren();
   elements.logContent.textContent = '';
+  updateSpiDumpAvailability();
   elements.settingsStatus.textContent = 'Connect to read settings.';
   showNotice(closed ? 'Port closed. Last readings remain visible.' : 'Port is still open. Press Disconnect to retry closing it.', closed ? '' : 'error');
 }
@@ -1850,6 +2038,7 @@ async function rebootToFirmware() {
   elements.rebootFirmware.disabled = true;
   elements.rebootBootloader.disabled = true;
   setRebootStatus('Starting firmware and checking for HELLO…');
+  appendFirmwareLog('Starting firmware and checking for HELLO.');
   showNotice('Sending the firmware-start signal and checking that the application responds.', '');
   clearInterval(pollTimer);
   pollTimer = 0;
@@ -1865,17 +2054,20 @@ async function rebootToFirmware() {
 
     await startFirmwareAndVerify(port);
     setRebootStatus('Firmware is running. Serial port disconnected.', 'success');
+    appendFirmwareLog('Firmware responded to HELLO; serial port disconnected.', 'success');
     showNotice('Firmware responded to HELLO. Serial port disconnected.', 'success');
   } catch (error) {
     actionError = error;
     const level = error.code === 'APP_HELLO_NO_RESPONSE' ? 'warning' : 'error';
     setRebootStatus(`Firmware did not respond: ${error.message}`, level);
+    appendFirmwareLog(`Firmware start failed: ${error.message}`, level);
     showNotice(`Firmware did not respond: ${error.message}`, level);
   } finally {
     const closed = await disconnectPortAfterAction(port);
     if (!closed) {
       const message = 'Serial port is still open. Press Disconnect in the top-right to retry.';
       setRebootStatus(`${elements.rebootStatus.textContent} ${message}`, 'error');
+      appendFirmwareLog(message, 'error');
       showNotice(message, 'error');
     } else if (actionError) {
       setConnection('disconnected', 'Disconnected');
@@ -1890,6 +2082,7 @@ async function rebootToBootloader() {
   elements.rebootFirmware.disabled = true;
   let port = selectedSerialPort;
   let actionError = null;
+  appendFirmwareLog('Starting ROM bootloader entry check.');
   try {
     if (!port) {
       if (!('serial' in navigator)) throw new Error('Web Serial is unavailable in this browser.');
@@ -1933,16 +2126,19 @@ async function rebootToBootloader() {
       throw new Error('No ROM ACK (0x79) received.');
     }
     setRebootStatus('ROM bootloader replied with ACK. Port disconnected; Flash can reconnect to it.', 'success');
+    appendFirmwareLog('ROM bootloader replied with ACK; port disconnected.', 'success');
     showNotice('STM32 ROM bootloader detected. No firmware data was sent.', 'success');
   } catch (error) {
     actionError = error;
     setRebootStatus(error.message, 'error');
+    appendFirmwareLog(`Bootloader entry failed: ${error.message}`, 'error');
     showNotice(error.message, 'error');
   } finally {
     const closed = await disconnectPortAfterAction(port);
     if (!closed) {
       const message = 'Serial port is still open. Press Disconnect in the top-right to retry.';
       setRebootStatus(`${elements.rebootStatus.textContent} ${message}`, 'error');
+      appendFirmwareLog(message, 'error');
       showNotice(message, 'error');
     } else if (actionError) {
       setConnection('disconnected', 'Bootloader not detected');

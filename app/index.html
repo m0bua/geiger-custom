@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1115">
   <title>Device Monitor</title>
-  <link rel="stylesheet" href="style.css?v=20261023-6">
+  <link rel="stylesheet" href="style.css?v=20261023-8">
 </head>
 <body>
   <main class="shell">
@@ -124,15 +124,26 @@
         <div class="firmware-controls">
           <div class="firmware-file-control">
             <label for="firmware-file">Firmware image (.hex or .bin)</label>
-            <div class="firmware-file-row">
-              <input id="firmware-file" type="file" accept=".hex,.bin,application/octet-stream,text/plain">
-              <button id="clear-firmware" class="button button-quiet" type="button">Clear</button>
-            </div>
-            <output id="firmware-image-status" class="firmware-image-status" data-kind="unknown" aria-live="polite">No image selected.</output>
+            <input id="firmware-file" type="file" accept=".hex,.bin,application/octet-stream,text/plain">
           </div>
+          <button id="clear-firmware" class="button button-quiet" type="button">Clear</button>
           <button id="flash-firmware" class="button button-primary" type="button" disabled>Flash</button>
           <label class="verify-option"><input id="firmware-verify" type="checkbox" checked> Verify after programming</label>
+          <output id="firmware-image-status" class="firmware-image-status" data-kind="unknown" aria-live="polite">No image selected.</output>
         </div>
+      </div>
+      <div class="firmware-dumps">
+        <h2>Dumps</h2>
+        <p>FLASH and EEPROM are read through the STM32 ROM bootloader. SPI needs a connected compatible firmware with SPI logging enabled.</p>
+        <div class="dump-controls">
+          <button id="dump-flash" class="button" type="button">FLASH</button>
+          <button id="dump-eeprom" class="button" type="button">EEPROM</button>
+          <button id="dump-spi" class="button" type="button" disabled>SPI</button>
+        </div>
+        <p id="dump-status" class="dump-status" role="status" aria-live="polite">Select a device port to read FLASH or EEPROM. SPI dump is unavailable until a compatible device is connected.</p>
+      </div>
+      <div class="firmware-activity">
+        <h2>Activity</h2>
         <div class="firmware-log-window">
           <div class="firmware-log-toolbar"><button id="clear-firmware-log" class="button button-quiet" type="button">Clear</button></div>
           <pre id="firmware-log" class="firmware-log" role="log" aria-live="polite"></pre>
@@ -147,6 +158,6 @@
 
     <footer>Protocol V1</footer>
   </main>
-  <script defer src="app.js?v=20261023-7"></script>
+  <script defer src="app.js?v=20261023-10"></script>
 </body>
 </html>

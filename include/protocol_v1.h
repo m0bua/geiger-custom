@@ -24,7 +24,8 @@ enum {
     PROTOCOL_V1_OP_GET_SETTINGS = 3u,
     PROTOCOL_V1_OP_SET_SETTING = 4u,
     PROTOCOL_V1_OP_GET_LOG_INFO = 5u,
-    PROTOCOL_V1_OP_GET_LOG_PAGE = 6u
+    PROTOCOL_V1_OP_GET_LOG_PAGE = 6u,
+    PROTOCOL_V1_OP_GET_SPI_DUMP_PAGE = 7u
 };
 
 void protocol_v1_transport_init(void);
