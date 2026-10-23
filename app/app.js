@@ -190,7 +190,8 @@ const elements = {
   settingsTab: document.querySelector('#settings-tab'),
   logsTab: document.querySelector('#logs-tab'),
   firmwareTab: document.querySelector('#firmware-tab'),
-  instructionsTab: document.querySelector('#instructions-tab'),
+  manualTab: document.querySelector('#manual-tab'),
+  aboutTab: document.querySelector('#about-tab'),
   overviewPage: document.querySelector('#overview-page'),
   debugPage: document.querySelector('#debug-page'),
   settingsPage: document.querySelector('#settings-page'),
@@ -218,7 +219,8 @@ const elements = {
   dumpEeprom: document.querySelector('#dump-eeprom'),
   dumpSpi: document.querySelector('#dump-spi'),
   dumpStatus: document.querySelector('#dump-status'),
-  instructionsPage: document.querySelector('#instructions-page'),
+  manualPage: document.querySelector('#manual-page'),
+  aboutPage: document.querySelector('#about-page'),
   settingsStatus: document.querySelector('#settings-status'),
   settingsList: document.querySelector('#settings-list'),
   rate: document.querySelector('#rate'),
@@ -609,7 +611,8 @@ function showNotice(message, kind = '') {
 }
 
 function selectPage(page, updateUrl = true) {
-  const pages = ['overview', 'debug', 'settings', 'logs', 'instructions', 'firmware'];
+  if (page === 'instructions') page = 'manual';
+  const pages = ['overview', 'debug', 'settings', 'logs', 'firmware', 'manual', 'about'];
   if (!pages.includes(page)) return;
   for (const name of pages) {
     const active = name === page;
@@ -1227,17 +1230,18 @@ elements.dumpFlash.addEventListener('click', () => dumpRomMemory(
 elements.dumpEeprom.addEventListener('click', () => dumpRomMemory(
   'EEPROM', STM32_EEPROM_BASE, STM32_EEPROM_SIZE, 'eeprom'));
 elements.dumpSpi.addEventListener('click', dumpSpiMemory);
-elements.instructionsTab.addEventListener('click', () => selectPage('instructions'));
+elements.manualTab.addEventListener('click', () => selectPage('manual'));
+elements.aboutTab.addEventListener('click', () => selectPage('about'));
 elements.clearFirmwareLog.addEventListener('click', () => { elements.firmwareLog.textContent = ''; });
 window.addEventListener('hashchange', () => {
   const page = window.location.hash.slice(1);
-  selectPage(page || 'overview', false);
+  selectPage(page || 'overview');
 });
 document.querySelectorAll('[data-debug-page]').forEach((button) => {
   button.addEventListener('click', () => selectDebugPage(button.dataset.debugPage));
 });
 selectDebugPage(selectedDebugPage);
-selectPage(window.location.hash.slice(1) || 'overview', false);
+selectPage(window.location.hash.slice(1) || 'overview');
 window.addEventListener('resize', drawRateChart);
 detectLocalBuild();
 

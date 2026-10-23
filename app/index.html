@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1115">
   <title>Device Monitor</title>
-  <link rel="stylesheet" href="style.css?v=20261023-10">
+  <link rel="stylesheet" href="style.css?v=20261023-11">
 </head>
 <body>
   <main class="shell">
@@ -16,7 +16,8 @@
         <button class="tab" id="settings-tab" type="button" aria-selected="false">Settings</button>
         <button class="tab" id="debug-tab" type="button" aria-selected="false">Debug</button>
         <button class="tab" id="firmware-tab" type="button" aria-selected="false">Firmware</button>
-        <button class="tab" id="instructions-tab" type="button" aria-selected="false">Instructions</button>
+        <button class="tab" id="manual-tab" type="button" aria-selected="false">Manual</button>
+        <button class="tab" id="about-tab" type="button" aria-selected="false">About</button>
       </nav>
       <div id="connection" class="connection" data-state="disconnected">
         <span class="connection-dot"></span><span id="connection-label">Disconnected</span>
@@ -161,13 +162,57 @@
       </section>
     </section>
 
-    <section id="instructions-page" class="page placeholder-page" hidden>
-      <h2>Instructions</h2>
-      <p>Device instructions will be available here.</p>
+    <section id="manual-page" class="page information-page" hidden>
+      <h2>Manual</h2>
+      <section class="information-card">
+        <h3>Start here</h3>
+        <ol>
+          <li>Serve the repository locally with <code>python -m http.server 8000</code>, then open <code>http://localhost:8000/app/</code>.</li>
+          <li>Connect the device with <strong>Connect</strong>. Opening the serial port can restart the device; the app waits for it to answer.</li>
+          <li>Use the tabs to view readings, browse logs, edit supported settings, inspect diagnostics, or manage firmware.</li>
+        </ol>
+      </section>
+      <section class="information-card">
+        <h3>Firmware and backups</h3>
+        <p>Before flashing, use <strong>Firmware → Dumps → FLASH</strong> and save the downloaded backup. The local-build button flashes the latest existing <code>.pio/build/geiger2/firmware.bin</code>; it does not compile the firmware.</p>
+        <p>Manual flashing accepts validated STM32 <code>.hex</code> and <code>.bin</code> images. Read the image status and keep <strong>Verify after programming</strong> enabled. Reboot and dump controls are in the collapsible sections below Flash firmware.</p>
+      </section>
+      <section class="information-card">
+        <h3>Readings and data</h3>
+        <ul>
+          <li><strong>Overview:</strong> current rate, dose today, solar and battery readings, device clock, and recent rate chart.</li>
+          <li><strong>Logs:</strong> browse day, minute, hour, and alert records when available. Load older pages as needed.</li>
+          <li><strong>Settings:</strong> read and change settings supported by the connected firmware.</li>
+          <li><strong>Debug:</strong> inspect uptime, counters, clock, memory, log counts, and raw voltage readings.</li>
+        </ul>
+      </section>
+      <p class="information-note">Web Serial requires a supported browser and a secure context such as localhost or HTTPS.</p>
+    </section>
+
+    <section id="about-page" class="page information-page" hidden>
+      <h2>About</h2>
+      <p class="app-version">Web app: <strong>Unreleased development build</strong> · Device protocol: <strong>v1</strong></p>
+      <section class="information-card">
+        <h3>Recent changes</h3>
+        <ul class="release-list">
+          <li><time datetime="2026-10-23">2026-10-23</time> — local-build flashing, exclusive Firmware accordions, persistent Activity log, and pre-flash backup reminders.</li>
+          <li><time datetime="2026-10-23">2026-10-23</time> — HEX/BIN validation and verified flashing, reboot controls, and FLASH/EEPROM/SPI dumps.</li>
+          <li><time datetime="2026-10-22">2026-10-22</time> — Overview, Logs, Settings, and Debug pages over Web Serial.</li>
+        </ul>
+      </section>
+      <section class="information-card">
+        <h3>Known limitations</h3>
+        <ul>
+          <li>Only firmware images on the compatibility checksum list receive the normal application <code>HELLO</code> startup check. Unlisted project builds are started without that check.</li>
+          <li>Battery and solar percentages, dose calibration, RTC behavior after full power loss, and SPI logging reliability still need physical verification.</li>
+          <li>SPI dump requires compatible running firmware with SPI logging enabled and a ready SPI memory chip.</li>
+        </ul>
+      </section>
+      <p class="information-note">See <a href="../docs/docs/OPEN_ITEMS.md">project open items</a> for the current hardware and firmware verification list.</p>
     </section>
 
     <footer>Protocol V1</footer>
   </main>
-  <script defer src="app.js?v=20261023-13"></script>
+  <script defer src="app.js?v=20261023-14"></script>
 </body>
 </html>

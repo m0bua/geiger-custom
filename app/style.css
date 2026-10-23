@@ -65,6 +65,19 @@ button { font: inherit; }
 .placeholder-page { min-height: 180px; padding: 28px 20px; border: 1px solid var(--line); border-radius: 11px; background: rgba(17,26,31,.8); }
 .placeholder-page h2 { margin: 0 0 8px; font-size: 16px; }
 .placeholder-page p { margin: 0; color: var(--muted); font-size: 12px; }
+.information-page { display: grid; gap: 12px; }
+.information-page > h2 { margin: 0; font-size: 17px; }
+.information-card { padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: rgba(17,26,31,.72); }
+.information-card h3 { margin: 0 0 10px; color: #d8e2e4; font-size: 13px; }
+.information-card p, .information-card li { color: #aebbc0; font-size: 12px; line-height: 1.6; }
+.information-card p { margin: 8px 0 0; }
+.information-card ol, .information-card ul { display: grid; gap: 6px; margin: 0; padding-left: 22px; }
+.information-card code, .information-page code { color: #d8e2e4; font: 11px "DM Mono", Consolas, monospace; }
+.app-version { margin: 0; color: var(--muted); font-size: 12px; }
+.app-version strong { color: #d8e2e4; font-weight: 600; }
+.release-list time { color: var(--green); font: 11px "DM Mono", Consolas, monospace; white-space: nowrap; }
+.information-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.information-note a { color: var(--green); }
 .firmware-section { max-width: 900px; margin-top: 10px; padding: 0 14px; border: 1px solid var(--line); border-radius: 9px; background: rgba(17,26,31,.65); }
 .firmware-section > summary { padding: 13px 0; color: #d8e2e4; font-size: 14px; font-weight: 600; cursor: pointer; list-style: none; }
 .firmware-section > summary::-webkit-details-marker { display: none; }
