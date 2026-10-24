@@ -498,3 +498,5 @@ Read loop не прив’язувати до вкладки UI. Один parser
 `HELLO` capability bit 7 advertises `DEVICE_ACTION` (opcode 9). Request payload is `action:u8 | value:u8`: `0 RESET` with a cleanup-menu index (`0 SETTINGS, 1 MIN-LOG, 2 HOUR-LOG, 3 DAY-LOG, 4 ERROR-LOG, 5 LOGS, 6 EEPROM-LOGS, 7 EEPROM, 8 SPI, 9 ALL`), `1 POWER OFF` with value `0`, or `2 REBOOT` with value `0`. Response is the standard one-byte status. The firmware transmits the response completely before performing the requested action, including reset, power-off, and reboot.
 
 The app asks for confirmation before every RESET operation and warns before enabling USE-SPI that SPI assets will be erased and stock firmware cannot be restored afterward.
+
+The `START SCREEN` value is stored in bits 29–30 of the same EEPROM word as `hidden_mask`; values are TIME=0, SETTINGS=1, DEBUG=2. The app interprets only bits 0–28 as per-setting visibility flags.

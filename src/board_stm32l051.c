@@ -4788,7 +4788,8 @@ static bool board_eeprom_clear_all(void)
 #define SETTINGS_ALARM_STOP_MAGIC 0xBAu
 #define SETTINGS_SPI_EEPROM_BASE 136u
 #define SETTINGS_SPI_EEPROM_MAGIC 0xBCu
-#define SETTINGS_LONG_PRESS_EEPROM_BASE 140u
+#define SETTINGS_LONG_PRESS_EEPROM_BASE 77u
+#define SETTINGS_LONG_PRESS_LEGACY_EEPROM_BASE 140u
 #define SETTINGS_LONG_PRESS_MAGIC 0xBDu
 #define SETTINGS_RATE_CUSTOM_EEPROM_BASE 144u
 #define SETTINGS_RATE_CUSTOM_MAGIC 0xC1u
@@ -4797,8 +4798,7 @@ static bool board_eeprom_clear_all(void)
 #define SETTINGS_DOSE_SOUND_EEPROM_BASE 153u
 #define SETTINGS_VISIBILITY_EEPROM_BASE 72u
 #define SETTINGS_VISIBILITY_MAGIC 0xC6u
-#define SETTINGS_START_SCREEN_EEPROM_BASE 77u
-#define SETTINGS_START_SCREEN_MAGIC 0xC7u
+#define SETTINGS_START_SCREEN_MASK (3UL << 29u)
 
 static uint32_t settings_visibility_default_mask(void)
 {
@@ -4848,9 +4848,17 @@ static void settings_visibility_load(void)
     lcd_settings_hidden_mask = (uint32_t)bytes[0] |
         ((uint32_t)bytes[1] << 8u) | ((uint32_t)bytes[2] << 16u) |
         ((uint32_t)bytes[3] << 24u);
-    lcd_settings_hidden_mask &= (1UL << SETTING_COUNT) - 1UL;
+    lcd_settings_value_index[SETTING_START_SCREEN] =
+        (uint8_t)((lcd_settings_hidden_mask >> 29u) & 3u);
+    lcd_settings_hidden_mask &= ((1UL << SETTING_COUNT) - 1UL) |
+        SETTINGS_START_SCREEN_MASK;
+    if (lcd_settings_value_index[SETTING_START_SCREEN] >= 3u) {
+        lcd_settings_value_index[SETTING_START_SCREEN] = 0u;
+        lcd_settings_hidden_mask &= ~SETTINGS_START_SCREEN_MASK;
+    }
     if (!lcd_settings_has_visible_non_dose_prefix(lcd_settings_hidden_mask)) {
         lcd_settings_hidden_mask = settings_visibility_default_mask();
+        lcd_settings_value_index[SETTING_START_SCREEN] = 0u;
     }
 }
 
@@ -4868,18 +4876,14 @@ static bool settings_visibility_save(uint32_t mask)
         SETTINGS_VISIBILITY_MAGIC);
 }
 
-static void settings_start_screen_load(void)
+static bool settings_start_screen_save(void)
 {
-    (void)settings_value_read(SETTINGS_START_SCREEN_EEPROM_BASE,
-        SETTINGS_START_SCREEN_MAGIC, 0xE7u, 3u,
-        &lcd_settings_value_index[SETTING_START_SCREEN]);
-}
-
-static void settings_start_screen_save(void)
-{
-    (void)settings_value_write(SETTINGS_START_SCREEN_EEPROM_BASE,
-        SETTINGS_START_SCREEN_MAGIC, 0xE7u,
-        lcd_settings_value_index[SETTING_START_SCREEN]);
+    const uint32_t mask = (lcd_settings_hidden_mask &
+        ~SETTINGS_START_SCREEN_MASK) |
+        ((uint32_t)lcd_settings_value_index[SETTING_START_SCREEN] << 29u);
+    if (!settings_visibility_save(mask)) return false;
+    lcd_settings_hidden_mask = mask;
+    return true;
 }
 
 static void settings_rate_custom_load(void)
@@ -4962,9 +4966,16 @@ static void settings_long_press_load(void)
         return;
     }
 
+    if (settings_value_read(SETTINGS_LONG_PRESS_LEGACY_EEPROM_BASE,
+            SETTINGS_LONG_PRESS_MAGIC, 0x37u, count,
+            &lcd_settings_value_index[SETTING_LONG_PRESS])) {
+        (void)settings_long_press_save();
+        return;
+    }
+
     /* Migrate the previous 500/800/1000/1200/1500 ms option index. */
     uint8_t old_index;
-    if (settings_value_read(SETTINGS_LONG_PRESS_EEPROM_BASE,
+    if (settings_value_read(SETTINGS_LONG_PRESS_LEGACY_EEPROM_BASE,
             SETTINGS_LONG_PRESS_MAGIC, 0x36u, 5u, &old_index)) {
         static const uint8_t migrated_index[] = { 1u, 3u, 3u, 4u, 5u };
         lcd_settings_value_index[SETTING_LONG_PRESS] =
@@ -5507,7 +5518,7 @@ static void lcd_settings_apply_current(void)
     }
     if (lcd_settings_selected == 17u) settings_alarm_stop_save();
     if (lcd_settings_selected == SETTING_START_SCREEN) {
-        settings_start_screen_save();
+        (void)settings_start_screen_save();
     }
     if (lcd_settings_selected == 13u) {
         (void)settings_spi_save();
@@ -5618,10 +5629,19 @@ bool board_display_setting_remote_write(uint8_t setting_id, uint8_t value)
 
     if (lcd_settings_value_index[setting_id] == value) return true;
 
+    const uint8_t previous_value = lcd_settings_value_index[setting_id];
     lcd_settings_selected = setting_id;
     lcd_settings_editing = false;
     lcd_settings_value_index[setting_id] = value;
     lcd_settings_apply_current();
+    if (setting_id == SETTING_START_SCREEN &&
+        ((lcd_settings_hidden_mask >> 29u) & 3u) != value) {
+        lcd_settings_value_index[setting_id] = previous_value;
+        lcd_settings_selected = previous_selected;
+        lcd_settings_edit_value = previous_edit_value;
+        lcd_settings_editing = previous_editing;
+        return false;
+    }
     lcd_settings_selected = previous_selected;
     lcd_settings_edit_value = previous_edit_value;
     lcd_settings_editing = previous_editing;
@@ -5638,7 +5658,7 @@ static bool settings_reset_all(void)
         SETTINGS_SPI_EEPROM_BASE, SETTINGS_LONG_PRESS_EEPROM_BASE,
         SETTINGS_RATE_CUSTOM_EEPROM_BASE, SETTINGS_DOSE_SCREEN_EEPROM_BASE,
         SETTINGS_DOSE_LIGHT_EEPROM_BASE, SETTINGS_DOSE_SOUND_EEPROM_BASE,
-        SETTINGS_VISIBILITY_EEPROM_BASE, SETTINGS_START_SCREEN_EEPROM_BASE
+        SETTINGS_VISIBILITY_EEPROM_BASE
     };
 
     for (uint8_t i = 0u;
@@ -5648,7 +5668,8 @@ static bool settings_reset_all(void)
             return false;
         }
     }
-    return true;
+    return settings_value_write(SETTINGS_LONG_PRESS_EEPROM_BASE,
+        SETTINGS_LONG_PRESS_MAGIC, 0x37u, 3u);
 }
 
 static bool lcd_cleanup_execute(void)
@@ -6988,7 +7009,6 @@ void board_display_init(void)
     settings_rate_custom_load();
     settings_dose_actions_load();
     settings_visibility_load();
-    settings_start_screen_load();
     lcd_screen_page = 0u;
     lcd_last_extra_page = (uint8_t)(2u +
         lcd_settings_value_index[SETTING_START_SCREEN]);
