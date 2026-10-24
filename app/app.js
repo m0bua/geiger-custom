@@ -540,6 +540,7 @@ const remoteSettings = [
   { id: 22, label: 'DOSE ROW 2', options: [] },
   { id: 23, label: 'DOSE PERIOD', options: ['UPTIME', 'DAY', 'TOTAL'] },
   { id: 21, label: 'LONG PRESS', options: ['300 ms', '500 ms', '700 ms', '900 ms', '1100 ms', '1300 ms'] },
+  { id: 28, label: 'START SCREEN', options: ['TIME', 'SETTINGS', 'DEBUG'] },
   { id: 15, label: 'HV', options: ['ON', 'OFF'] },
   { id: 13, label: 'USE-SPI', options: ['OFF', 'ON'] },
   { id: 14, label: 'RESET', options: ['Device action'] },
@@ -1499,7 +1500,7 @@ function settingsOptions(setting) {
 }
 
 function settingLabel(setting) {
-  if (deviceSettings?.length === 28) return setting.label;
+  if (deviceSettings?.length >= 28) return setting.label;
   if (setting.id === 2) return 'SCREEN ALARM';
   if (setting.id === 3) return 'LIGHT ALARM';
   if (setting.id === 4) return 'SOUND ALARM';
@@ -1588,7 +1589,7 @@ async function loadSettings() {
   try {
     const payload = await serial.request(OP_GET_SETTINGS, Uint8Array.of(1));
     if (payload.length < 2 || payload[0] !== 0 ||
-        ![21, 22, 24, 28].includes(payload[1]) ||
+        ![21, 22, 24, 28, 29].includes(payload[1]) ||
         (payload.length !== payload[1] + 2 &&
          payload.length !== payload[1] + 6)) {
       throw new ProtocolError('Invalid settings response.');

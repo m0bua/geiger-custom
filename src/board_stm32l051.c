@@ -340,7 +340,8 @@ typedef enum {
     SETTING_HV, SETTING_RATE_CUSTOM, SETTING_ALARM_STOP, SETTING_POWER_OFF,
     SETTING_REBOOT, SETTING_TONE, SETTING_LONG_PRESS, SETTING_DOSE_ROW_2,
     SETTING_DOSE_PERIOD, SETTING_DOSE_SCREEN, SETTING_DOSE_LIGHT,
-    SETTING_DOSE_SOUND, SETTING_DOSE_CUSTOM, SETTING_COUNT
+    SETTING_DOSE_SOUND, SETTING_DOSE_CUSTOM, SETTING_START_SCREEN,
+    SETTING_COUNT
 } setting_id_t;
 
 static uint8_t lcd_settings_value_index[SETTING_COUNT] = {
@@ -1950,7 +1951,7 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
 static const uint8_t lcd_settings_item_order[LCD_SETTINGS_COUNT] = {
     0u, 1u, 2u, 3u, 4u, 16u, 24u, 25u, 26u, 27u, 17u,
     5u, 6u, 7u, 20u, 8u, 9u, 10u, 11u, 12u, 22u, 23u,
-    21u, 15u, 13u, 14u, 18u, 19u
+    21u, 28u, 15u, 13u, 14u, 18u, 19u
 };
 
 static bool lcd_settings_item_is_visible(uint8_t item)
@@ -1994,7 +1995,7 @@ static const char *const lcd_settings_labels[LCD_SETTINGS_COUNT] = {
     "DOSE PREF", "RATE ROW 2", "USE-SPI", "RESET", "HV", "RATE CUSTOM",
     "ALARM STOP", "POWER OFF", "REBOOT", "TONE", "LONG PRESS",
     "DOSE ROW 2", "DOSE PERIOD", "DOSE SCREEN", "DOSE LIGHT",
-    "DOSE SOUND", "DOSE CUSTOM"
+    "DOSE SOUND", "DOSE CUSTOM", "START SCREEN"
 };
 
 /* Share value lists instead of reserving eleven pointers for every item. */
@@ -2029,6 +2030,7 @@ static const char *const tone_values[] = { "STOCK", "CLASSIC", "MODERN" };
 static const char *const long_press_values[] = {
     "300MS", "500MS", "700MS", "900MS", "1100MS", "1300MS"
 };
+static const char *const start_screen_values[] = { "TIME", "SETTINGS", "DEBUG" };
 static const uint16_t long_press_milliseconds[] = {
     300u, 500u, 700u, 900u, 1100u, 1300u
 };
@@ -2074,12 +2076,12 @@ static const char *const *const lcd_settings_values[LCD_SETTINGS_COUNT] = {
     off_on_values, empty_values, on_off_values, rate_custom_values, stop_values,
     empty_values, empty_values, tone_values, long_press_values,
     dose_row_values, dose_period_values, alarm_values, alarm_values,
-    alarm_values, dose_alarm_values
+    alarm_values, dose_alarm_values, start_screen_values
 };
 
 static const uint8_t lcd_settings_value_counts[LCD_SETTINGS_COUNT] = {
     6u, 6u, 4u, 4u, 4u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 3u, 2u, 1u, 2u,
-    9u, 2u, 1u, 1u, 3u, 6u, 4u, 3u, 4u, 4u, 4u, 8u
+    9u, 2u, 1u, 1u, 3u, 6u, 4u, 3u, 4u, 4u, 4u, 8u, 3u
 };
 
 static uint8_t lcd_settings_value_count(uint8_t item)
@@ -4795,6 +4797,18 @@ static bool board_eeprom_clear_all(void)
 #define SETTINGS_DOSE_SOUND_EEPROM_BASE 153u
 #define SETTINGS_VISIBILITY_EEPROM_BASE 72u
 #define SETTINGS_VISIBILITY_MAGIC 0xC6u
+#define SETTINGS_START_SCREEN_EEPROM_BASE 77u
+#define SETTINGS_START_SCREEN_MAGIC 0xC7u
+
+static uint32_t settings_visibility_default_mask(void)
+{
+    return (1UL << SETTING_RATE_CUSTOM) |
+        (1UL << SETTING_DOSE_CUSTOM) |
+        (1UL << SETTING_LONG_PRESS) |
+        (1UL << SETTING_START_SCREEN) |
+        (1UL << SETTING_HV) |
+        (1UL << SETTING_USE_SPI);
+}
 
 static bool settings_value_read(uint16_t offset, uint8_t magic, uint8_t salt,
                                  uint8_t count, uint8_t *value)
@@ -4823,7 +4837,10 @@ static void settings_visibility_load(void)
     uint8_t magic;
     uint8_t bytes[4];
     if (!board_eeprom_read(SETTINGS_VISIBILITY_EEPROM_BASE, &magic) ||
-        magic != SETTINGS_VISIBILITY_MAGIC) return;
+        magic != SETTINGS_VISIBILITY_MAGIC) {
+        lcd_settings_hidden_mask = settings_visibility_default_mask();
+        return;
+    }
     for (uint8_t i = 0u; i < 4u; ++i) {
         if (!board_eeprom_read((uint16_t)(SETTINGS_VISIBILITY_EEPROM_BASE + 1u + i),
                 &bytes[i])) return;
@@ -4833,7 +4850,7 @@ static void settings_visibility_load(void)
         ((uint32_t)bytes[3] << 24u);
     lcd_settings_hidden_mask &= (1UL << SETTING_COUNT) - 1UL;
     if (!lcd_settings_has_visible_non_dose_prefix(lcd_settings_hidden_mask)) {
-        lcd_settings_hidden_mask = 0u;
+        lcd_settings_hidden_mask = settings_visibility_default_mask();
     }
 }
 
@@ -4849,6 +4866,20 @@ static bool settings_visibility_save(uint32_t mask)
     }
     return settings_eeprom_write_byte(SETTINGS_VISIBILITY_EEPROM_BASE,
         SETTINGS_VISIBILITY_MAGIC);
+}
+
+static void settings_start_screen_load(void)
+{
+    (void)settings_value_read(SETTINGS_START_SCREEN_EEPROM_BASE,
+        SETTINGS_START_SCREEN_MAGIC, 0xE7u, 3u,
+        &lcd_settings_value_index[SETTING_START_SCREEN]);
+}
+
+static void settings_start_screen_save(void)
+{
+    (void)settings_value_write(SETTINGS_START_SCREEN_EEPROM_BASE,
+        SETTINGS_START_SCREEN_MAGIC, 0xE7u,
+        lcd_settings_value_index[SETTING_START_SCREEN]);
 }
 
 static void settings_rate_custom_load(void)
@@ -5475,6 +5506,9 @@ static void lcd_settings_apply_current(void)
         (void)settings_long_press_save();
     }
     if (lcd_settings_selected == 17u) settings_alarm_stop_save();
+    if (lcd_settings_selected == SETTING_START_SCREEN) {
+        settings_start_screen_save();
+    }
     if (lcd_settings_selected == 13u) {
         (void)settings_spi_save();
         if (settings_spi_enabled) {
@@ -5604,7 +5638,7 @@ static bool settings_reset_all(void)
         SETTINGS_SPI_EEPROM_BASE, SETTINGS_LONG_PRESS_EEPROM_BASE,
         SETTINGS_RATE_CUSTOM_EEPROM_BASE, SETTINGS_DOSE_SCREEN_EEPROM_BASE,
         SETTINGS_DOSE_LIGHT_EEPROM_BASE, SETTINGS_DOSE_SOUND_EEPROM_BASE,
-        SETTINGS_VISIBILITY_EEPROM_BASE
+        SETTINGS_VISIBILITY_EEPROM_BASE, SETTINGS_START_SCREEN_EEPROM_BASE
     };
 
     for (uint8_t i = 0u;
@@ -6930,6 +6964,12 @@ void board_display_init(void)
     settings_rate_custom_load();
     settings_dose_actions_load();
     settings_visibility_load();
+    settings_start_screen_load();
+    lcd_screen_page = 0u;
+    lcd_last_extra_page = (uint8_t)(2u +
+        lcd_settings_value_index[SETTING_START_SCREEN]);
+    lcd_main_return_page = 0u;
+    lcd_settings_selected = lcd_settings_menu_selected;
     if (settings_spi_enabled) {
         (void)spi_nor_init();
     }
