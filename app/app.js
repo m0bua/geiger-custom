@@ -9,10 +9,12 @@ const OP_GET_LOG_INFO = 5;
 const OP_GET_LOG_PAGE = 6;
 const OP_GET_SPI_DUMP_PAGE = 7;
 const OP_SET_RTC = 8;
+const OP_DEVICE_ACTION = 9;
 const CAP_GET_SETTINGS = 1 << 1;
 const CAP_SET_SETTING = 1 << 2;
 const CAP_GET_SPI_DUMP = 1 << 5;
 const CAP_SET_RTC = 1 << 6;
+const CAP_DEVICE_ACTION = 1 << 7;
 const MAX_PAYLOAD = 64;
 const LOG_BATCH_SIZE = 5;
 const LOG_INITIAL_TARGETS = { days: 30, minutes: 60, hours: 24, alerts: 5 };
@@ -497,6 +499,7 @@ let polling = false;
 let protocolCapabilities = 0;
 let deviceSettings = null;
 let deviceHiddenSettings = null;
+let selectedResetAction = 0;
 let logInfo = null;
 let selectedLogType = 'days';
 let logRecords = [];
@@ -543,9 +546,9 @@ const remoteSettings = [
   { id: 28, label: 'START SCREEN', options: ['TIME', 'SETTINGS', 'DEBUG'] },
   { id: 15, label: 'HV', options: ['ON', 'OFF'] },
   { id: 13, label: 'USE-SPI', options: ['OFF', 'ON'] },
-  { id: 14, label: 'RESET', options: ['Device action'] },
-  { id: 18, label: 'POWER OFF', options: ['Device action'] },
-  { id: 19, label: 'REBOOT', options: ['Device action'] },
+  { id: 14, label: 'RESET', options: ['SETTINGS', 'MIN-LOG', 'HOUR-LOG', 'DAY-LOG', 'ERROR-LOG', 'LOGS', 'EEPROM-LOGS', 'EEPROM', 'SPI', 'ALL'] },
+  { id: 18, label: 'POWER OFF', options: [] },
+  { id: 19, label: 'REBOOT', options: [] },
 ];
 
 function percentFromAdc(raw, empty, full) {
@@ -1521,38 +1524,81 @@ function renderSettings() {
     const label = document.createElement('label');
     label.htmlFor = `setting-${setting.id}`;
     label.textContent = settingLabel(setting);
-    const select = document.createElement('select');
-    select.id = `setting-${setting.id}`;
-    select.dataset.settingId = String(setting.id);
     const controls = document.createElement('div');
     controls.className = 'setting-controls';
+    const isReset = setting.id === 14;
+    const isPowerOff = setting.id === 18;
+    const isReboot = setting.id === 19;
+    const standaloneActionButton = isPowerOff || isReboot ?
+      makeDeviceActionButton(isPowerOff ? 'POWER OFF' : 'REBOOT',
+        isPowerOff ? 1 : 2) : null;
+    if (setting.id === 13 || isReset) row.classList.add('setting-danger');
+    if (isPowerOff || isReboot) row.classList.add('setting-action-warning');
     if (!available) {
-      const option = document.createElement('option');
-      option.value = '';
-      option.textContent = 'Unavailable';
-      select.append(option);
-      select.disabled = true;
-      controls.append(select);
-      row.append(label, controls);
+      if (!standaloneActionButton && !isReset) {
+        const select = document.createElement('select');
+        select.id = `setting-${setting.id}`;
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Unavailable';
+        select.append(option);
+        select.disabled = true;
+        controls.append(select);
+      }
+      if (standaloneActionButton) row.append(standaloneActionButton);
+      else row.append(label);
+      row.append(controls);
       rows.push(row);
       continue;
     }
-    options.forEach((item) => {
-      const option = document.createElement('option');
-      option.value = String(item.value);
-      option.textContent = item.label;
-      option.disabled = item.disabled;
-      select.append(option);
-    });
-    select.value = String(deviceSettings[setting.id]);
-    const inactiveSetting = setting.id === 11 && deviceSettings[9] === 1;
-    const deviceAction = [14, 18, 19].includes(setting.id);
-    select.disabled = inactiveSetting || deviceAction;
-    if (!inactiveSetting && !deviceAction) {
-      select.addEventListener('change', () =>
-        writeSetting(setting.id, Number(select.value), select));
+
+    if (isReset) {
+      const select = document.createElement('select');
+      select.id = `setting-${setting.id}`;
+      options.forEach((item) => {
+        const option = document.createElement('option');
+        option.value = String(item.value);
+        option.textContent = item.label;
+        select.append(option);
+      });
+      select.value = String(selectedResetAction);
+      select.disabled = (protocolCapabilities & CAP_DEVICE_ACTION) === 0;
+      select.addEventListener('change', () => {
+        selectedResetAction = Number(select.value);
+      });
+      controls.append(select);
+      controls.append(makeDeviceActionButton('Reset', 0, () => selectedResetAction));
+    } else if (standaloneActionButton) {
+      // Destructive device actions replace the text heading in this row.
+    } else {
+      const select = document.createElement('select');
+      select.id = `setting-${setting.id}`;
+      select.dataset.settingId = String(setting.id);
+      options.forEach((item) => {
+        const option = document.createElement('option');
+        option.value = String(item.value);
+        option.textContent = item.label;
+        option.disabled = item.disabled;
+        select.append(option);
+      });
+      select.value = String(deviceSettings[setting.id]);
+      const inactiveSetting = setting.id === 11 && deviceSettings[9] === 1;
+      select.disabled = inactiveSetting;
+      if (!inactiveSetting) {
+        select.addEventListener('change', () => {
+          const nextValue = Number(select.value);
+          if (setting.id === 13 && nextValue === 1 &&
+              deviceSettings[13] !== 1 && !window.confirm(
+                'Enabling SPI will erase all assets stored on the SPI chip. After that, returning to stock firmware will not be possible. Continue?')) {
+            select.value = String(deviceSettings[13]);
+            return;
+          }
+          writeSetting(setting.id, nextValue, select);
+        });
+      }
+      controls.append(select);
     }
-    controls.append(select);
+
     const visibilityLabel = document.createElement('label');
     visibilityLabel.className = 'setting-visible';
     const visibility = document.createElement('input');
@@ -1567,7 +1613,9 @@ function renderSettings() {
     visibilityText.textContent = 'Show';
     visibilityLabel.append(visibility, visibilityText);
     controls.append(visibilityLabel);
-    row.append(label, controls);
+    if (standaloneActionButton) row.append(standaloneActionButton);
+    else row.append(label);
+    row.append(controls);
     rows.push(row);
   }
   const pair = document.createElement('div');
@@ -1575,6 +1623,17 @@ function renderSettings() {
   pair.style.setProperty('--settings-row-count', Math.ceil(rows.length / 2));
   pair.append(...rows);
   elements.settingsList.append(pair);
+}
+
+function makeDeviceActionButton(label, action, valueProvider = () => 0) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'button button-quiet device-action-button';
+  button.textContent = label;
+  button.disabled = !serial || (protocolCapabilities & CAP_DEVICE_ACTION) === 0;
+  button.addEventListener('click', () =>
+    runDeviceAction(action, valueProvider(), button));
+  return button;
 }
 
 async function loadSettings() {
@@ -1637,6 +1696,48 @@ async function writeSetting(settingId, value, control) {
     elements.settingsStatus.textContent = message;
   } finally {
     control.disabled = false;
+  }
+}
+
+async function runDeviceAction(action, value, button) {
+  if (!serial || (protocolCapabilities & CAP_DEVICE_ACTION) === 0) return;
+  const resetWarnings = [
+    'Reset all settings to defaults? The device will reboot.',
+    'Clear minute logs? This cannot be undone.',
+    'Clear hourly logs? This cannot be undone.',
+    'Clear daily logs? This cannot be undone.',
+    'Clear alert logs? This cannot be undone.',
+    'Clear all logs? This cannot be undone.',
+    'Clear EEPROM logs? This cannot be undone and may also clear settings stored in the EEPROM log area.',
+    'Erase the entire EEPROM, including settings and logs? The device will restart.',
+    'Erase SPI data? This may remove assets needed by stock firmware.',
+    'Erase all EEPROM and SPI data? This cannot be undone; the device will restart.',
+  ];
+  if (action === 0 && !window.confirm(resetWarnings[value] ||
+      'Perform this reset? This cannot be undone.')) return;
+
+  button.disabled = true;
+  elements.settingsStatus.textContent = 'Sending action…';
+  try {
+    const result = await serial.request(OP_DEVICE_ACTION,
+      Uint8Array.of(action, value));
+    if (result.length !== 1 || result[0] !== 0) {
+      throw new ProtocolError('Device rejected this action.');
+    }
+    elements.settingsStatus.textContent = action === 0 ?
+      `Reset requested: ${remoteSettings.find((item) => item.id === 14).options[value]}` :
+      action === 1 ? 'Power off requested' : 'Reboot requested';
+    if (action === 0 && ![0, 7, 9].includes(value)) {
+      logInfo = null;
+      logRecords = [];
+      logViewCache.clear();
+      logPageTotal = 0;
+      await loadLogInfo();
+    }
+  } catch (error) {
+    elements.settingsStatus.textContent = error.message;
+  } finally {
+    button.disabled = false;
   }
 }
 

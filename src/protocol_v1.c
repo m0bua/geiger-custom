@@ -175,6 +175,9 @@ static void handle_frame(uint8_t *frame, uint8_t length)
     uint16_t payload_length;
     uint8_t response[PROTOCOL_V1_MAX_PAYLOAD];
     uint16_t response_length = 1u;
+    bool deferred_action = false;
+    uint8_t deferred_action_id = 0u;
+    uint8_t deferred_action_value = 0u;
 
     if (length < 10u || frame[0] != PROTOCOL_V1_VERSION ||
         frame[1] != FRAME_KIND_REQUEST) return;
@@ -196,7 +199,7 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         write_u16(&response[4], PROTOCOL_V1_MAX_PAYLOAD);
         write_u32(&response[6], (1u << 0u) | (1u << 1u) |
             (1u << 2u) | (1u << 3u) | (1u << 4u) | (1u << 5u) |
-            (1u << 6u));
+            (1u << 6u) | (1u << 7u));
         response_length = 10u;
     } else if (opcode == PROTOCOL_V1_OP_GET_STATUS && payload_length == 0u) {
         /* status, uptime, today's CNT, CPM, dose in nSv, ADC raw, flags */
@@ -241,6 +244,13 @@ static void handle_frame(uint8_t *frame, uint8_t length)
             !board_rtc_set_time(read_u32(&frame[8]))) {
             response[0] = PROTOCOL_STATUS_INVALID_VALUE;
         }
+    } else if (opcode == PROTOCOL_V1_OP_DEVICE_ACTION &&
+               payload_length == 2u) {
+        deferred_action_id = frame[8];
+        deferred_action_value = frame[9];
+        deferred_action = board_display_remote_action_valid(
+            deferred_action_id, deferred_action_value);
+        if (!deferred_action) response[0] = PROTOCOL_STATUS_INVALID_VALUE;
     } else if (opcode == PROTOCOL_V1_OP_GET_LOG_INFO &&
                payload_length == 0u) {
         uint16_t minutes;
@@ -393,6 +403,11 @@ log_page_done:
         response[0] = PROTOCOL_STATUS_UNKNOWN_OPCODE;
     }
     send_response(request_id, opcode, response, response_length, frame);
+    if (deferred_action) {
+        while ((USART_ISR & (1u << 6u)) == 0u) { }
+        board_display_remote_action_execute(deferred_action_id,
+            deferred_action_value);
+    }
 }
 
 void protocol_v1_transport_init(void)

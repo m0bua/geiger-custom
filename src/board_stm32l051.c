@@ -5681,6 +5681,30 @@ static bool lcd_cleanup_execute(void)
     return ok;
 }
 
+bool board_display_remote_action_valid(uint8_t action, uint8_t value)
+{
+    if (action == PROTOCOL_V1_ACTION_RESET) {
+        return value < LCD_CLEANUP_COUNT && !lcd_cleanup_menu_active;
+    }
+    if (action == PROTOCOL_V1_ACTION_POWER_OFF ||
+        action == PROTOCOL_V1_ACTION_REBOOT) {
+        return value == 0u;
+    }
+    return false;
+}
+
+void board_display_remote_action_execute(uint8_t action, uint8_t value)
+{
+    if (action == PROTOCOL_V1_ACTION_RESET) {
+        lcd_cleanup_selected = value;
+        (void)lcd_cleanup_execute();
+    } else if (action == PROTOCOL_V1_ACTION_POWER_OFF) {
+        board_power_off();
+    } else if (action == PROTOCOL_V1_ACTION_REBOOT) {
+        board_reboot();
+    }
+}
+
 uint32_t board_display_screen_timeout_ms(void)
 {
     static const uint8_t timeout_seconds[] = { 1u, 5u, 10u, 30u, 60u, 90u };

@@ -198,6 +198,14 @@ button { font: inherit; }
 .setting-visible input:disabled { cursor: not-allowed; }
 .setting-row select { min-width: 110px; max-width: 48%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; color: #e6edf0; background: #111a1f; font: 11px "DM Mono", Consolas, monospace; }
 .setting-row select:disabled { opacity: .55; }
+.setting-row.setting-danger > label { color: #ff6868; }
+.setting-row.setting-danger select,
+.setting-row.setting-danger .device-action-button { border-color: #713238; color: #ff7777; background: #251719; }
+.setting-row.setting-danger select:hover,
+.setting-row.setting-danger .device-action-button:hover { border-color: #dc555e; color: #ffe1e1; background: #562127; }
+.setting-row.setting-action-warning > .device-action-button { border-color: #685a25; color: #d6bd56; background: #242216; }
+.setting-row.setting-action-warning > .device-action-button:hover { border-color: #dfc447; color: #181608; background: #d6bd56; }
+.setting-row .device-action-button:disabled { opacity: .5; cursor: not-allowed; }
 .settings-note { margin: 13px 0 0; color: #77868c; font-size: 10px; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
 .panel-heading h2 { margin: 0; font-size: 15px; }
