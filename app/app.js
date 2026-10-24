@@ -518,6 +518,12 @@ const logViewCache = new Map();
 let clockSyncBusy = false;
 const rateHistory = [];
 const rateStatsHistory = [];
+const demoSettings = Array.from({ length: 29 }, () => 0);
+const demoHiddenSettings = new Set([13, 15, 16, 21, 27, 28]);
+Object.assign(demoSettings, {
+  0: 2, 5: 0, 6: 0, 7: 2, 9: 0, 10: 1, 11: 1, 12: 0,
+  15: 0, 21: 1, 23: 1, 28: 0,
+});
 
 const remoteSettings = [
   { id: 0, label: 'LED', options: ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED', 'CUSTOM'] },
@@ -604,17 +610,24 @@ function drawRateChart() {
   context.fillStyle = '#819096';
   context.font = '10px "DM Mono", Consolas, monospace';
   context.fillText(rateHistoryUnit, 4, 12);
-  if (rateHistory.length < 2) return;
+  const values = serial ? rateHistory : Array.from({ length: 24 }, (_, index) => index);
+  if (!serial) {
+    context.textAlign = 'right';
+    context.fillStyle = '#9b83da';
+    context.fillText('DEMO · ILLUSTRATIVE', w - 4, 12);
+    context.textAlign = 'left';
+  }
+  if (values.length < 2) return;
 
   const levelColors = {
     blue: '#287bff', green: '#00e58b', yellow: '#f0d35e', red: '#ff6666',
   };
   const levelColor = levelColors[rateLevel];
 
-  const peak = Math.max(...rateHistory, 0.01) * 1.12;
-  const points = rateHistory.map((value, index) => ({
-    x: (index / (rateHistory.length - 1)) * w,
-    y: h - (value / peak) * h,
+  const peak = serial ? Math.max(...values, 0.01) * 1.12 : values.length - 1;
+  const points = values.map((value, index) => ({
+    x: (index / (values.length - 1)) * w,
+    y: serial ? h - (value / peak) * h : h - (index / (values.length - 1)) * h,
   }));
   context.strokeStyle = 'rgba(160,186,194,.10)';
   context.lineWidth = 1;
@@ -1454,8 +1467,8 @@ function updateSpiDumpAvailability() {
   elements.dumpSpi.disabled = dumpBusy || !supported;
 }
 
-function settingsOptions(setting) {
-  if (deviceSettings?.length !== 28) {
+function settingsOptions(setting, currentSettings = deviceSettings) {
+  if (currentSettings?.length !== 28) {
     if (setting.id >= 24) return setting.options;
     if (setting.id === 0 || setting.id === 1) {
       return ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED'];
@@ -1466,18 +1479,18 @@ function settingsOptions(setting) {
         '30 µSv', '50 µSv', '100 µSv', '500 µSv', '1000 µSv'];
     }
   }
-  if ((setting.id === 10 || setting.id === 11) && deviceSettings?.[9] === 1) {
+  if ((setting.id === 10 || setting.id === 11) && currentSettings?.[9] === 1) {
     return ['CPM', 'CPS'];
   }
   if (setting.id === 12) {
     const stats = ['MIN_M', 'AVG_M', 'MAX_M', 'MIN_H', 'AVG_H', 'MAX_H'];
-    return deviceSettings?.[9] === 1 ? ['µSv', 'R', 'OFF', ...stats] :
+    return currentSettings?.[9] === 1 ? ['µSv', 'R', 'OFF', ...stats] :
       ['CPM', 'CPS', 'OFF', ...stats];
   }
   if (setting.id === 16) return setting.options;
   if (setting.id === 22) {
-    const unit = deviceSettings?.[9] ?? 0;
-    const period = deviceSettings?.[23] ?? 1;
+    const unit = currentSettings?.[9] ?? 0;
+    const period = currentSettings?.[23] ?? 1;
     const activeUnits = ['Sv', 'CNT', 'R'].filter((_, index) => index !== unit);
     const activePeriods = period === 0 ? ['TIME', 'DAY', 'TOTAL'] :
       ['UPTIME', 'DAY', 'TOTAL'].filter((_, index) => index !== period);
@@ -1513,44 +1526,45 @@ function settingLabel(setting) {
 
 function renderSettings() {
   elements.settingsList.replaceChildren();
+  const preview = !serial;
+  const currentSettings = deviceSettings || (preview ? demoSettings : null);
   const rows = [];
   for (const setting of remoteSettings) {
-    const available = deviceSettings !== null && setting.id < deviceSettings.length;
-    const options = settingsOptions(setting).map((option, index) =>
+    const hasSetting = currentSettings !== null && setting.id < currentSettings.length;
+    const actionSupported = ![14, 18, 19].includes(setting.id) ||
+      (protocolCapabilities & CAP_DEVICE_ACTION) !== 0;
+    const supported = preview || (hasSetting && actionSupported);
+    const optionSettings = supported ? currentSettings : demoSettings;
+    const options = settingsOptions(setting, optionSettings).map((option, index) =>
       typeof option === 'string' ?
         { label: option, value: index, disabled: false } : option);
     const row = document.createElement('div');
     row.className = 'setting-row';
+    row.dataset.supported = String(supported);
     const label = document.createElement('label');
     label.htmlFor = `setting-${setting.id}`;
     label.textContent = settingLabel(setting);
     const controls = document.createElement('div');
     controls.className = 'setting-controls';
+    if (!supported && !preview) {
+      const supportNote = document.createElement('span');
+      supportNote.className = 'setting-support-note';
+      supportNote.textContent = 'Unsupported';
+      controls.append(supportNote);
+    }
     const isReset = setting.id === 14;
     const isPowerOff = setting.id === 18;
     const isReboot = setting.id === 19;
     const standaloneActionButton = isPowerOff || isReboot ?
       makeDeviceActionButton(isPowerOff ? 'POWER OFF' : 'REBOOT',
         isPowerOff ? 1 : 2) : null;
+    if (standaloneActionButton && (!supported || preview)) {
+      standaloneActionButton.disabled = true;
+      standaloneActionButton.title = preview ? 'Connect a device to enable this action.' :
+        'This device firmware does not support this action.';
+    }
     if (setting.id === 13 || isReset) row.classList.add('setting-danger');
     if (isPowerOff || isReboot) row.classList.add('setting-action-warning');
-    if (!available) {
-      if (!standaloneActionButton && !isReset) {
-        const select = document.createElement('select');
-        select.id = `setting-${setting.id}`;
-        const option = document.createElement('option');
-        option.value = '';
-        option.textContent = 'Unavailable';
-        select.append(option);
-        select.disabled = true;
-        controls.append(select);
-      }
-      if (standaloneActionButton) row.append(standaloneActionButton);
-      else row.append(label);
-      row.append(controls);
-      rows.push(row);
-      continue;
-    }
 
     if (isReset) {
       const select = document.createElement('select');
@@ -1562,12 +1576,15 @@ function renderSettings() {
         select.append(option);
       });
       select.value = String(selectedResetAction);
-      select.disabled = (protocolCapabilities & CAP_DEVICE_ACTION) === 0;
+      select.disabled = preview || !supported ||
+        (protocolCapabilities & CAP_DEVICE_ACTION) === 0;
       select.addEventListener('change', () => {
         selectedResetAction = Number(select.value);
       });
       controls.append(select);
-      controls.append(makeDeviceActionButton('Reset', 0, () => selectedResetAction));
+      const resetButton = makeDeviceActionButton('Reset', 0, () => selectedResetAction);
+      if (preview || !supported) resetButton.disabled = true;
+      controls.append(resetButton);
     } else if (standaloneActionButton) {
       // Destructive device actions replace the text heading in this row.
     } else {
@@ -1581,10 +1598,11 @@ function renderSettings() {
         option.disabled = item.disabled;
         select.append(option);
       });
-      select.value = String(deviceSettings[setting.id]);
-      const inactiveSetting = setting.id === 11 && deviceSettings[9] === 1;
-      select.disabled = inactiveSetting;
-      if (!inactiveSetting) {
+      const selectedValue = optionSettings[setting.id] ?? 0;
+      select.value = String(selectedValue);
+      const inactiveSetting = setting.id === 11 && optionSettings[9] === 1;
+      select.disabled = preview || !supported || inactiveSetting;
+      if (!preview && supported && !inactiveSetting) {
         select.addEventListener('change', () => {
           const nextValue = Number(select.value);
           if (setting.id === 13 && nextValue === 1 &&
@@ -1603,9 +1621,9 @@ function renderSettings() {
     visibilityLabel.className = 'setting-visible';
     const visibility = document.createElement('input');
     visibility.type = 'checkbox';
-    visibility.checked = deviceHiddenSettings === null ||
-      (deviceHiddenSettings[setting.id] ?? false) === false;
-    visibility.disabled = deviceHiddenSettings === null;
+    visibility.checked = preview ? !demoHiddenSettings.has(setting.id) :
+      deviceHiddenSettings === null || (deviceHiddenSettings[setting.id] ?? false) === false;
+    visibility.disabled = preview || !supported || deviceHiddenSettings === null;
     visibility.title = 'Show this setting on the device';
     visibility.addEventListener('change', () =>
       writeSetting(0x80 + setting.id, visibility.checked ? 0 : 1, visibility));
@@ -1623,6 +1641,105 @@ function renderSettings() {
   pair.style.setProperty('--settings-row-count', Math.ceil(rows.length / 2));
   pair.append(...rows);
   elements.settingsList.append(pair);
+  if (preview) {
+    elements.settingsStatus.textContent = 'Demo preview · read-only';
+  } else if (deviceSettings) {
+    const unsupportedCount = remoteSettings.filter(({ id }) =>
+      id >= deviceSettings.length || ([14, 18, 19].includes(id) &&
+        (protocolCapabilities & CAP_DEVICE_ACTION) === 0)).length;
+    elements.settingsStatus.textContent = unsupportedCount ?
+      `Loaded from device · ${unsupportedCount} unsupported items disabled` : 'Loaded from device';
+  }
+}
+
+function renderOfflinePreview() {
+  if (serial) return;
+  elements.solarPercent.textContent = '0%';
+  elements.solarPercent.classList.remove('solar-warn', 'solar-good');
+  elements.batteryPercent.textContent = '0%';
+  elements.deviceTime.textContent = '--:--:--';
+  elements.deviceDate.textContent = '---- -- --';
+  elements.overviewUptime.textContent = '00:00:00';
+  elements.rateLabel.textContent = 'RATE';
+  elements.rateDose.textContent = '0';
+  elements.rateDose.classList.remove('level-blue', 'level-yellow', 'level-red');
+  elements.rateDose.classList.add('level-green');
+  rateLevel = 'green';
+  elements.rateUnit.textContent = 'µSv/h';
+  elements.rateFoot.textContent = '0 CPM';
+  elements.rateFoot.hidden = false;
+  elements.rateWarmup.hidden = true;
+  elements.doseLabel.textContent = 'DOSE TODAY';
+  elements.dose.textContent = '0';
+  elements.doseUnit.textContent = 'µSv';
+  elements.doseFoot.hidden = true;
+  elements.uptime.textContent = '0D 00:00';
+  elements.debugCount.textContent = '0';
+  elements.debugRtc.textContent = 'Not set';
+  elements.debugClock.textContent = 'Demo data';
+  elements.debugBattery.textContent = '0% · 0';
+  elements.debugSolar.textContent = '0% · 0';
+  elements.debugUsb.textContent = '0';
+  elements.debugMinutes.textContent = '0';
+  elements.debugHours.textContent = '0';
+  elements.debugDays.textContent = '0';
+  elements.debugAlerts.textContent = '0';
+  elements.memorySpi.textContent = '—';
+  elements.memoryJedec.textContent = '—';
+  elements.rateChart.setAttribute('aria-label', 'Illustrative demo graph, not device data');
+  elements.logsStatus.textContent = 'Demo preview · no device logs loaded';
+  const demoLogTypes = [
+    ['minutes', 'MINUTES'], ['hours', 'HOURS'], ['days', 'DAYS'], ['alerts', 'ALERTS'],
+  ];
+  elements.logTabs.replaceChildren();
+  elements.logContent.replaceChildren();
+  const renderDemoLog = (type) => {
+    elements.logTabs.querySelectorAll('[data-demo-log]').forEach((tab) =>
+      tab.classList.toggle('active', tab.dataset.demoLog === type));
+    elements.logContent.replaceChildren();
+    const header = document.createElement('div');
+    header.className = 'log-grid log-grid-header';
+    const alert = type === 'alerts';
+    const columns = alert ? ['DATE', 'DURATION', 'DOSE', 'AVERAGE', 'MAXIMUM'] :
+      ['DATE', 'DOSE', 'MINIMUM', 'AVERAGE', 'MAXIMUM'];
+    columns.forEach((text) => {
+      const cell = document.createElement('span');
+      cell.textContent = text;
+      header.append(cell);
+    });
+    const record = document.createElement('div');
+    record.className = 'log-grid log-record';
+    const values = alert ? ['—', '0 s', '0 µSv', '0 µSv/h', '0 µSv/h'] :
+      ['—', '0 µSv', '0 µSv/h', '0 µSv/h', '0 µSv/h'];
+    values.forEach((text) => {
+      const cell = document.createElement('span');
+      cell.textContent = text;
+      record.append(cell);
+    });
+    elements.logContent.append(header, record);
+    elements.logsStatus.textContent = `DEMO DATA · 1 illustrative ${type} record`;
+  };
+  demoLogTypes.forEach(([id, label]) => {
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = 'log-tab';
+    tab.dataset.demoLog = id;
+    tab.textContent = `${label} (1)`;
+    tab.addEventListener('click', () => renderDemoLog(id));
+    elements.logTabs.append(tab);
+  });
+  renderDemoLog('days');
+  elements.settingsDeviceTime.textContent = '--:--:--';
+  elements.settingsDeviceDate.textContent = '---- -- --';
+  elements.settingsClockDifference.textContent = '—';
+  elements.settingsSystemTime.textContent = new Date().toLocaleTimeString('en-GB');
+  elements.settingsSystemDate.textContent = new Date().toLocaleDateString('en-CA');
+  elements.settingsClockStatus.textContent = 'Demo preview · clock controls are unavailable.';
+  elements.settingsClockStatus.dataset.level = '';
+  elements.syncClock.disabled = true;
+  renderSettings();
+  drawRateChart();
+  showNotice('DEMO MODE · Illustrative values only. Connect a device to view live data.', 'demo');
 }
 
 function makeDeviceActionButton(label, action, valueProvider = () => 0) {
@@ -2714,6 +2831,7 @@ async function connectDevice(portOverride = null) {
       updateSpiDumpAvailability();
       elements.settingsStatus.textContent = 'Connect to read settings.';
       setConnection('disconnected', 'Connection lost');
+      renderOfflinePreview();
       showNotice(error.message, 'error');
     });
     await serial.connect(portOverride);
@@ -2748,6 +2866,7 @@ async function connectDevice(portOverride = null) {
     updateSpiDumpAvailability();
     elements.settingsStatus.textContent = 'Connect to read settings.';
     setConnection(portMayBeOpen ? 'disconnect-pending' : 'disconnected', portMayBeOpen ? 'Disconnect required' : 'Disconnected');
+    renderOfflinePreview();
     showNotice(error.message || 'Could not connect to the device.', 'error');
   }
 }
@@ -2771,7 +2890,8 @@ async function disconnectDevice() {
   elements.logContent.textContent = '';
   updateSpiDumpAvailability();
   elements.settingsStatus.textContent = 'Connect to read settings.';
-  showNotice(closed ? 'Port closed. Last readings remain visible.' : 'Port is still open. Press Disconnect to retry closing it.', closed ? '' : 'error');
+  renderOfflinePreview();
+  if (!closed) showNotice('Port is still open. Press Disconnect to retry closing it.', 'error');
 }
 
 async function disconnectPortAfterAction(port = selectedSerialPort) {
@@ -2972,6 +3092,7 @@ elements.connect.addEventListener('click', () => {
   else connectDevice();
 });
 
+renderOfflinePreview();
 if (!('serial' in navigator)) {
   elements.connect.disabled = true;
   showNotice('Web Serial is not supported. Use a supported browser on localhost or HTTPS.', 'error');

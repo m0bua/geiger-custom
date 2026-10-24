@@ -34,6 +34,7 @@ button { font: inherit; }
 .notice[data-kind="error"] { border-color: rgba(247,108,104,.3); color: #e5b4b2; }
 .notice[data-kind="success"] { border-color: rgba(0,229,139,.2); }
 .notice[data-kind="warning"] { border-color: rgba(242,201,76,.32); color: #f2c94c; }
+.notice[data-kind="demo"] { border-color: rgba(155,131,218,.35); color: #c3b5e8; background: rgba(46,35,69,.28); }
 .device-header { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 2px 0 6px; }
 .device-clock { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 0 12px; padding: 8px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .device-clock div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
@@ -196,6 +197,8 @@ button { font: inherit; }
 .setting-visible { display: inline-flex; align-items: center; gap: 5px; color: #819096; font-size: 10px; cursor: pointer; white-space: nowrap; }
 .setting-visible input { accent-color: var(--green); }
 .setting-visible input:disabled { cursor: not-allowed; }
+.setting-support-note { color: #7f8b90; font: 10px "DM Mono", Consolas, monospace; white-space: nowrap; }
+.setting-row[data-supported="false"] { opacity: .7; }
 .setting-row select { min-width: 110px; max-width: 48%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; color: #e6edf0; background: #111a1f; font: 11px "DM Mono", Consolas, monospace; }
 .setting-row select:disabled { opacity: .55; }
 .setting-row.setting-danger > label { color: #ff6868; }
