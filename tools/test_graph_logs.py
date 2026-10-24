@@ -5,11 +5,14 @@ python tools/test_graph_logs.py
 EEPROM/NOR and peripheral completion are simulated; firmware code is unchanged.
 """
 from pathlib import Path
+import os
 import random
 import struct
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+BUILD = Path(os.environ.get('GEIGER2_TEST_BUILD_DIR',
+                            str(ROOT / '.pio/build/geiger2')))
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / '.pio' / 'testdeps'))
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_MODE_MCLASS, UC_HOOK_CODE
@@ -20,15 +23,17 @@ from test_buttons import read_symbols
 
 
 class Firmware:
-    def __init__(self):
+    def __init__(self, stack_reserve=0):
+        self.stack_top = 0x20002000 - stack_reserve
         self.symbols = read_symbols(Path.home() / '.platformio/packages/'
                                    'toolchain-gccarmnoneeabi/bin', '.exe',
-                                   ROOT / '.pio/build/geiger2/firmware.elf')
-        self.image = (ROOT / '.pio/build/geiger2/firmware.bin').read_bytes()
+                                   BUILD / 'firmware.elf')
+        self.image = (BUILD / 'firmware.bin').read_bytes()
         self.eeprom = bytearray(b'\xff' * 2048)
         self.nor = bytearray(b'\xff' * 0x100000)
         self.spi_ready = True
         self.spi_online = True
+        self.spi_read_calls = 0
         self.program_failures = 0
         self.eeprom_log_area_writes = 0
         self.eeprom_checkpoint_writes = 0
@@ -73,6 +78,7 @@ class Firmware:
         elif name == 'spi_nor_is_ready':
             result = int(self.spi_ready)
         elif name == 'spi_nor_read':
+            self.spi_read_calls += 1
             cpu.mem_write(b, bytes(self.nor[a:a + c]))
         elif name == 'spi_nor_program_page':
             if self.program_failures:
@@ -90,7 +96,7 @@ class Firmware:
         for reg, value in zip((UC_ARM_REG_R0, UC_ARM_REG_R1,
                                UC_ARM_REG_R2, UC_ARM_REG_R3), args):
             self.cpu.reg_write(reg, value)
-        self.cpu.reg_write(UC_ARM_REG_SP, 0x20002000)
+        self.cpu.reg_write(UC_ARM_REG_SP, self.stack_top)
         self.cpu.reg_write(UC_ARM_REG_LR, 0x0800fff1)
         self.cpu.emu_start(self.symbols[name] | 1, 0x0800fff0, count=2000000)
         assert self.cpu.reg_read(UC_ARM_REG_PC) == 0x0800fff0, name + ' stalled'
@@ -105,16 +111,22 @@ class Firmware:
     def write32(self, address, value):
         self.cpu.mem_write(address, struct.pack('<I', value))
 
-    def logs(self, period, capacity=87):
-        # Fifth ABI argument (count pointer) is placed on the caller's stack.
-        self.cpu.mem_write(0x20002000 - 8, struct.pack('<II', 0x20010500, 0))
+    def logs(self, period, capacity=87, offset=None):
+        # Arguments beyond r0-r3 are placed on the caller's stack.
+        args = (period, 0x20010000, 0x20010200, capacity)
+        stack_args = (0x20010500, 0)
+        name = 'log_storage_graph_load'
+        if offset is not None:
+            name = 'log_storage_graph_page'
+            args = (period, offset, 0x20010000, 0x20010200)
+            stack_args = (capacity, 0x20010500)
+        self.cpu.mem_write(self.stack_top - 8, struct.pack('<II', *stack_args))
         for reg, value in zip((UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2,
-                               UC_ARM_REG_R3),
-                              (period, 0x20010000, 0x20010200, capacity)):
+                               UC_ARM_REG_R3), args):
             self.cpu.reg_write(reg, value)
-        self.cpu.reg_write(UC_ARM_REG_SP, 0x20002000 - 8)
+        self.cpu.reg_write(UC_ARM_REG_SP, self.stack_top - 8)
         self.cpu.reg_write(UC_ARM_REG_LR, 0x0800fff1)
-        self.cpu.emu_start(self.symbols['log_storage_graph_load'] | 1,
+        self.cpu.emu_start(self.symbols[name] | 1,
                            0x0800fff0, count=2000000)
         assert self.cpu.reg_read(UC_ARM_REG_PC) == 0x0800fff0
         assert self.cpu.reg_read(UC_ARM_REG_R0), 'Log read failed'
@@ -123,12 +135,12 @@ class Firmware:
                                   self.cpu.mem_read(0x20010000, count * 4)))
 
     def logs_available(self, period):
-        self.cpu.mem_write(0x20002000 - 8, struct.pack('<II', 0x20010500, 0))
+        self.cpu.mem_write(self.stack_top - 8, struct.pack('<II', 0x20010500, 0))
         for reg, value in zip((UC_ARM_REG_R0, UC_ARM_REG_R1,
                                UC_ARM_REG_R2, UC_ARM_REG_R3),
                               (period, 0x20010000, 0x20010200, 87)):
             self.cpu.reg_write(reg, value)
-        self.cpu.reg_write(UC_ARM_REG_SP, 0x20002000 - 8)
+        self.cpu.reg_write(UC_ARM_REG_SP, self.stack_top - 8)
         self.cpu.reg_write(UC_ARM_REG_LR, 0x0800fff1)
         self.cpu.emu_start(self.symbols['log_storage_graph_load'] | 1,
                            0x0800fff0, count=2000000)
@@ -139,7 +151,7 @@ class Firmware:
         for reg, value in zip((UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2),
                               (0x20010500, 0x20010502, 0x20010504)):
             self.cpu.reg_write(reg, value)
-        self.cpu.reg_write(UC_ARM_REG_SP, 0x20002000)
+        self.cpu.reg_write(UC_ARM_REG_SP, self.stack_top)
         self.cpu.reg_write(UC_ARM_REG_LR, 0x0800fff1)
         self.cpu.emu_start(self.symbols['log_storage_log_counts'] | 1,
                            0x0800fff0, count=2000000)
@@ -231,8 +243,8 @@ def test_logs():
         'EEPROM-only mode must retain daily logs only'
     assert fw.logs(2) == [0, 180], 'EEPROM daily graph lost the completed day'
     fw.display()
-    assert fw.get('lcd_graph_range_index') == 6, \
-        'EEPROM-only graph navigation must expose DAY, not MIN/HOUR'
+    assert fw.get('lcd_graph_range_index') == 3, \
+        'EEPROM-only graph navigation must retain the seconds graph'
     print('PASS: EEPROM-only stores daily history without minute/hour logs')
 
     fw = Firmware()
@@ -290,9 +302,9 @@ def test_graph():
     fw.set('settings_spi_enabled', 1)
     fw.display()
     fw.drain()
-    fw.call('board_display_right_short')  # 90s -> MIN
+    fw.call('board_display_right_short')  # Log views are temporarily hidden.
     fw.drain()
-    assert fw.get('lcd_graph_range_index') == 4
+    assert fw.get('lcd_graph_range_index') == 3
     rng = random.Random(7)
     actions = ('board_display_left_short', 'board_display_right_short',
                'board_display_graph_long_press')
@@ -306,7 +318,7 @@ def test_graph():
     fw.drain()
     print('PASS: 250 rapid graph actions and deferred back')
     # A missing DMA completion must not lock the graph forever.
-    fw.call('board_display_right_short')
+    fw.call('board_display_graph_long_press')
     for _ in range(200):
         fw.service(complete=False)
     fw.call('board_display_left_short')
@@ -314,12 +326,44 @@ def test_graph():
     print('PASS: graph recovers after a missing DMA completion')
 
 
+def test_seconds_only_navigation():
+    for spi in (0, 1):
+        for saved_mode in range(4, 8):
+            fw = Firmware(stack_reserve=600)
+            fw.call('log_storage_init', spi)
+            fw.set('settings_spi_enabled', spi)
+            fw.set('lcd_graph_range_index', saved_mode)
+            reads = fw.spi_read_calls
+            fw.display()
+            fw.drain()
+            assert fw.get('lcd_graph_range_index') == 3, \
+                'A remembered log view did not return to 90s'
+            for mode in range(4):
+                fw.call('board_display_right_short')
+                fw.call('board_display_left_short')
+                fw.drain()
+                fw.call('board_display_graph_long_press')
+                fw.drain()
+                assert fw.get('lcd_graph_range_index') == mode, \
+                    'Long right did not select the next seconds window'
+                assert not fw.get('lcd_graph_selected_active')
+            assert fw.spi_read_calls == reads, \
+                'Seconds-only navigation read SPI history'
+            fw.minute()
+            assert fw.log_counts() == ((1, 0, 0) if spi else (0, 0, 0)), \
+                'Hiding log views stopped the storage writer'
+    print('PASS: seconds-only UI, restored window, SPI on/off, logging continues')
+
+
 def test_live_graphs():
     fw = Firmware()
     fw.call('log_storage_init', 1)
     fw.call('log_storage_calendar_day', 9700, 1)
+    reads_before_live_hour = fw.spi_read_calls
     assert fw.logs(0) == [0] and fw.logs(1) == [0], \
         'Fresh MIN/HOUR graphs must expose the open RAM period'
+    assert fw.spi_read_calls == reads_before_live_hour, \
+        'A RAM-only current hour must not trigger an SPI history read'
     assert fw.log_counts() == (0, 0, 0), \
         'Empty history must stay zero despite existing live buffers'
     fw.minute(2)
@@ -340,21 +384,7 @@ def test_live_graphs():
     # There is one completed hour and seven seconds of the current minute.
     assert fw.logs(1)[0] == fw.get('hour_dose', 4) + fw.get('minute_dose', 4)
     assert len(fw.logs(1)) == 2, 'Live hour must precede one completed hour'
-    fw.set('settings_spi_enabled', 1)
-    fw.display()
-    fw.drain()
-    fw.call('board_display_right_short')
-    fw.drain()
-    assert fw.get('lcd_graph_log_visible_start') == 0, \
-        'Leftmost visible bar must be the current RAM period'
-    before = fw.get('lcd_graph_log_dose', 4)
-    fw.call('log_storage_second', 5)
-    fw.set('board_millis', fw.get('board_millis', 4) + 501, 4)
-    fw.call('board_display_history_updated')
-    fw.drain()
-    assert fw.get('lcd_graph_log_dose', 4) == before + 5, \
-        'Open log graph did not refresh the live RAM bar'
-    print('PASS: live-first MIN/HOUR/DAY bars, partial periods and display refresh')
+    print('PASS: live-first MIN/HOUR/DAY export and partial periods')
 
 
 def test_spi_retry():
@@ -377,8 +407,105 @@ def test_spi_retry():
     print('PASS: delayed SPI startup, read history after failed write, retry')
 
 
+def test_sparse_graph_history():
+    def crc8(data):
+        value = 0
+        for byte in data:
+            value ^= byte
+            for _ in range(8):
+                value = ((value << 1) ^ (7 if value & 128 else 0)) & 255
+        return value
+
+    fw = Firmware()
+    fw.call('log_storage_init', 1)
+    # Use the firmware writer for 20 MIN/HOUR records, without waiting hours.
+    for dose in range(1, 21):
+        fw.set('minute_dose', dose - 1, 4)
+        fw.set('minute_seconds', 59)
+        fw.set('hour_dose', dose * 100 - dose, 4)
+        fw.set('hour_minutes', 59)
+        fw.call('log_storage_sample_cpm', 60)
+        fw.call('log_storage_second', 1)
+    # Emulate a damaged intermediate sector. Newest MIN holds four records;
+    # newest HOUR holds only a day marker. Older history is still valid.
+    for base, records in ((0, 4), (176, 0)):
+        older = base * 4096
+        newer = (base + 2) * 4096
+        header = bytearray(fw.nor[older:older + 16])
+        header[5:9] = (2).to_bytes(4, 'little')
+        header[9] = crc8(header[:9])
+        fw.nor[newer:newer + 16] = header
+        if records:
+            fw.nor[newer + 16:newer + 16 + records * 11] = \
+                fw.nor[older + 16:older + 16 + records * 11]
+        else:
+            marker = bytearray(11)
+            marker[9] = 0xC0
+            marker[10] = crc8(marker[:10])
+            fw.nor[newer + 16:newer + 27] = marker
+    fw.reset()
+    fw.call('log_storage_init', 1)
+    original_nor = bytes(fw.nor)
+    minutes = fw.logs(0)
+    hours = fw.logs(1)
+    expected_minutes = [0, 4, 3, 2, 1] + list(range(20, 0, -1))
+    expected_hours = [0] + list(range(2000, 0, -100))
+    assert minutes == expected_minutes and hours == expected_hours, \
+        f'Sector gap hid history: MIN {len(minutes)}, HOUR {len(hours)}'
+    assert fw.logs(0, 3, offset=5) == expected_minutes[5:8]
+    assert fw.logs(1, 3, offset=1) == expected_hours[1:4]
+    assert bytes(fw.nor) == original_nor, 'Graph loading changed persistent data'
+    # A reset after writing only the new sector header must also retain history.
+    for base in (0, 176):
+        start = (base + 2) * 4096 + 16
+        fw.nor[start:start + 4080] = b'\xff' * 4080
+    fw.reset()
+    fw.call('log_storage_init', 1)
+    assert fw.logs(0) == [0] + list(range(20, 0, -1))
+    assert fw.logs(1) == expected_hours
+    assert fw.logs(0, 3, offset=21) == [], 'Pagination repeated exhausted history'
+    print('PASS: MIN/HOUR history and pagination survive gaps between sectors')
+
+
+def test_hour_bar_color():
+    fw = Firmware()
+    fw.set('lcd_graph_range_index', 5)
+    fw.set('lcd_graph_log_visible_count', 2)
+    fw.cpu.mem_write(fw.symbols['lcd_graph_column_y'], bytes([15]) * 160)
+    fw.set('lcd_text_glyph_index', 1)
+    fw.call('lcd_graph_prepare_glyph')
+    pixel = fw.symbols['lcd_text_glyph'] + 53 * 2
+    assert int.from_bytes(fw.cpu.mem_read(pixel, 2), 'little') == 0xBDF7, \
+        'Unselected current HOUR bar is not gray'
+    fw.set('lcd_graph_selected_active', 1)
+    fw.call('lcd_graph_prepare_glyph')
+    assert int.from_bytes(fw.cpu.mem_read(pixel, 2), 'little') == 0x07EE, \
+        'Selected current HOUR bar lost the cursor accent'
+    print('PASS: current HOUR bar is gray and uses the cursor accent on selection')
+
+
+def test_calendar_hour_boundary():
+    fw = Firmware()
+    fw.call('log_storage_init', 1)
+    start = 9700 * 86400 + 3590
+    fw.call('log_storage_restore_live', start, 1)
+    for second in range(1, 11):
+        # Follow the main loop: RTC/checkpoint first, pulse aggregation second.
+        fw.call('log_storage_checkpoint', start + second, 1, 0, 0)
+        fw.call('log_storage_sample_cpm', 60)
+        fw.call('log_storage_second', 1)
+    assert fw.logs(1) == [1, 9], \
+        'RTC hour boundary did not move the closed hour into SPI history'
+    assert fw.log_counts()[1] == 1, 'Closed RTC hour is missing from physical logs'
+    print('PASS: RTC hour boundary persists the old hour and starts a new RAM bar')
+
+
 if __name__ == '__main__':
     test_logs()
     test_live_graphs()
     test_spi_retry()
     test_graph()
+    test_seconds_only_navigation()
+    test_sparse_graph_history()
+    test_hour_bar_color()
+    test_calendar_hour_boundary()

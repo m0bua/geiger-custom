@@ -103,6 +103,8 @@ static bool alert_active;
 static uint32_t last_live_minute_save;
 static bool graph_hours_cover_current_day;
 static uint32_t graph_hour_current_seconds;
+static uint32_t hour_calendar_key;
+static bool hour_calendar_key_valid;
 static uint32_t last_live_day_save;
 
 static uint8_t crc8(const uint8_t *data, uint16_t length)
@@ -966,6 +968,8 @@ void log_storage_init(bool use_spi)
     day_seconds = 0u;
     day_calendar_key = EEPROM_DAY_UNKNOWN_KEY;
     day_calendar_key_valid = false;
+    hour_calendar_key = 0u;
+    hour_calendar_key_valid = false;
     last_live_minute_save = 0u;
     last_live_day_save = 0u;
     graph_hour_current_seconds = 0u;
@@ -1025,7 +1029,10 @@ void log_storage_set_spi_enabled(bool enabled)
         storage_spi = false;
         return;
     }
-    if (storage_spi) return;
+    /* Empty rings are valid. Reinitialize only after a storage/driver failure,
+     * rather than rescanning the chip while waiting for the first hour. */
+    if (storage_spi && spi_nor_is_ready()) return;
+    storage_spi = false;
     if (!spi_nor_is_ready() && !spi_nor_init()) return;
     configure_nor_rings();
     storage_spi = init_nor_rings();
@@ -1113,6 +1120,8 @@ void log_storage_second(uint32_t pulse_count)
     if (day_seconds < 0xFFFFFFu) ++day_seconds;
     if (minute_seconds < 60u) ++minute_seconds;
     if (minute_seconds >= 60u) close_minute(true);
+    graph_hour_current_seconds = (uint32_t)hour_minutes * 60u +
+        minute_seconds;
 }
 
 static bool append_live_snapshot(nor_ring_t *ring, uint8_t type,
@@ -1154,6 +1163,14 @@ void log_storage_checkpoint(uint32_t calendar_seconds, bool calendar_valid,
                             bool usb_powered, bool screen_woke)
 {
     if (!storage_ready || !calendar_valid) return;
+    const uint32_t current_hour = calendar_seconds / 3600u;
+    if (hour_calendar_key_valid && current_hour != hour_calendar_key) {
+        /* Store calendar-hour buckets, not rolling 60-minute windows from
+         * boot. Close the previous hour at the RTC boundary. */
+        close_time_segment();
+    }
+    hour_calendar_key = current_hour;
+    hour_calendar_key_valid = true;
     graph_hour_current_seconds = calendar_seconds % 3600u;
     const uint32_t spi_elapsed = calendar_seconds - last_live_minute_save;
     const uint32_t day_elapsed = calendar_seconds - last_live_day_save;
@@ -1178,6 +1195,8 @@ void log_storage_restore_live(uint32_t calendar_seconds, bool calendar_valid)
 
     if (!storage_ready || !calendar_valid) return;
     graph_hour_current_seconds = calendar_seconds % 3600u;
+    hour_calendar_key = calendar_seconds / 3600u;
+    hour_calendar_key_valid = true;
     last_live_minute_save = calendar_seconds;
     last_live_day_save = calendar_seconds;
     if (!storage_spi) return;
@@ -1534,9 +1553,18 @@ bool log_storage_graph_page(log_graph_period_t period, uint16_t offset,
     if ((period == LOG_GRAPH_MINUTES || period == LOG_GRAPH_HOURS) &&
         !storage_spi_requested) return false;
 
+    /* A graph request is a useful recovery point after a transient NOR
+     * failure. Retry only when due: ring initialization scans the chip and
+     * must not run on every screen refresh or cursor movement. */
+    if ((period == LOG_GRAPH_MINUTES || period == LOG_GRAPH_HOURS) &&
+        (!storage_spi || !spi_nor_is_ready()) &&
+        (int32_t)(board_millis - storage_spi_retry_at) >= 0) {
+        log_storage_set_spi_enabled(true);
+    }
+
     /* Index zero always belongs to the open RAM period, even before the
      * first pulse or the first persistent record. History follows newest first.
-     * Only completed records are read below; LIVE snapshots are never history. */
+     * Closed periods are read below; LIVE snapshots are never history. */
     if (period <= LOG_GRAPH_DAYS) {
         uint32_t minimum = minute_min_cpm;
         uint32_t maximum = minute_max_cpm;
@@ -1561,99 +1589,61 @@ bool log_storage_graph_page(log_graph_period_t period, uint16_t offset,
         ++seen;
     }
 
-    if (period == LOG_GRAPH_MINUTES) {
-        uint8_t header[NOR_SECTOR_HEADER_SIZE];
-        const uint32_t sectors_to_scan = minute_ring.records_per_sector == 0u ?
-            0u : (minute_ring.total_records +
-            minute_ring.records_per_sector - 1u) /
-            minute_ring.records_per_sector;
-        if (!spi_nor_is_ready() || !minute_ring.initialized) {
-            *count = used;
-            return true;
-        }
-        for (uint16_t back = 0u;
-             back < minute_ring.sector_count && back < sectors_to_scan &&
-                 used < capacity; ++back) {
-            const uint16_t sector = (uint16_t)((minute_ring.active_sector +
-                minute_ring.sector_count - back) % minute_ring.sector_count);
-            const uint32_t base = (uint32_t)(minute_ring.base_sector + sector) *
-                NOR_SECTOR_SIZE;
-            uint32_t sector_sequence;
-            const uint16_t top_slot = back == 0u ? minute_ring.next_slot :
-                minute_ring.records_per_sector;
-            if (!spi_nor_read(base, header, sizeof(header)) ||
-                !parse_sector_header(header, NOR_RING_MINUTE,
-                    &sector_sequence)) continue;
-            (void)sector_sequence;
-            for (uint16_t slot = top_slot;
-                 slot > 0u && used < capacity; --slot) {
-                uint16_t sequence;
-                const uint32_t address = base + NOR_SECTOR_HEADER_SIZE +
-                    (uint32_t)(slot - 1u) * NOR_MINUTE_RECORD_SIZE;
-                if (!spi_nor_read(address, record, NOR_MINUTE_RECORD_SIZE)) {
-                    return false;
-                }
-                if (!decode_minute(record, &sequence) ||
-                    (record[8] & 0xC0u) != 0x40u) continue;
-                (void)sequence;
-                if (seen++ < offset) continue;
-                dose[used] = get_bits(record, 16u, 18u);
-                graph_pack_min_max(&packed_min_max_cpm[(uint16_t)used * 5u],
-                    get_bits(record, 34u, 18u),
-                    get_bits(record, 52u, 18u));
-                ++used;
-            }
-        }
-    } else if (period == LOG_GRAPH_HOURS) {
-        const uint32_t sectors_to_scan = hour_ring.records_per_sector == 0u ?
-            0u : (hour_ring.total_records + hour_ring.records_per_sector - 1u) /
-            hour_ring.records_per_sector;
+    if (period == LOG_GRAPH_MINUTES || period == LOG_GRAPH_HOURS) {
+        const bool minutes = period == LOG_GRAPH_MINUTES;
+        const nor_ring_t *ring = minutes ? &minute_ring : &hour_ring;
         bool day_marker_seen = false;
-        if (!spi_nor_is_ready() || !hour_ring.initialized) {
+        if (!spi_nor_is_ready() || !ring->initialized) {
             *count = used;
             return true;
         }
         uint8_t header[NOR_SECTOR_HEADER_SIZE];
-        for (uint16_t back = 0u; back < hour_ring.sector_count &&
-             back < sectors_to_scan && used < capacity; ++back) {
-            const uint16_t sector = (uint16_t)((hour_ring.active_sector +
-                hour_ring.sector_count - back) % hour_ring.sector_count);
-            const uint32_t base = (uint32_t)(hour_ring.base_sector + sector) *
+        /* The record-count estimate assumes contiguous, full older sectors.
+         * A torn/missing sector must not hide valid older history. Walk the
+         * bounded physical ring and validate headers instead. */
+        for (uint16_t back = 0u; back < ring->sector_count &&
+             used < capacity; ++back) {
+            const uint16_t sector = (uint16_t)((ring->active_sector +
+                ring->sector_count - back) % ring->sector_count);
+            const uint32_t base = (uint32_t)(ring->base_sector + sector) *
                 NOR_SECTOR_SIZE;
-            const uint16_t top_slot = back == 0u ? hour_ring.next_slot :
-                hour_ring.records_per_sector;
+            const uint16_t top_slot = back == 0u ? ring->next_slot :
+                ring->records_per_sector;
             uint32_t sector_sequence;
             if (!spi_nor_read(base, header, sizeof(header)) ||
-                !parse_sector_header(header, NOR_RING_HOUR,
+                !parse_sector_header(header, ring->type,
                     &sector_sequence)) continue;
-            (void)sector_sequence;
+            if ((uint32_t)(ring->sector_sequence - sector_sequence) >=
+                ring->sector_count) continue;
             for (uint16_t slot = top_slot;
                  slot > 0u && used < capacity; --slot) {
                 uint16_t sequence;
                 const uint32_t address = base + NOR_SECTOR_HEADER_SIZE +
-                    (uint32_t)(slot - 1u) * NOR_HOUR_RECORD_SIZE;
-                if (!spi_nor_read(address, record, NOR_HOUR_RECORD_SIZE)) {
+                    (uint32_t)(slot - 1u) * ring->record_size;
+                if (!spi_nor_read(address, record, ring->record_size)) {
                     return false;
                 }
-                if (!decode_hour(record, &sequence)) continue;
-                if ((record[9] & 0xF0u) == 0xC0u) {
-                    if (!day_marker_seen) {
-                        graph_hours_cover_current_day = true;
+                if (minutes) {
+                    if (!decode_minute(record, &sequence) ||
+                        (record[8] & 0xC0u) != 0x40u) continue;
+                } else {
+                    if (!decode_hour(record, &sequence)) continue;
+                    if ((record[9] & 0xF0u) == 0xC0u) {
+                        if (!day_marker_seen) {
+                            graph_hours_cover_current_day = true;
+                        }
+                        day_marker_seen = true;
+                        continue;
                     }
-                    day_marker_seen = true;
-                    continue;
+                    /* Include partial hours closed by reboot/time change. */
+                    if (day_marker_seen) graph_hours_cover_current_day = false;
                 }
-                /* A0 holds a partial hour closed by reboot/time change. It
-                 * still contributes to today's dose and graph statistics. */
-                if ((record[9] & 0xF0u) != 0xA0u &&
-                    (record[9] & 0xF0u) != 0xB0u) continue;
-                if (day_marker_seen) graph_hours_cover_current_day = false;
                 if (seen++ < offset) continue;
-                dose[used] = get_bits(record, 16u, 24u);
+                dose[used] = get_bits(record, 16u, minutes ? 18u : 24u);
                 graph_pack_min_max(
                     &packed_min_max_cpm[(uint16_t)used * 5u],
-                    get_bits(record, 40u, 18u),
-                    get_bits(record, 58u, 18u));
+                    get_bits(record, minutes ? 34u : 40u, 18u),
+                    get_bits(record, minutes ? 52u : 58u, 18u));
                 ++used;
             }
         }

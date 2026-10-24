@@ -146,7 +146,10 @@ static uint8_t lcd_indication_mode = 1u;
 #define LCD_GRAPH_PAGE 5u
 #define LCD_DEBUG_SUBPAGE_COUNT 4u
 #define LCD_GRAPH_RANGE_COUNT 8u
+/* Keep recording/exporting logs while their on-device views are suspended. */
+#define LCD_GRAPH_LOG_VIEWS_ENABLED 0u
 #define LCD_GRAPH_LOG_CAPACITY 100u
+#define LCD_GRAPH_LOG_REFRESH_MS 5000u
 #define LCD_GRAPH_ALERT_CAPACITY 40u
 #define LCD_GRAPH_ALERT_ROWS 11u
 #define LCD_GRAPH_LOG_BAR_WIDTH 4u
@@ -2672,13 +2675,12 @@ static void lcd_graph_build_log_series(void)
             const uint32_t dose = lcd_graph_log_dose[entry];
             uint8_t bar_y = (uint8_t)(plot_bottom -
                 ((uint64_t)dose * (plot_height - 1u)) / maximum_dose);
-            /* Keep the open hour visible after a day boundary even before
-             * it has accumulated dose; its zero-height bar otherwise blends
-             * into the bottom edge and looks like yesterday is still latest. */
-            if (lcd_graph_range_index == 5u && entry == 0u && dose == 0u &&
-                bar_y == plot_bottom) {
-                bar_y = (uint8_t)(plot_bottom - 2u);
+            if (lcd_graph_range_index == 5u && entry == 0u &&
+                bar_y > plot_bottom - 3u) {
+                bar_y = (uint8_t)(plot_bottom - 3u);
             }
+            /* Keep the open RAM hour visibly distinct even before it has
+             * accumulated dose; a one-pixel mark blends into the bottom edge. */
             for (uint8_t pixel = 0u; pixel < LCD_GRAPH_LOG_BAR_WIDTH;
                  ++pixel) {
                 lcd_graph_column_y[x + pixel] = bar_y;
@@ -2791,6 +2793,7 @@ static void lcd_graph_build_series(uint8_t requested)
 
 static void lcd_graph_select_period(bool forward)
 {
+    if (LCD_GRAPH_LOG_VIEWS_ENABLED == 0u) return;
     uint8_t candidate = lcd_graph_range_index;
     const bool spi_history = settings_spi_enabled;
     /* The four short graph windows are one range-selection item. The long
@@ -2813,7 +2816,8 @@ static void lcd_graph_select_period(bool forward)
     lcd_graph_selected_active = false;
     lcd_graph_input_locked = true;
     lcd_graph_refresh_deadline = board_millis +
-        (candidate == 7u ? 60000u : 500u);
+        (candidate == 7u ? 60000u :
+         (candidate >= 4u ? LCD_GRAPH_LOG_REFRESH_MS : 500u));
     if (candidate == 7u) {
         lcd_graph_selected_index = 0u;
         (void)lcd_graph_load_alert_mode();
@@ -3341,14 +3345,9 @@ static bool lcd_graph_prepare_glyph(void)
                         }
                     }
                     if (lcd_graph_range_index >= 4u) {
-                        const bool current_hour_bar =
-                            lcd_graph_range_index == 5u &&
-                            relative_x / LCD_GRAPH_LOG_BAR_STEP == 0u;
                         color = selected_log_bar && graph_fill ?
                             LCD_SETTINGS_SELECTED_COLOR :
-                            (graph_fill ? (current_hour_bar ?
-                                0xFFFFu : 0xBDF7u) :
-                                LCD_TEXT_BACKGROUND);
+                            (graph_fill ? 0xBDF7u : LCD_TEXT_BACKGROUND);
                     } else if (graph_y == lcd_graph_red_threshold_y) {
                         color = LCD_COUNTER_RED;
                     } else if (graph_y == lcd_graph_yellow_threshold_y) {
@@ -4327,15 +4326,21 @@ bool board_display_graph_enter(void)
 {
     if (lcd_screen_page != 1u || lcd_settings_list_active) return false;
 
+    if (LCD_GRAPH_LOG_VIEWS_ENABLED == 0u && lcd_graph_range_index >= 4u) {
+        lcd_graph_range_index = 3u;
+    }
+
     lcd_main_return_page = 1u;
     lcd_screen_page = LCD_GRAPH_PAGE;
     lcd_graph_refresh_deadline = board_millis +
-        (lcd_graph_range_index == 7u ? 60000u : 500u);
+        (lcd_graph_range_index == 7u ? 60000u :
+         (lcd_graph_range_index >= 4u ? LCD_GRAPH_LOG_REFRESH_MS : 500u));
     lcd_graph_selected_active = false;
     /* SPI logging is the prerequisite for minute bars. Defer reading the
      * ring until the user actually chooses MIN, keeping graph entry instant. */
     const bool spi_history = settings_spi_enabled;
-    if (!spi_history && lcd_graph_range_index != 6u) {
+    if (LCD_GRAPH_LOG_VIEWS_ENABLED != 0u && !spi_history &&
+        lcd_graph_range_index != 6u) {
         lcd_graph_range_index = 6u;
     }
     lcd_graph_input_locked = true;
@@ -6227,7 +6232,12 @@ void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm,
 
 void board_display_history_updated(void)
 {
+    /* Freeze the loaded snapshot while browsing columns. Besides keeping the
+     * selected bar/date stable, this avoids rescanning SPI history on every
+     * refresh tick during cursor movement. The overdue refresh runs once the
+     * cursor is dismissed. */
     if (lcd_screen_page == LCD_GRAPH_PAGE &&
+        !lcd_graph_selected_active &&
         lcd_ready &&
         !lcd_text_active && !lcd_background_pending && !lcd_fill_active &&
         !lcd_dma_active && deadline_reached(lcd_graph_refresh_deadline)) {
@@ -6239,7 +6249,8 @@ void board_display_history_updated(void)
         lcd_graph_input_locked = true;
         lcd_cpm_redraw_pending = true;
         lcd_graph_refresh_deadline = board_millis +
-            (lcd_graph_range_index == 7u ? 60000u : 500u);
+            (lcd_graph_range_index == 7u ? 60000u :
+             (lcd_graph_range_index >= 4u ? LCD_GRAPH_LOG_REFRESH_MS : 500u));
     }
 }
 
