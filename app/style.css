@@ -191,7 +191,11 @@ button { font: inherit; }
 .settings-list { display: flex; flex-direction: column; gap: 18px; }
 .settings-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(var(--settings-row-count), auto); grid-auto-flow: column; column-gap: 24px; }
 .setting-row { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid rgba(160,186,194,.08); }
-.setting-row label { color: #aebbc0; font-size: 12px; }
+.setting-row > label { color: #aebbc0; font-size: 12px; }
+.setting-controls { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.setting-visible { display: inline-flex; align-items: center; gap: 5px; color: #819096; font-size: 10px; cursor: pointer; white-space: nowrap; }
+.setting-visible input { accent-color: var(--green); }
+.setting-visible input:disabled { cursor: not-allowed; }
 .setting-row select { min-width: 110px; max-width: 48%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; color: #e6edf0; background: #111a1f; font: 11px "DM Mono", Consolas, monospace; }
 .setting-row select:disabled { opacity: .55; }
 .settings-note { margin: 13px 0 0; color: #77868c; font-size: 10px; }

@@ -312,6 +312,7 @@ static bool lcd_settings_list_active;
 static uint8_t lcd_settings_selected;
 static uint8_t lcd_time_selected;
 static uint8_t lcd_settings_menu_selected;
+static uint32_t lcd_settings_hidden_mask;
 static bool settings_spi_enabled;
 static bool lcd_cleanup_menu_active;
 static bool lcd_cleanup_confirm_pending;
@@ -1946,6 +1947,42 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
 #define LCD_SETTINGS_REBOOT_ITEM SETTING_REBOOT
 #define LCD_CLEANUP_COUNT 10u
 
+static const uint8_t lcd_settings_item_order[LCD_SETTINGS_COUNT] = {
+    0u, 1u, 2u, 3u, 4u, 16u, 24u, 25u, 26u, 27u, 17u,
+    5u, 6u, 7u, 20u, 8u, 9u, 10u, 11u, 12u, 22u, 23u,
+    21u, 15u, 13u, 14u, 18u, 19u
+};
+
+static bool lcd_settings_item_is_visible(uint8_t item)
+{
+    return item < LCD_SETTINGS_COUNT &&
+        (lcd_settings_hidden_mask & (1UL << item)) == 0u &&
+        !(lcd_settings_value_index[SETTING_UNIT] == 1u && item == 11u);
+}
+
+static uint8_t lcd_settings_count_visible_for_mask(uint32_t hidden_mask)
+{
+    uint8_t count = 0u;
+    for (uint8_t i = 0u; i < LCD_SETTINGS_COUNT; ++i) {
+        const uint8_t item = lcd_settings_item_order[i];
+        if ((hidden_mask & (1UL << item)) == 0u &&
+            !(lcd_settings_value_index[SETTING_UNIT] == 1u && item == 11u)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static bool lcd_settings_has_visible_non_dose_prefix(uint32_t hidden_mask)
+{
+    for (uint8_t i = 0u; i < LCD_SETTINGS_COUNT; ++i) {
+        const uint8_t item = lcd_settings_item_order[i];
+        if (item != SETTING_DOSE_PREFIX &&
+            (hidden_mask & (1UL << item)) == 0u) return true;
+    }
+    return false;
+}
+
 static const char *const lcd_cleanup_labels[LCD_CLEANUP_COUNT] = {
     "SETTINGS", "MIN-LOG", "HOUR-LOG", "DAY-LOG", "ERROR-LOG",
     "LOGS", "EEPROM-LOGS", "EEPROM", "SPI", "ALL"
@@ -2090,24 +2127,18 @@ static const char *lcd_settings_value_text(uint8_t item)
 static uint8_t lcd_settings_visible_count(void)
 {
     if (lcd_cleanup_menu_active) return LCD_CLEANUP_COUNT;
-    return (uint8_t)(LCD_SETTINGS_COUNT -
-        (lcd_settings_value_index[SETTING_UNIT] == 1u ? 1u : 0u));
+    return lcd_settings_count_visible_for_mask(lcd_settings_hidden_mask);
 }
 
 static uint8_t lcd_settings_visible_to_item(uint8_t visible_index)
 {
-    static const uint8_t item_order[LCD_SETTINGS_COUNT] = {
-        0u, 1u, 2u, 3u, 4u, 16u, 24u, 25u, 26u, 27u, 17u,
-        5u, 6u, 7u, 20u, 8u, 9u, 10u, 11u, 12u, 22u, 23u,
-        21u, 15u, 13u, 14u, 18u, 19u
-    };
     uint8_t visible = 0u;
 
     if (lcd_cleanup_menu_active) return visible_index;
 
     for (uint8_t i = 0u; i < LCD_SETTINGS_COUNT; ++i) {
-        const uint8_t item = item_order[i];
-        if (lcd_settings_value_index[SETTING_UNIT] == 1u && item == 11u) continue;
+        const uint8_t item = lcd_settings_item_order[i];
+        if (!lcd_settings_item_is_visible(item)) continue;
         if (visible == visible_index) return item;
         ++visible;
     }
@@ -4762,6 +4793,8 @@ static bool board_eeprom_clear_all(void)
 #define SETTINGS_DOSE_SCREEN_EEPROM_BASE 147u
 #define SETTINGS_DOSE_LIGHT_EEPROM_BASE 150u
 #define SETTINGS_DOSE_SOUND_EEPROM_BASE 153u
+#define SETTINGS_VISIBILITY_EEPROM_BASE 72u
+#define SETTINGS_VISIBILITY_MAGIC 0xC6u
 
 static bool settings_value_read(uint16_t offset, uint8_t magic, uint8_t salt,
                                  uint8_t count, uint8_t *value)
@@ -4783,6 +4816,39 @@ static bool settings_value_write(uint16_t offset, uint8_t magic, uint8_t salt,
         board_eeprom_write(offset + 1u, value) &&
         board_eeprom_write(offset + 2u, (uint8_t)(salt ^ value)) &&
         board_eeprom_write(offset, magic);
+}
+
+static void settings_visibility_load(void)
+{
+    uint8_t magic;
+    uint8_t bytes[4];
+    if (!board_eeprom_read(SETTINGS_VISIBILITY_EEPROM_BASE, &magic) ||
+        magic != SETTINGS_VISIBILITY_MAGIC) return;
+    for (uint8_t i = 0u; i < 4u; ++i) {
+        if (!board_eeprom_read((uint16_t)(SETTINGS_VISIBILITY_EEPROM_BASE + 1u + i),
+                &bytes[i])) return;
+    }
+    lcd_settings_hidden_mask = (uint32_t)bytes[0] |
+        ((uint32_t)bytes[1] << 8u) | ((uint32_t)bytes[2] << 16u) |
+        ((uint32_t)bytes[3] << 24u);
+    lcd_settings_hidden_mask &= (1UL << SETTING_COUNT) - 1UL;
+    if (!lcd_settings_has_visible_non_dose_prefix(lcd_settings_hidden_mask)) {
+        lcd_settings_hidden_mask = 0u;
+    }
+}
+
+static bool settings_visibility_save(uint32_t mask)
+{
+    if (!settings_eeprom_write_byte(SETTINGS_VISIBILITY_EEPROM_BASE, 0u)) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < 4u; ++i) {
+        if (!settings_eeprom_write_byte(
+                (uint16_t)(SETTINGS_VISIBILITY_EEPROM_BASE + 1u + i),
+                (uint8_t)(mask >> (8u * i)))) return false;
+    }
+    return settings_eeprom_write_byte(SETTINGS_VISIBILITY_EEPROM_BASE,
+        SETTINGS_VISIBILITY_MAGIC);
 }
 
 static void settings_rate_custom_load(void)
@@ -5468,17 +5534,51 @@ bool board_display_settings_remote_read(uint8_t *values, uint8_t capacity)
     return true;
 }
 
+uint32_t board_display_settings_hidden_mask(void)
+{
+    return lcd_settings_hidden_mask;
+}
+
 bool board_display_setting_remote_write(uint8_t setting_id, uint8_t value)
 {
     const uint8_t previous_selected = lcd_settings_selected;
     const uint8_t previous_edit_value = lcd_settings_edit_value;
     const bool previous_editing = lcd_settings_editing;
 
+    if (setting_id >= 0x80u && setting_id < (uint8_t)(0x80u + SETTING_COUNT)) {
+        const uint8_t item = (uint8_t)(setting_id - 0x80u);
+        const uint32_t bit = 1UL << item;
+        const uint32_t candidate = value != 0u ?
+            (lcd_settings_hidden_mask | bit) :
+            (lcd_settings_hidden_mask & ~bit);
+        if (lcd_cleanup_menu_active || value > 1u ||
+            lcd_settings_count_visible_for_mask(candidate) == 0u) return false;
+        if (candidate == lcd_settings_hidden_mask) return true;
+        if (!settings_visibility_save(candidate)) return false;
+        lcd_settings_hidden_mask = candidate;
+        if (lcd_screen_page == 3u) {
+            if ((candidate & (1UL << lcd_settings_selected)) != 0u) {
+                lcd_settings_selected = lcd_settings_visible_to_item(0u);
+                lcd_settings_menu_selected = lcd_settings_selected;
+                lcd_settings_editing = false;
+            }
+            if (board_display_settings_list_active()) {
+                board_display_settings_redraw();
+            }
+        }
+        return true;
+    }
+
     /* RESET, POWER OFF and REBOOT are actions, not remote preferences. */
     if (lcd_settings_list_active || setting_id >= SETTING_COUNT ||
         setting_id == SETTING_RESET ||
         setting_id == SETTING_POWER_OFF || setting_id == SETTING_REBOOT ||
         value >= lcd_settings_value_count(setting_id)) {
+        return false;
+    }
+
+    if (setting_id == SETTING_UNIT && value == 1u &&
+        !lcd_settings_has_visible_non_dose_prefix(lcd_settings_hidden_mask)) {
         return false;
     }
 
@@ -5503,7 +5603,8 @@ static bool settings_reset_all(void)
         96u, 100u, 104u, 108u, 112u, 116u, 120u, 124u, 128u, 132u,
         SETTINGS_SPI_EEPROM_BASE, SETTINGS_LONG_PRESS_EEPROM_BASE,
         SETTINGS_RATE_CUSTOM_EEPROM_BASE, SETTINGS_DOSE_SCREEN_EEPROM_BASE,
-        SETTINGS_DOSE_LIGHT_EEPROM_BASE, SETTINGS_DOSE_SOUND_EEPROM_BASE
+        SETTINGS_DOSE_LIGHT_EEPROM_BASE, SETTINGS_DOSE_SOUND_EEPROM_BASE,
+        SETTINGS_VISIBILITY_EEPROM_BASE
     };
 
     for (uint8_t i = 0u;
@@ -6828,6 +6929,7 @@ void board_display_init(void)
     settings_dose_alarm_load();
     settings_rate_custom_load();
     settings_dose_actions_load();
+    settings_visibility_load();
     if (settings_spi_enabled) {
         (void)spi_nor_init();
     }

@@ -496,6 +496,7 @@ let pollTimer = 0;
 let polling = false;
 let protocolCapabilities = 0;
 let deviceSettings = null;
+let deviceHiddenSettings = null;
 let logInfo = null;
 let selectedLogType = 'days';
 let logRecords = [];
@@ -541,6 +542,9 @@ const remoteSettings = [
   { id: 21, label: 'LONG PRESS', options: ['300 ms', '500 ms', '700 ms', '900 ms', '1100 ms', '1300 ms'] },
   { id: 15, label: 'HV', options: ['ON', 'OFF'] },
   { id: 13, label: 'USE-SPI', options: ['OFF', 'ON'] },
+  { id: 14, label: 'RESET', options: ['Device action'] },
+  { id: 18, label: 'POWER OFF', options: ['Device action'] },
+  { id: 19, label: 'REBOOT', options: ['Device action'] },
 ];
 
 function percentFromAdc(raw, empty, full) {
@@ -1519,13 +1523,16 @@ function renderSettings() {
     const select = document.createElement('select');
     select.id = `setting-${setting.id}`;
     select.dataset.settingId = String(setting.id);
+    const controls = document.createElement('div');
+    controls.className = 'setting-controls';
     if (!available) {
       const option = document.createElement('option');
       option.value = '';
       option.textContent = 'Unavailable';
       select.append(option);
       select.disabled = true;
-      row.append(label, select);
+      controls.append(select);
+      row.append(label, controls);
       rows.push(row);
       continue;
     }
@@ -1538,12 +1545,28 @@ function renderSettings() {
     });
     select.value = String(deviceSettings[setting.id]);
     const inactiveSetting = setting.id === 11 && deviceSettings[9] === 1;
-    select.disabled = inactiveSetting;
-    if (!inactiveSetting) {
+    const deviceAction = [14, 18, 19].includes(setting.id);
+    select.disabled = inactiveSetting || deviceAction;
+    if (!inactiveSetting && !deviceAction) {
       select.addEventListener('change', () =>
         writeSetting(setting.id, Number(select.value), select));
     }
-    row.append(label, select);
+    controls.append(select);
+    const visibilityLabel = document.createElement('label');
+    visibilityLabel.className = 'setting-visible';
+    const visibility = document.createElement('input');
+    visibility.type = 'checkbox';
+    visibility.checked = deviceHiddenSettings === null ||
+      (deviceHiddenSettings[setting.id] ?? false) === false;
+    visibility.disabled = deviceHiddenSettings === null;
+    visibility.title = 'Show this setting on the device';
+    visibility.addEventListener('change', () =>
+      writeSetting(0x80 + setting.id, visibility.checked ? 0 : 1, visibility));
+    const visibilityText = document.createElement('span');
+    visibilityText.textContent = 'Show';
+    visibilityLabel.append(visibility, visibilityText);
+    controls.append(visibilityLabel);
+    row.append(label, controls);
     rows.push(row);
   }
   const pair = document.createElement('div');
@@ -1563,13 +1586,23 @@ async function loadSettings() {
   }
   elements.settingsStatus.textContent = 'Reading…';
   try {
-    const payload = await serial.request(OP_GET_SETTINGS);
+    const payload = await serial.request(OP_GET_SETTINGS, Uint8Array.of(1));
     if (payload.length < 2 || payload[0] !== 0 ||
         ![21, 22, 24, 28].includes(payload[1]) ||
-        payload.length !== payload[1] + 2) {
+        (payload.length !== payload[1] + 2 &&
+         payload.length !== payload[1] + 6)) {
       throw new ProtocolError('Invalid settings response.');
     }
-    deviceSettings = Array.from(payload.subarray(2));
+    const count = payload[1];
+    deviceSettings = Array.from(payload.subarray(2, 2 + count));
+    deviceHiddenSettings = null;
+    if (payload.length === count + 6) {
+      const offset = 2 + count;
+      const mask = (payload[offset] | (payload[offset + 1] << 8) |
+        (payload[offset + 2] << 16) | (payload[offset + 3] << 24)) >>> 0;
+      deviceHiddenSettings = Array.from({ length: count }, (_, id) =>
+        (mask & (1 << id)) !== 0);
+    }
     renderSettings();
     if (logInfo && logRecords.length) renderLogSummary();
     elements.settingsStatus.textContent = 'Loaded from device';
@@ -2547,6 +2580,7 @@ async function flashSelectedFirmware() {
 async function connectDevice(portOverride = null) {
   protocolCapabilities = 0;
   deviceSettings = null;
+  deviceHiddenSettings = null;
   rateHistory.length = 0;
   rateStatsHistory.length = 0;
   logInfo = null;
@@ -2566,6 +2600,7 @@ async function connectDevice(portOverride = null) {
       pollTimer = 0;
       serial = null;
       deviceSettings = null;
+      deviceHiddenSettings = null;
       logInfo = null;
       logRecords = [];
       logViewCache.clear();
@@ -2600,6 +2635,7 @@ async function connectDevice(portOverride = null) {
     serial = null;
     elements.rebootFirmware.disabled = false;
     deviceSettings = null;
+    deviceHiddenSettings = null;
     logInfo = null;
     logRecords = [];
     logViewCache.clear();
@@ -2623,6 +2659,7 @@ async function disconnectDevice() {
   polling = false;
   rateStatsHistory.length = 0;
   deviceSettings = null;
+  deviceHiddenSettings = null;
   logInfo = null;
   logRecords = [];
   logViewCache.clear();

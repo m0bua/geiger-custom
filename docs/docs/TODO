@@ -8,6 +8,7 @@
     docs\docs\USB_UART_REENUMERATION_RECOVERY.md
 - app-manual (Документація з рендерами)
 - app-changelog
+- app test mode якщо не підключено.
 - gh-worker
 - затемнення перед вимкненням екрану
 - кольори тем

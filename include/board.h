@@ -61,6 +61,7 @@ void board_display_extra_exit(void);
 bool board_display_settings_list_active(void);
 uint8_t board_display_settings_remote_count(void);
 bool board_display_settings_remote_read(uint8_t *values, uint8_t capacity);
+uint32_t board_display_settings_hidden_mask(void);
 bool board_display_setting_remote_write(uint8_t setting_id, uint8_t value);
 void board_display_settings_list_activate(void);
 void board_display_settings_move(bool forward);
