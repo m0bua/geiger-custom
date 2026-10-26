@@ -1,6 +1,7 @@
 #include "board.h"
 #include "cpm_history.h"
 #include "daily_dose.h"
+#include "log_writer.h"
 #include "protocol_v1.h"
 #include "second_log.h"
 
@@ -208,6 +209,7 @@ int main(void)
     board_lcd_backlight_set_brightness(10u);
     board_lcd_backlight_set(false);
     board_display_init();
+    (void)log_writer_init();
     second_log_init();
     daily_dose_init(UINT16_MAX, 0u);
     (void)total_pulse_load(&total_pulse_count, &total_pulse_sequence);
@@ -550,15 +552,15 @@ int main(void)
             }
 
             while ((int32_t)(now - next_minute_tick) >= 0) {
+                uint32_t log_uptime_seconds = board_uptime_seconds_get();
+                uint32_t log_calendar_seconds = 0u;
+                bool log_calendar_valid = false;
+                (void)board_rtc_log_time(&log_uptime_seconds,
+                    &log_calendar_seconds, &log_calendar_valid);
                 {
-                    uint32_t uptime_seconds;
-                    uint32_t calendar_seconds;
-                    bool calendar_valid;
-                    if (board_rtc_log_time(&uptime_seconds,
-                            &calendar_seconds, &calendar_valid) &&
-                        calendar_valid) {
+                    if (log_calendar_valid) {
                         const uint16_t current_day = (uint16_t)(
-                            calendar_seconds / 86400u);
+                            log_calendar_seconds / 86400u);
                         if (!calendar_day_valid ||
                             current_day != calendar_day_key) {
                             const bool time_was_valid = calendar_day_valid;
@@ -569,7 +571,7 @@ int main(void)
                             today_pulse_count = daily_dose_count();
                             if (board_display_dose_period() == 1u) {
                                 dose_measurement_seconds =
-                                    calendar_seconds % 86400u;
+                                    log_calendar_seconds % 86400u;
                             }
                             dose_from_pulse_count(selected_dose_pulses(
                                     board_display_dose_period(),
@@ -617,6 +619,9 @@ int main(void)
                 board_display_set_rate(rate_thousandths, cpm,
                                        pulses_since_start,
                                        pulses_since_start >= 25u);
+                log_writer_second(second_pulses, cpm,
+                    log_uptime_seconds, log_calendar_seconds,
+                    log_calendar_valid);
                 if (board_display_dose_period() == 1u) {
                     if (dose_measurement_seconds < UINT32_MAX) {
                         ++dose_measurement_seconds;

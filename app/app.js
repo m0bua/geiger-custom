@@ -555,7 +555,7 @@ const remoteSettings = [
   { id: 21, label: 'LONG PRESS', options: ['300 ms', '500 ms', '700 ms', '900 ms', '1100 ms', '1300 ms'] },
   { id: 28, label: 'START SCREEN', options: ['TIME', 'SETTINGS', 'DEBUG'] },
   { id: 15, label: 'HV', options: ['ON', 'OFF'] },
-  { id: 13, label: 'USE-SPI', options: ['OFF', 'ON'] },
+  { id: 13, label: 'LOG MEMORY', options: ['EEPROM', 'SPI', 'OFF'] },
   { id: 14, label: 'RESET', options: ['SETTINGS', 'MIN-LOG', 'HOUR-LOG', 'DAY-LOG', 'ERROR-LOG', 'LOGS', 'EEPROM-LOGS', 'EEPROM', 'SPI', 'ALL'] },
   { id: 18, label: 'POWER OFF', options: [] },
   { id: 19, label: 'REBOOT', options: [] },

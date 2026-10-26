@@ -13,6 +13,10 @@
 #define BOARD_BUTTON_LEFT_UP    (1u << 6)
 #define BOARD_BUTTON_RIGHT_UP   (1u << 7)
 
+#define BOARD_LOG_MEMORY_EEPROM 0u
+#define BOARD_LOG_MEMORY_SPI 1u
+#define BOARD_LOG_MEMORY_OFF 2u
+
 extern volatile uint32_t board_millis;
 
 void board_init(void);
@@ -101,6 +105,7 @@ bool board_display_led_flash_enabled(bool screen_on);
 bool board_display_click_sound_enabled(bool screen_on);
 bool board_display_search_mode(void);
 bool board_display_use_spi(void);
+uint8_t board_display_log_memory(void);
 bool board_display_usb_connected(void);
 void board_click_sound_start(void);
 void board_click_sound_service(void);

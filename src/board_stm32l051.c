@@ -1977,7 +1977,7 @@ static const char *const lcd_cleanup_labels[LCD_CLEANUP_COUNT] = {
 static const char *const lcd_settings_labels[LCD_SETTINGS_COUNT] = {
     "LED", "CLICKS", "RATE SCREEN", "RATE LIGHT", "RATE SOUND", "LED BRIGHT",
     "SCREEN BRIGHT", "SCREEN TIMER", "LEAD ZERO", "UNIT", "RATE PREFIX",
-    "DOSE PREF", "RATE ROW 2", "USE-SPI", "RESET", "HV", "RATE CUSTOM",
+    "DOSE PREF", "RATE ROW 2", "LOG MEMORY", "RESET", "HV", "RATE CUSTOM",
     "ALARM STOP", "POWER OFF", "REBOOT", "TONE", "LONG PRESS",
     "DOSE ROW 2", "DOSE PERIOD", "DOSE SCREEN", "DOSE LIGHT",
     "DOSE SOUND", "DOSE CUSTOM", "START SCREEN"
@@ -2000,7 +2000,7 @@ static const char *const rate_row_values[] = {
 };
 static const char *const dose_row_values[] = { "CNT", "OFF", "SV", "R" };
 static const char *const dose_period_values[] = { "UPTIME", "DAY", "TOTAL" };
-static const char *const off_on_values[] = { "OFF", "ON" };
+static const char *const log_memory_values[] = { "EEPROM", "SPI", "OFF" };
 static const char *const on_off_values[] = { "ON", "OFF" };
 static const char *const empty_values[] = { "" };
 static const char *const dose_alarm_values[] = {
@@ -2058,14 +2058,14 @@ static const char *const *const lcd_settings_values[LCD_SETTINGS_COUNT] = {
     indication_values, indication_values, alarm_values, alarm_values,
     alarm_values, brightness_values, brightness_values, timer_values,
     zero_values, unit_values, prefix_values, prefix_values, rate_row_values,
-    off_on_values, empty_values, on_off_values, rate_custom_values, stop_values,
+    log_memory_values, empty_values, on_off_values, rate_custom_values, stop_values,
     empty_values, empty_values, tone_values, long_press_values,
     dose_row_values, dose_period_values, alarm_values, alarm_values,
     alarm_values, dose_alarm_values, start_screen_values
 };
 
 static const uint8_t lcd_settings_value_counts[LCD_SETTINGS_COUNT] = {
-    6u, 6u, 4u, 4u, 4u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 3u, 2u, 1u, 2u,
+    6u, 6u, 4u, 4u, 4u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 3u, 3u, 1u, 2u,
     9u, 2u, 1u, 1u, 3u, 6u, 4u, 3u, 4u, 4u, 4u, 8u, 3u
 };
 
@@ -3468,6 +3468,11 @@ bool board_display_use_spi(void)
     return settings_spi_enabled;
 }
 
+uint8_t board_display_log_memory(void)
+{
+    return lcd_settings_value_index[SETTING_USE_SPI];
+}
+
 uint8_t board_display_dose_period(void)
 {
     return lcd_settings_value_index[SETTING_DOSE_PERIOD];
@@ -4023,17 +4028,17 @@ static void settings_clicks_save(void)
 static void settings_spi_load(void)
 {
     if (settings_value_read(SETTINGS_SPI_EEPROM_BASE, SETTINGS_SPI_EEPROM_MAGIC,
-            0xA5u, 2u, &lcd_settings_value_index[SETTING_USE_SPI])) {
-        settings_spi_enabled = lcd_settings_value_index[SETTING_USE_SPI] != 0u;
+            0xA5u, 3u, &lcd_settings_value_index[SETTING_USE_SPI])) {
+        settings_spi_enabled = lcd_settings_value_index[SETTING_USE_SPI] == 1u;
     }
 }
 
 static bool settings_spi_save(void)
 {
-    const uint8_t value = lcd_settings_value_index[SETTING_USE_SPI] != 0u;
+    const uint8_t value = lcd_settings_value_index[SETTING_USE_SPI];
     if (!settings_value_write(SETTINGS_SPI_EEPROM_BASE,
             SETTINGS_SPI_EEPROM_MAGIC, 0xA5u, value)) return false;
-    settings_spi_enabled = value != 0u;
+    settings_spi_enabled = value == 1u;
     return true;
 }
 
