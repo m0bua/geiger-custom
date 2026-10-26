@@ -1,5 +1,7 @@
 # Geiger‑2: стоковий додаток, Web Serial, RTS/DTR та протокол кастому
 
+> Historical protocol research: the log layouts below describe an earlier design. Current firmware exposes only the live seconds log; see `app/README.md`. The agreed future storage design is in `docs/docs/LOGS_SPEC.md`.
+
 Дата: 2026-10-21. Пристрій: Mira Safety Geiger‑2 / HiStand, STM32L051C8T6.
 
 ## Актуальність статусу

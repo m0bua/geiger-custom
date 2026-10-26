@@ -1,4 +1,3 @@
-TEST: tools\test_graph_logs.py - test.
 REF: рефактор логів: записи-поточний цикл 2-5 штук - курсор (LOG_AND_STORAGE.md.txt)
     docs\docs\LOGS_SPEC.md
 

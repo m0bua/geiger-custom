@@ -9,15 +9,16 @@
 1. [Застосунок](../app/README.md) — запуск браузерного клієнта, вкладки й обмеження.
 2. [VSCODE_HANDOFF](docs/VSCODE_HANDOFF.md) — збірка, прошивання й актуальні наступні кроки.
 3. [LCD_AND_DISPLAY](docs/LCD_AND_DISPLAY.md) — підключення LCD і поточний екранний прототип.
-4. [LOG_AND_STORAGE](docs/LOG_AND_STORAGE.md) — журнали, час, сховище й графіки.
-5. [APP_AND_SETTINGS](docs/APP_AND_SETTINGS.md) — реалізований застосунок і заплановані налаштування.
-6. [STOCK_FIRMWARE](docs/STOCK_FIRMWARE.md) — GPIO, ADC, живлення та обмеження аналізу стоку.
-7. [STOCK_RATE_DOSE](docs/STOCK_RATE_DOSE.md) — алгоритми швидкості, дози й кольорових порогів.
-8. [STOCK_BATTERY_ADC_AND_POWER](docs/STOCK_BATTERY_ADC_AND_POWER.md) — аналіз стокового ADC, шкали батареї та переходів живлення.
-9. [LCD_STOCK_GUIDE](docs/LCD_STOCK_GUIDE.md) — відновлена послідовність запуску LCD зі стокового HEX.
-10. [PRODUCT_AND_UI](docs/PRODUCT_AND_UI.md) — цільова специфікація екранів і взаємодії.
-11. [OPEN_ITEMS](docs/OPEN_ITEMS.md) — питання, які ще потребують рішення або вимірювання.
-12. [REFERENCE_INDEX](docs/REFERENCE_INDEX.md) — покажчик вихідних матеріалів і технічних індексів.
+4. [LOG_AND_STORAGE](docs/LOG_AND_STORAGE.md) — фактична попередня реалізація журналів і графіків.
+5. [LOGS_SPEC](docs/LOGS_SPEC.md) — цільова специфікація збереження, читання, графіків і даних застосунку.
+6. [APP_AND_SETTINGS](docs/APP_AND_SETTINGS.md) — реалізований застосунок і заплановані налаштування.
+7. [STOCK_FIRMWARE](docs/STOCK_FIRMWARE.md) — GPIO, ADC, живлення та обмеження аналізу стоку.
+8. [STOCK_RATE_DOSE](docs/STOCK_RATE_DOSE.md) — алгоритми швидкості, дози й кольорових порогів.
+9. [STOCK_BATTERY_ADC_AND_POWER](docs/STOCK_BATTERY_ADC_AND_POWER.md) — аналіз стокового ADC, шкали батареї та переходів живлення.
+10. [LCD_STOCK_GUIDE](docs/LCD_STOCK_GUIDE.md) — відновлена послідовність запуску LCD зі стокового HEX.
+11. [PRODUCT_AND_UI](docs/PRODUCT_AND_UI.md) — цільова специфікація екранів і взаємодії.
+12. [OPEN_ITEMS](docs/OPEN_ITEMS.md) — питання, які ще потребують рішення або вимірювання.
+13. [REFERENCE_INDEX](docs/REFERENCE_INDEX.md) — покажчик вихідних матеріалів і технічних індексів.
 
 ## Поточний стан
 
@@ -39,7 +40,7 @@ RTC запрацював після виправлення адреси регі
 Firmware уміє перезапускати пристрій, записувати HEX/BIN та зберігати дампи
 FLASH, EEPROM і доступної SPI NOR. Клієнт використовує Web Serial і протокол v1;
 запуск, функції та обмеження описано в [`app/README.md`](../app/README.md).
-Синхронізація часу через APP ще не реалізована.
+Синхронізація часу через APP реалізована командою `SET_RTC`.
 
 ## Посібник і рендери екранів
 
