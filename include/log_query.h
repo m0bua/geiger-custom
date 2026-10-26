@@ -3,6 +3,8 @@
 
 #include "log_record.h"
 
+#define LOG_QUERY_MAX_PERIOD_SECONDS (7u * 86400u)
+
 typedef struct {
     uint32_t period_start;
     uint32_t period_seconds;
@@ -11,6 +13,8 @@ typedef struct {
     uint32_t maximum_cpm;
     uint32_t covered_seconds;
     uint16_t epoch;
+    uint16_t id;
+    bool calendar_valid;
     bool available;
     bool partial;
     bool live;

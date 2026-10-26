@@ -29,7 +29,14 @@ typedef struct {
 
 /* Initializes the SPI log partitions and recovers each newest append sector. */
 bool spi_log_init(void);
+bool spi_log_open_readonly(void);
 bool spi_log_latest_epoch(uint16_t *epoch);
+bool spi_log_clear(void);
+bool spi_log_expire_alerts(uint8_t year);
+uint32_t spi_log_count(log_record_kind_t kind);
+bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
+                   uint32_t before_time, uint16_t skip, bool inclusive,
+                   uint32_t date_limit, uint32_t reference, log_stored_t *item);
 uint32_t spi_log_free_records(log_record_kind_t kind);
 
 /* Ensure an append sector exists for this segment. If the reserved sector is

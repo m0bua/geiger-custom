@@ -69,7 +69,7 @@ static bool aggregate_hour(log_query_read_fn read_record, void *context,
 
     {
         log_accumulator_t hour = {0u, 0u, 0u, true, false};
-        if (add_record(read_record, context, LOG_RECORD_HOUR, epoch, start,
+        if (!minutes.live && add_record(read_record, context, LOG_RECORD_HOUR, epoch, start,
                 3600u, &hour)) {
             *result = hour;
             return true;
@@ -114,7 +114,7 @@ static bool aggregate_day(log_query_read_fn read_record, void *context,
 
     {
         log_accumulator_t day = {0u, 0u, 0u, true, false};
-        if (add_record(read_record, context, LOG_RECORD_DAY, epoch, start,
+        if (!hours.live && add_record(read_record, context, LOG_RECORD_DAY, epoch, start,
                 86400u, &day)) {
             *result = day;
             return true;
@@ -173,7 +173,7 @@ bool log_query_aggregate(log_query_read_fn read_record, void *context,
     log_accumulator_t aggregate;
     bool found;
     if (read_record == NULL || point == NULL || period_seconds < 60u ||
-        period_seconds % 60u != 0u) return false;
+        period_seconds % 60u != 0u || period_seconds > LOG_QUERY_MAX_PERIOD_SECONDS) return false;
     found = aggregate_range(read_record, context, epoch, period_start,
         period_seconds, &aggregate);
     *point = (log_point_t){
@@ -185,7 +185,7 @@ bool log_query_aggregate(log_query_read_fn read_record, void *context,
         .maximum_cpm = aggregate.maximum_cpm,
         .covered_seconds = aggregate.covered_seconds,
         .epoch = epoch,
-        .available = found || aggregate.covered_seconds != 0u,
+        .available = found || aggregate.covered_seconds != 0u || aggregate.live,
         .partial = !found || !aggregate.complete,
         .live = aggregate.live
     };
@@ -199,7 +199,7 @@ bool log_query_read(log_query_read_fn read_record, void *context,
     uint32_t newest_start;
 
     if (read_record == NULL || points == NULL || n == 0u || m < 60u ||
-        m % 60u != 0u) return false;
+        m % 60u != 0u || m > LOG_QUERY_MAX_PERIOD_SECONDS) return false;
     newest_start = newest_time - (newest_time % m);
 
     for (uint8_t index = 0u; index < n; ++index) {
@@ -225,7 +225,7 @@ bool log_query_read(log_query_read_fn read_record, void *context,
         points[index].maximum_cpm = aggregate.maximum_cpm;
         points[index].covered_seconds = aggregate.covered_seconds;
         points[index].epoch = epoch;
-        points[index].available = found || aggregate.covered_seconds != 0u;
+        points[index].available = found || aggregate.covered_seconds != 0u || aggregate.live;
         points[index].partial = !found || !aggregate.complete;
         points[index].live = aggregate.live;
     }

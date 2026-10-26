@@ -171,3 +171,68 @@ uint32_t log_record_average_cpm(uint32_t count, uint32_t duration_seconds)
     const uint64_t average = numerator / duration_seconds;
     return average > UINT32_MAX ? UINT32_MAX : (uint32_t)average;
 }
+
+static uint32_t year_days(uint16_t year)
+{
+    return year % 4u == 0u && (year % 100u != 0u || year % 400u == 0u) ? 366u : 365u;
+}
+
+static uint16_t split_year(uint32_t seconds, uint32_t *days)
+{
+    uint16_t year = 2000u;
+    *days = seconds / 86400u;
+    while (year < 2100u && *days >= year_days(year)) {
+        *days -= year_days(year++);
+    }
+    return year;
+}
+
+bool log_record_location(log_record_kind_t kind, uint32_t seconds,
+                          bool valid, uint32_t *index, uint8_t *descriptor)
+{
+    uint32_t period = kind == LOG_RECORD_ALERT ? 60u : log_record_period_seconds(kind);
+    if (period == 0u || index == NULL || descriptor == NULL) return false;
+    if (!valid) {
+        *index = (seconds % (366u * 86400u)) / period;
+        *descriptor = (uint8_t)((seconds / (366u * 86400u)) & LOG_YEAR_MASK);
+        return true;
+    }
+    uint32_t days;
+    uint16_t year = split_year(seconds, &days);
+    if (year >= 2100u) return false;
+    *index = (days * 86400u + seconds % 86400u) / period;
+    *descriptor = (uint8_t)(LOG_YEAR_VALID | (year & LOG_YEAR_MASK));
+    return true;
+}
+
+bool log_record_time(log_record_kind_t kind, uint32_t index, uint8_t descriptor,
+                      uint32_t reference, uint32_t *seconds)
+{
+    uint32_t period = kind == LOG_RECORD_ALERT ? 60u : log_record_period_seconds(kind);
+    if (period == 0u || seconds == NULL) return false;
+    if ((descriptor & LOG_YEAR_VALID) == 0u) {
+        uint64_t time = (uint64_t)(descriptor & LOG_YEAR_MASK) * 366u * 86400u + (uint64_t)index * period;
+        if (time > UINT32_MAX) return false;
+        *seconds = (uint32_t)time;
+        return true;
+    }
+    uint32_t ignored;
+    int year = split_year(reference, &ignored);
+    int delta = ((int)(descriptor & LOG_YEAR_MASK) - (year & LOG_YEAR_MASK) + 48) % 32 - 16;
+    year += delta;
+    if (year < 2000 || year > 2099 || index >= year_days((uint16_t)year) * 86400u / period) return false;
+    uint32_t days = 0u;
+    for (uint16_t y = 2000u; y < (uint16_t)year; ++y) days += year_days(y);
+    *seconds = days * 86400u + index * period;
+    return true;
+}
+
+uint16_t log_crc16(const uint8_t *data, uint16_t length, uint16_t crc)
+{
+    for (uint16_t i = 0u; i < length; ++i) {
+        crc ^= (uint16_t)data[i] << 8u;
+        for (uint8_t bit = 0u; bit < 8u; ++bit)
+            crc = crc & 0x8000u ? (uint16_t)((crc << 1u) ^ 0x1021u) : (uint16_t)(crc << 1u);
+    }
+    return crc;
+}

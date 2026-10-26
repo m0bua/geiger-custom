@@ -14,92 +14,25 @@
 #define BATTERY_CRITICAL_SAMPLE_INTERVAL_MS 30000u
 #define USB_SAMPLE_INTERVAL_MS 60000u
 #define TOTAL_PULSE_CHECKPOINT_MS 60000u
-#define TOTAL_PULSE_MAGIC 0xC7u
-#define TOTAL_PULSE_SLOT_COUNT 2u
 
 /* Stable image marker used by the browser flasher to recognize project builds. */
 static const volatile uint8_t firmware_identity_marker[] = {
     0x4du, 0x47u, 0x32u, 0x46u, 0x57u, 0x49u, 0x44u, 0x31u
 };
 
-/* TOTAL dose uses the unused EEPROM gaps 10-15/30-31/62-63/72-79.
- * Settings occupy 0-9, 16-29, 32-61, 64-71, 80-139; log storage starts at 140. */
-static const uint16_t total_pulse_addresses[TOTAL_PULSE_SLOT_COUNT][9] = {
-    {10u, 11u, 12u, 13u, 14u, 15u, 30u, 31u, 62u},
-    {63u, 72u, 73u, 74u, 75u, 76u, 77u, 78u, 79u}
-};
-
-static uint16_t total_pulse_crc(const uint8_t *bytes, uint8_t count)
-{
-    uint16_t crc = 0xFFFFu;
-    for (uint8_t i = 0u; i < count; ++i) {
-        crc ^= (uint16_t)bytes[i] << 8u;
-        for (uint8_t bit = 0u; bit < 8u; ++bit) {
-            crc = (crc & 0x8000u) != 0u ?
-                (uint16_t)((crc << 1u) ^ 0x1021u) : (uint16_t)(crc << 1u);
-        }
-    }
-    return crc;
-}
-
+/* Dose checkpoints are shared with DAY in EEPROM bytes 316..347. */
 static bool total_pulse_load(uint32_t *total, uint8_t *sequence)
 {
-    bool found = false;
-    uint32_t newest_total = 0u;
-    uint8_t newest_sequence = 0u;
-    for (uint8_t slot = 0u; slot < TOTAL_PULSE_SLOT_COUNT; ++slot) {
-        uint8_t record[9];
-        for (uint8_t i = 0u; i < 9u; ++i) {
-            if (!board_eeprom_read(total_pulse_addresses[slot][i], &record[i])) {
-                return false;
-            }
-        }
-        const uint32_t candidate = (uint32_t)record[1] |
-            ((uint32_t)record[2] << 8u) | ((uint32_t)record[3] << 16u) |
-            ((uint32_t)record[4] << 24u);
-        const uint16_t crc = total_pulse_crc(record, 5u);
-        if (record[7] != TOTAL_PULSE_MAGIC ||
-            record[8] != (uint8_t)~TOTAL_PULSE_MAGIC ||
-            record[5] != (uint8_t)crc || record[6] != (uint8_t)(crc >> 8u)) {
-            continue;
-        }
-        if (!found || (int8_t)(record[0] - newest_sequence) > 0) {
-            found = true;
-            newest_total = candidate;
-            newest_sequence = record[0];
-        }
-    }
-    if (found) {
-        *total = newest_total;
-        *sequence = newest_sequence;
-    }
-    return found;
+    *total = daily_dose_total();
+    *sequence = 0u;
+    return true;
 }
 
 static bool total_pulse_save(uint32_t total, uint8_t *sequence)
 {
-    const uint8_t next_sequence = (uint8_t)(*sequence + 1u);
-    const uint8_t slot = (uint8_t)(next_sequence % TOTAL_PULSE_SLOT_COUNT);
-    uint8_t record[9] = {next_sequence, (uint8_t)total,
-        (uint8_t)(total >> 8u), (uint8_t)(total >> 16u),
-        (uint8_t)(total >> 24u), 0u, 0u, TOTAL_PULSE_MAGIC,
-        (uint8_t)~TOTAL_PULSE_MAGIC};
-    const uint16_t crc = total_pulse_crc(record, 5u);
-    record[5] = (uint8_t)crc;
-    record[6] = (uint8_t)(crc >> 8u);
-    if (!board_eeprom_write(total_pulse_addresses[slot][7], 0u) ||
-        !board_eeprom_write(total_pulse_addresses[slot][8], 0u)) return false;
-    for (uint8_t i = 0u; i < 7u; ++i) {
-        if (!board_eeprom_write(total_pulse_addresses[slot][i], record[i])) {
-            return false;
-        }
-    }
-    if (!board_eeprom_write(total_pulse_addresses[slot][7], record[7]) ||
-        !board_eeprom_write(total_pulse_addresses[slot][8], record[8])) {
-        return false;
-    }
-    *sequence = next_sequence;
-    return true;
+    (void)sequence;
+    daily_dose_set_total(total);
+    return daily_dose_checkpoint();
 }
 
 static uint32_t selected_dose_pulses(uint8_t period, uint32_t uptime_pulses,

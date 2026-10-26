@@ -1,6 +1,8 @@
 #include "protocol_v1.h"
 #include "board.h"
 #include "second_log.h"
+#include "log_history.h"
+#include "log_writer.h"
 #include "spi_nor.h"
 
 #include <stdbool.h>
@@ -71,19 +73,7 @@ static void write_u32(uint8_t *p, uint32_t value)
     p[3] = (uint8_t)(value >> 24u);
 }
 
-static uint16_t crc16_ccitt_false(const uint8_t *data, uint16_t length)
-{
-    uint16_t crc = 0xFFFFu;
-    for (uint16_t i = 0u; i < length; ++i) {
-        crc ^= (uint16_t)data[i] << 8u;
-        for (uint8_t bit = 0u; bit < 8u; ++bit) {
-            crc = (crc & 0x8000u) != 0u ?
-                (uint16_t)((crc << 1u) ^ 0x1021u) :
-                (uint16_t)(crc << 1u);
-        }
-    }
-    return crc;
-}
+#define crc16_ccitt_false(bytes, length) log_crc16((bytes), (length), 0xFFFFu)
 
 static bool cobs_decode(const uint8_t *input, uint8_t input_length,
                         uint8_t *output, uint8_t *output_length)
@@ -197,7 +187,7 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         write_u16(&response[4], PROTOCOL_V1_MAX_PAYLOAD);
         write_u32(&response[6], (1u << 0u) | (1u << 1u) |
             (1u << 2u) | (1u << 3u) | (1u << 4u) | (1u << 5u) |
-            (1u << 6u) | (1u << 7u));
+            (1u << 6u) | (1u << 7u) | (1u << 8u));
         response_length = 10u;
     } else if (opcode == PROTOCOL_V1_OP_GET_STATUS && payload_length == 0u) {
         /* status, uptime, today's CNT, CPM, dose in nSv, ADC raw, flags */
@@ -257,11 +247,11 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         if (!deferred_action) response[0] = PROTOCOL_STATUS_INVALID_VALUE;
     } else if (opcode == PROTOCOL_V1_OP_GET_LOG_INFO &&
                payload_length == 0u) {
-        response[1] = board_display_use_spi() ? 1u : 0u;
-        write_u16(&response[2], second_log_count());
-        write_u16(&response[4], 0u);
-        write_u16(&response[6], 0u);
-        write_u16(&response[8], 0u);
+        response[1] = board_display_log_memory();
+        for (uint8_t type = 0u; type < 4u; ++type) {
+            uint32_t count = log_history_count(type);
+            write_u16(&response[2u + type * 2u], (uint16_t)(count > UINT16_MAX ? UINT16_MAX : count));
+        }
         uint32_t uptime_seconds = 0u;
         uint32_t calendar_seconds = 0u;
         bool calendar_valid = false;
@@ -279,45 +269,48 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         response[20] = board_rtc_debug_status();
         response[21] = board_rtc_clock_source();
         write_u32(&response[22], uptime_seconds);
-        response_length = 26u;
-    } else if (opcode == PROTOCOL_V1_OP_GET_LOG_PAGE && payload_length == 4u) {
-        const uint8_t type = frame[8];
-        const uint16_t offset = read_u16(&frame[9]);
-        const uint8_t requested = frame[11];
-        uint32_t uptime_seconds = 0u, calendar_seconds = 0u;
-        bool calendar_valid = false;
-        const uint16_t total = second_log_count();
-        uint8_t count = 0u;
-        if (type != 0u || requested == 0u || requested > 3u) {
+        response[26] = 2u;
+        response[27] = board_display_log_source();
+        response[28] = log_writer_fault() ? 1u : 0u;
+        response[29] = second_log_count();
+        response_length = 30u;
+    } else if (opcode == PROTOCOL_V1_OP_GET_LOG_PAGE && payload_length == 18u) {
+        const uint8_t *request = &frame[8];
+        uint8_t type = request[0], requested = request[1], count = 0u;
+        uint32_t period = read_u32(&request[2]);
+        log_cursor_t cursor = {read_u32(&request[6]), read_u16(&request[10]), read_u16(&request[12])};
+        uint32_t limit = read_u32(&request[14]);
+        if (type > 3u || requested == 0u || requested > 2u || period < 60u || period % 60u || period > LOG_QUERY_MAX_PERIOD_SECONDS) {
             response[0] = PROTOCOL_STATUS_INVALID_VALUE;
-            response_length = 1u;
         } else {
-            response[1] = type;
-            write_u16(&response[2], offset);
-            (void)board_rtc_log_time(&uptime_seconds, &calendar_seconds, &calendar_valid);
-            while (count < requested && (uint16_t)(offset + count) < total) {
-                uint32_t pulses = 0u;
-                const uint8_t age = (uint8_t)(offset + count);
-                if (!second_log_get(age, &pulses)) break;
-                uint8_t *entry = &response[7u + (uint16_t)count * 16u];
-                const uint32_t timestamp = calendar_valid && calendar_seconds >= age ? calendar_seconds - age : 0u;
-                const uint32_t cpm = pulses > UINT32_MAX / 60u ? UINT32_MAX : pulses * 60u;
-                write_u32(&entry[0], timestamp);
-                write_u32(&entry[4], pulses);
-                write_u32(&entry[8], cpm);
-                write_u32(&entry[12], cpm);
+            log_point_t point;
+            while (count < requested && log_history_next(type, period, &cursor, limit, &point)) {
+                uint8_t *entry = &response[12u + (uint16_t)count * 25u];
+                write_u32(&entry[0], point.period_start);
+                write_u32(&entry[4], point.count);
+                write_u32(&entry[8], point.average_cpm);
+                write_u32(&entry[12], point.maximum_cpm);
+                write_u32(&entry[16], point.covered_seconds);
+                write_u16(&entry[20], point.epoch);
+                entry[22] = (point.available ? 1u : 0u) | (point.partial ? 2u : 0u) |
+                    (point.live ? 4u : 0u) | (point.calendar_valid ? 8u : 0u);
+                write_u16(&entry[23], point.id);
                 ++count;
             }
-            write_u16(&response[4], total);
-            response[6] = count;
-            response_length = (uint16_t)(7u + (uint16_t)count * 16u);
+            log_cursor_t peek = cursor;
+            response[1] = type; response[2] = count;
+            response[3] = count == requested && log_history_next(type, period, &peek, limit, &point) ? 1u : 0u;
+            write_u32(&response[4], cursor.time);
+            write_u16(&response[8], cursor.epoch);
+            write_u16(&response[10], cursor.skip);
+            response_length = (uint16_t)(12u + (uint16_t)count * 25u);
         }
     } else if (opcode == PROTOCOL_V1_OP_GET_SPI_DUMP_PAGE &&
                payload_length == 5u) {
         const uint32_t offset = read_u32(&frame[8]);
         const uint8_t requested = frame[12];
         const uint32_t capacity = spi_nor_size_bytes();
-        if (!board_display_use_spi() || !spi_nor_is_ready() ||
+        if (board_display_log_source() != BOARD_LOG_MEMORY_SPI || !spi_nor_is_ready() ||
             requested == 0u || requested > SPI_DUMP_MAX_DATA ||
             offset > capacity || requested > capacity - offset ||
             !spi_nor_read(offset, &response[6], requested)) {

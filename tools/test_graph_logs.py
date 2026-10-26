@@ -58,7 +58,7 @@ def test_second_ring():
     print('PASS: 90-record SEC ring, newest-first reads, rolling CPM reset')
 
 
-def test_sec_graph_only():
+def test_graph_navigation():
     fw = Firmware()
     assert fw.get('lcd_graph_range_index') == 3
     fw.set('lcd_screen_page', 5)
@@ -68,9 +68,13 @@ def test_sec_graph_only():
         assert fw.get('lcd_graph_range_index') == expected
         fw.set('lcd_graph_input_locked', 0)
     assert not any(name in fw.symbols for name in ('log_storage_second', 'log_storage_graph_load', 'log_storage_alert_sample'))
-    print('PASS: SEC graph cycles only 10/30/60/90s; stored graph APIs removed')
+    for expected in (1, 2, 3, 4, 0):
+        fw.set('lcd_graph_input_locked', 0)
+        fw.call('board_display_right_short')
+        assert fw.get('lcd_graph_log_type') == expected
+    print('PASS: independent SEC time windows and MIN/HOUR/DAY/ALERT graph navigation')
 
 
 if __name__ == '__main__':
     test_second_ring()
-    test_sec_graph_only()
+    test_graph_navigation()

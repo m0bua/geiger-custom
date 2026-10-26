@@ -78,7 +78,12 @@
             <tr><th scope="row">SCREEN</th><td id="debug-screen-percent">—</td><td id="debug-screen-time">—</td></tr>
             <tr><th scope="row">SLEEP</th><td id="debug-sleep-percent">—</td><td id="debug-sleep-time">—</td></tr>
             <tr class="debug-section"><th scope="colgroup" colspan="3">LOGS</th></tr>
+            <tr><th scope="row">MIN</th><td id="debug-minutes">—</td><td></td></tr>
+            <tr><th scope="row">HOUR</th><td id="debug-hours">—</td><td></td></tr>
+            <tr><th scope="row">DAY</th><td id="debug-days">—</td><td></td></tr>
+            <tr><th scope="row">ALERT</th><td id="debug-alerts">—</td><td></td></tr>
             <tr><th scope="row">SEC</th><td id="debug-seconds">—</td><td></td></tr>
+            <tr><th scope="row">STORE</th><td id="debug-log-store">—</td><td></td></tr>
             <tr class="debug-section"><th scope="colgroup" colspan="3">MEMORY</th></tr>
             <tr><th scope="row">FLASH</th><td id="memory-flash">64 KB</td><td></td></tr>
             <tr><th scope="row">RAM</th><td id="memory-ram">8 KB</td><td></td></tr>
@@ -236,7 +241,7 @@
 
         <details class="manual-chapter">
         <summary>1.3 · Debug</summary>
-        <p>Shows diagnostic information across four views: DEBUG (uptime, pulse count, RTC and clock), DEBUG MEM (memory and SPI status), DEBUG LOGS (minute, hour, day, and alert record counts), and DEBUG VOLT (battery and solar readings plus charge, screen, and sleep time). Long Right cycles through the diagnostic views. Short Left/Right moves between Time, Settings, and Debug.</p>
+        <p>Shows diagnostic information across four views: DEBUG (uptime, pulse count, RTC and clock), DEBUG MEM (memory and SPI status), DEBUG LOGS (minute, hour, day, alert and second counts, plus store state), and DEBUG VOLT (battery and solar readings plus charge, screen, and sleep time). Long Right cycles through the diagnostic views. Short Left/Right moves between Time, Settings, and Debug.</p>
         </details>
 
         <details class="manual-chapter">
@@ -247,8 +252,8 @@
 
         <details class="manual-chapter">
         <summary>2.1 · Graphs</summary>
-        <p>Long Right from Dose opens the graph view. The graph shows live CPM history; long Right cycles its window through 10, 30, 60, and 90 seconds. The Logs page lists the latest 90 one-second records while they remain in the live ring buffer.</p>
-        <p>For a log graph, long Right enables the data cursor. Short Left/Right moves between records; the selected record’s date and statistics are shown. Long Right exits cursor selection. Long Left returns from the selected record to graph selection, then returns to Dose.</p>
+        <p>Long Right from Dose opens the graph view. Short Left/Right selects SEC, MIN, HOUR, DAY, or ALERT. In SEC, long Right cycles the live CPM window through 10, 30, 60, and 90 seconds. The Logs tab in this app lists minutes, hours, days, and alerts from the same firmware reader as these graphs.</p>
+        <p>For a log graph, long Right advances the white selected column. Its time or date appears at the top left; the first statistic is its average rate, while the others summarize the visible columns. Long Left returns to Dose. LOG MEMORY selects EEPROM, SPI, or OFF. Changing EEPROM/SPI transfers the available history before saving the new choice; OFF preserves stored records.</p>
         <div class="manual-screen-grid">
           <figure><figcaption>2.1 · 90-second rate graph</figcaption><img src="../docs/renders/screens/2.1-graph-90s.svg" alt="Rate graph with a 90-second window" loading="lazy"></figure>
           <figure><figcaption>2.2 · Day graph with a selected record</figcaption><img src="../docs/renders/screens/2.2-graph-days.svg" alt="Day history graph with selected column and date" loading="lazy"></figure>
@@ -284,6 +289,6 @@
 
     <footer>Protocol V1</footer>
   </main>
-  <script defer src="app.js?v=20261026-5"></script>
+  <script defer src="app.js?v=20261026-6"></script>
 </body>
 </html>

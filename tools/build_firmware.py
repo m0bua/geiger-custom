@@ -1,0 +1,46 @@
+"""Build the bare-metal firmware using the installed ARM toolchain.
+
+This is also usable when PlatformIO cannot open its global package lock.
+Run: python tools/build_firmware.py [--test-support]
+"""
+from pathlib import Path
+import argparse
+import subprocess
+
+ROOT = Path(__file__).resolve().parents[1]
+TOOLCHAIN = Path.home() / '.platformio/packages/toolchain-gccarmnoneeabi/bin'
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--test-support', action='store_true')
+    args = parser.parse_args()
+    out = ROOT / '.pio/scratch' / ('geiger2_test' if args.test_support else 'geiger2_manual')
+    out.mkdir(parents=True, exist_ok=True)
+    gcc = str(TOOLCHAIN / 'arm-none-eabi-gcc.exe')
+    flags = ['-std=gnu11', '-mcpu=cortex-m0plus', '-mthumb', '-Os', '-g2',
+             '-ffunction-sections', '-fdata-sections', '-fstack-usage', '-Wall', '-Wextra', '-Werror',
+             '-I', str(ROOT / 'include')]
+    sources = sorted((ROOT / 'src').glob('*.c'))
+    if args.test_support:
+        sources.append(ROOT / 'tests/test_log_engine_support.c')
+    objects = []
+    for source in sources:
+        obj = out / (source.stem + '.o')
+        subprocess.run([gcc, *flags, '-c', str(source), '-o', str(obj)], check=True)
+        objects.append(str(obj))
+    startup = out / 'startup.o'
+    subprocess.run([gcc, '-mcpu=cortex-m0plus', '-mthumb', '-c', str(ROOT / 'startup_stm32l051.S'), '-o', str(startup)], check=True)
+    elf = out / 'firmware.elf'
+    subprocess.run([gcc, '-mcpu=cortex-m0plus', '-mthumb', '-nostartfiles', '-Wl,--gc-sections',
+                    f'-Wl,-Map,{out / "firmware.map"}',
+                    *(['-Wl,--undefined=test_feed_seconds', '-Wl,--undefined=second_log_get'] if args.test_support else []),
+                    '-T', str(ROOT / 'linker/STM32L051C8TX_FLASH.ld'),
+                    *objects, str(startup), '-o', str(elf)], check=True)
+    subprocess.run([str(TOOLCHAIN / 'arm-none-eabi-objcopy.exe'), '-O', 'binary', str(elf), str(out / 'firmware.bin')], check=True)
+    subprocess.run([str(TOOLCHAIN / 'arm-none-eabi-size.exe'), str(elf)], check=True)
+    print(out)
+
+
+if __name__ == '__main__':
+    main()

@@ -43,6 +43,15 @@ typedef struct {
 
 static spi_log_stream_t streams[3];
 static bool log_ready;
+static uint32_t query_revision;
+typedef struct {
+    uint32_t revision, lower, upper, sector, first, last;
+    uint16_t epoch;
+    uint8_t year;
+    bool bounds, cached;
+} query_cache_t;
+static query_cache_t query_cache[3];
+
 static uint16_t count_erased_headers(spi_log_stream_t *stream,
                                     uint32_t *first_address);
 
@@ -71,22 +80,7 @@ static void write_u32_le(uint8_t *data, uint32_t value)
     data[3] = (uint8_t)(value >> 24u);
 }
 
-static uint16_t crc16_update(uint16_t crc, uint8_t value)
-{
-    crc ^= (uint16_t)value << 8u;
-    for (uint8_t bit = 0u; bit < 8u; ++bit) {
-        crc = (crc & 0x8000u) != 0u ?
-            (uint16_t)((crc << 1u) ^ 0x1021u) : (uint16_t)(crc << 1u);
-    }
-    return crc;
-}
-
-static uint16_t crc16(const uint8_t *data, size_t length)
-{
-    uint16_t crc = 0xFFFFu;
-    for (size_t i = 0u; i < length; ++i) crc = crc16_update(crc, data[i]);
-    return crc;
-}
+#define crc16(bytes, length) log_crc16((bytes), (uint16_t)(length), 0xFFFFu)
 
 static uint8_t stream_index(log_record_kind_t kind)
 {
@@ -181,20 +175,15 @@ static uint16_t slot_crc(log_record_kind_t kind,
                          const spi_log_header_t *header, uint16_t index,
                          const uint8_t *data, size_t length)
 {
-    uint16_t crc = 0xFFFFu;
-    crc = crc16_update(crc, (uint8_t)kind);
-    crc = crc16_update(crc, header->segment_id);
-    crc = crc16_update(crc, header->year_descriptor);
-    crc = crc16_update(crc, (uint8_t)header->epoch);
-    crc = crc16_update(crc, (uint8_t)(header->epoch >> 8u));
-    for (uint8_t i = 0u; i < 4u; ++i) {
-        crc = crc16_update(crc, (uint8_t)(header->generation >>
-            (i * 8u)));
-    }
-    crc = crc16_update(crc, (uint8_t)index);
-    crc = crc16_update(crc, (uint8_t)(index >> 8u));
-    for (size_t i = 0u; i < length; ++i) crc = crc16_update(crc, data[i]);
-    return crc;
+    uint8_t context[11];
+    context[0] = (uint8_t)kind;
+    context[1] = header->segment_id;
+    context[2] = header->year_descriptor;
+    write_u16_le(&context[3], header->epoch);
+    write_u32_le(&context[5], header->generation);
+    write_u16_le(&context[9], index);
+    uint16_t crc = log_crc16(context, sizeof(context), 0xFFFFu);
+    return log_crc16(data, (uint16_t)length, crc);
 }
 
 /* Returns 1 for valid, 0 for erased, and -1 for an incomplete/corrupt slot. */
@@ -232,12 +221,15 @@ static uint16_t count_sector_records(log_record_kind_t kind,
                                      const spi_log_header_t *header,
                                      uint32_t address)
 {
-    uint16_t count = 0u;
+    uint16_t low = 0u;
+    uint16_t high = slot_capacity(kind);
     log_record_t record;
-    const uint16_t limit = slot_capacity(kind);
-    while (count < limit && read_slot(kind, header, address, count,
-            &record) == 1) ++count;
-    return count;
+    while (low < high) {
+        uint16_t mid = (uint16_t)(low + (high - low) / 2u);
+        if (read_slot(kind, header, address, mid, &record) == 1) low = (uint16_t)(mid + 1u);
+        else high = mid;
+    }
+    return low;
 }
 
 static bool write_header(uint32_t address, log_record_kind_t kind,
@@ -286,7 +278,7 @@ static bool sector_info_at(spi_log_stream_t *stream, uint16_t sector_index,
     return true;
 }
 
-bool spi_log_init(void)
+static bool spi_log_scan(bool recover)
 {
     const uint32_t capacity = spi_nor_size_bytes();
     const uint32_t sector_count = capacity / SPI_LOG_SECTOR_SIZE;
@@ -295,6 +287,7 @@ bool spi_log_init(void)
     uint32_t remainder;
 
     log_ready = false;
+    ++query_revision;
     if (!spi_nor_is_ready() || sector_count < 6u ||
         capacity % SPI_LOG_SECTOR_SIZE != 0u) return false;
     partition_base_count = sector_count / 3u;
@@ -328,9 +321,9 @@ bool spi_log_init(void)
                 if (!spi_nor_read(address, prefix, sizeof(prefix))) return false;
                 /* The header commit byte is always programmed before records.
                  * An uncommitted sector is safe to reclaim after a reset. */
-                if (status == -2 ||
+                if (recover && (status == -2 ||
                     prefix[SPI_LOG_HEADER_COMMIT_OFFSET] !=
-                        SPI_LOG_HEADER_COMMIT) {
+                        SPI_LOG_HEADER_COMMIT)) {
                     if (!erase_and_verify(address)) return false;
                 }
                 continue;
@@ -368,7 +361,8 @@ bool spi_log_init(void)
                     stream->appendable = false;
                     break;
                 }
-                ++stream->next_slot;
+                ++query_revision;
+    ++stream->next_slot;
             }
             if (stream->next_slot == stream->slot_capacity) {
                 stream->appendable = false;
@@ -379,6 +373,9 @@ bool spi_log_init(void)
     log_ready = true;
     return true;
 }
+
+bool spi_log_init(void) { return spi_log_scan(true); }
+bool spi_log_open_readonly(void) { return spi_log_scan(false); }
 
 bool spi_log_latest_epoch(uint16_t *epoch)
 {
@@ -563,6 +560,7 @@ bool spi_log_append(log_record_kind_t kind, uint16_t epoch,
         return false;
     }
 
+    ++query_revision;
     ++stream->next_slot;
     if (stream->next_slot >= stream->slot_capacity) {
         stream->appendable = false;
@@ -607,48 +605,24 @@ bool spi_log_erase_oldest(log_record_kind_t kind,
     }
     if (!spi_nor_read(sector->address + SPI_LOG_HEADER_RETIRE_OFFSET,
             &verify_retired, 1u) || verify_retired != retired) return false;
+    ++query_revision;
     return erase_and_verify(sector->address);
 }
 
-static uint8_t leap_year(uint16_t year)
+static bool query_sector(log_record_kind_t kind, uint32_t address,
+                          const spi_log_header_t *header, uint32_t period,
+                          log_record_t *record)
 {
-    return (uint8_t)((year % 4u) == 0u);
-}
-
-static bool period_for_time(log_record_kind_t kind, uint32_t seconds,
-                            uint32_t *period_index,
-                            uint8_t *year_descriptor)
-{
-    uint32_t days = seconds / 86400u;
-    uint16_t year = 2000u;
-    uint32_t day_in_year;
-    uint32_t day_seconds = seconds % 86400u;
-
-    while (year <= 2099u) {
-        const uint16_t days_in_year = leap_year(year) != 0u ? 366u : 365u;
-        if (days < days_in_year) break;
-        days -= days_in_year;
-        ++year;
+    uint16_t low = 0u, high = count_sector_records(kind, header, address);
+    while (low < high) {
+        uint16_t mid = (uint16_t)(low + (high - low) / 2u);
+        log_record_t part;
+        if (read_slot(kind, header, address, mid, &part) == 1 && part.period_index <= period)
+            low = (uint16_t)(mid + 1u);
+        else high = mid;
     }
-    if (year > 2099u || period_index == NULL || year_descriptor == NULL) {
-        return false;
-    }
-    day_in_year = days;
-    *year_descriptor = SPI_LOG_YEAR_DESCRIPTOR(year, true);
-    switch (kind) {
-    case LOG_RECORD_MINUTE:
-    case LOG_RECORD_ALERT:
-        *period_index = day_in_year * 1440u + day_seconds / 60u;
-        return true;
-    case LOG_RECORD_HOUR:
-        *period_index = day_in_year * 24u + day_seconds / 3600u;
-        return true;
-    case LOG_RECORD_DAY:
-        *period_index = day_in_year;
-        return true;
-    default:
-        return false;
-    }
+    return low != 0u && read_slot(kind, header, address, (uint16_t)(low - 1u), record) == 1 &&
+        record->period_index == period;
 }
 
 bool spi_log_query_read(void *context, log_record_kind_t kind,
@@ -656,65 +630,151 @@ bool spi_log_query_read(void *context, log_record_kind_t kind,
                         log_record_t *record, bool *live)
 {
     const log_query_time_context_t *time_context = context;
-    const uint8_t index = stream_index(kind);
-    spi_log_stream_t *stream;
-    uint32_t requested_period;
-    uint8_t requested_year;
-    bool found = false;
-    uint32_t newest_generation = 0u;
-    uint16_t newest_slot = 0u;
-    log_record_t newest_record;
-
-    if (!log_ready || index == 0xFFu || record == NULL || live == NULL) {
-        return false;
+    bool calendar = time_context == NULL || time_context->calendar_valid;
+    uint8_t index = stream_index(kind), year;
+    uint32_t period;
+    if (!log_ready || index == 0xFFu || record == NULL || live == NULL ||
+        !log_record_location(kind, period_start, calendar, &period, &year)) return false;
+    query_cache_t *cache = &query_cache[index];
+    if (cache->revision != query_revision || cache->epoch != epoch || cache->year != year) {
+        *cache = (query_cache_t){.revision=query_revision, .epoch=epoch, .year=year, .lower=UINT32_MAX};
     }
-    if (time_context != NULL && !time_context->calendar_valid) {
-        switch (kind) {
-        case LOG_RECORD_MINUTE:
-        case LOG_RECORD_ALERT:
-            requested_period = (period_start / 60u) % 527040u;
-            break;
-        case LOG_RECORD_HOUR:
-            requested_period = (period_start / 3600u) % 8784u;
-            break;
-        case LOG_RECORD_DAY:
-            requested_period = (period_start / 86400u) % 366u;
-            break;
-        default: return false;
-        }
-        requested_year = 0u;
-    } else if (!period_for_time(kind, period_start, &requested_period,
-            &requested_year)) {
-        return false;
-    }
-    stream = &streams[index];
-
-    for (uint16_t sector_index = 0u;
-         sector_index < stream->sector_count; ++sector_index) {
-        const uint32_t address = sector_address(stream, sector_index);
+    if (cache->bounds && (period < cache->lower || period > cache->upper)) return false;
+    if (cache->cached && period > cache->first + 1u && period + 1u < cache->last) {
         spi_log_header_t header;
-        if (read_header(address, &header) != 1 || header.kind != kind ||
-            header.epoch != epoch ||
-            header.year_descriptor != requested_year) continue;
-        for (uint16_t slot = 0u; slot < slot_capacity(kind); ++slot) {
-            log_record_t candidate;
-            const int8_t status = read_slot(kind, &header, address, slot,
-                &candidate);
-            if (status != 1) break;
-            if (candidate.period_index == requested_period &&
-                (!found || header.generation > newest_generation ||
-                    (header.generation == newest_generation &&
-                     slot > newest_slot))) {
-                newest_record = candidate;
-                newest_generation = header.generation;
-                newest_slot = slot;
-                found = true;
-            }
+        if (read_header(cache->sector, &header) == 1 &&
+            query_sector(kind, cache->sector, &header, period, record)) {
+            *live = false; return true;
         }
     }
-    if (!found) return false;
-    *record = newest_record;
+    bool found = false;
+    uint32_t generation = 0u;
+    for (uint16_t sector = 0u; sector < streams[index].sector_count; ++sector) {
+        uint32_t address = sector_address(&streams[index], sector);
+        spi_log_header_t header;
+        log_record_t first, last, candidate;
+        if (read_header(address, &header) != 1 || header.kind != kind ||
+            header.epoch != epoch || header.year_descriptor != year) continue;
+        uint16_t count = count_sector_records(kind, &header, address);
+        if (!count || read_slot(kind, &header, address, 0u, &first) != 1 ||
+            read_slot(kind, &header, address, (uint16_t)(count - 1u), &last) != 1) continue;
+        if (first.period_index < cache->lower) cache->lower = first.period_index;
+        if (last.period_index > cache->upper) cache->upper = last.period_index;
+        if (period < first.period_index || period > last.period_index ||
+            !query_sector(kind, address, &header, period, &candidate)) continue;
+        if (!found || header.generation >= generation) {
+            *record = candidate; generation = header.generation; found = true;
+            cache->sector = address; cache->first = first.period_index;
+            cache->last = last.period_index; cache->cached = true;
+        }
+    }
+    cache->bounds = true;
     *live = false;
-    return true;
+    return found;
 }
 
+uint32_t spi_log_count(log_record_kind_t kind)
+{
+    uint8_t index = stream_index(kind);
+    uint32_t count = 0u;
+    if (!log_ready || index == 0xFFu) return 0u;
+    for (uint16_t sector = 0u; sector < streams[index].sector_count; ++sector) {
+        spi_log_header_t header;
+        uint32_t address = sector_address(&streams[index], sector);
+        if (read_header(address, &header) == 1 && header.kind == kind)
+            count += count_sector_records(kind, &header, address);
+    }
+    return count;
+}
+
+bool spi_log_clear(void)
+{
+    if (!spi_nor_is_ready()) return false;
+    for (uint32_t address = 0u; address < spi_nor_size_bytes(); address += SPI_LOG_SECTOR_SIZE) {
+        if (!sector_fully_erased(address) && !erase_and_verify(address)) return false;
+    }
+    return spi_log_init();
+}
+
+bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
+                   uint32_t before_time, uint16_t skip, bool inclusive,
+                   uint32_t date_limit, uint32_t reference, log_stored_t *item)
+{
+    uint8_t index = stream_index(kind);
+    uint32_t ceiling_generation = UINT32_MAX;
+    uint16_t ceiling_slot = UINT16_MAX;
+    if (!log_ready || index == 0xFFu || item == NULL) return false;
+    for (;;) {
+        bool found = false;
+        uint32_t chosen_generation = 0u;
+        uint16_t chosen_slot = 0u;
+        log_stored_t best = {0};
+        for (uint16_t sector = 0u; sector < streams[index].sector_count; ++sector) {
+            spi_log_header_t header;
+            uint32_t address = sector_address(&streams[index], sector);
+            if (read_header(address, &header) != 1 || header.kind != kind ||
+                header.epoch > before_epoch || (found && header.epoch < best.epoch)) continue;
+            uint16_t high = count_sector_records(kind, &header, address);
+            uint16_t low = 0u;
+            /* Monotonic dates within a calendar epoch; find the newest eligible slot. */
+            while (low < high) {
+                uint16_t mid = (uint16_t)(low + (high - low) / 2u);
+                log_record_t record;
+                uint32_t time;
+                if (read_slot(kind, &header, address, mid, &record) != 1 ||
+                    !log_record_time(kind, record.period_index, header.year_descriptor, reference, &time)) {
+                    high = mid; continue;
+                }
+                bool eligible = (!date_limit || time <= date_limit) &&
+                    (header.epoch < before_epoch || time < before_time || (inclusive && time == before_time));
+                if (eligible) low = (uint16_t)(mid + 1u); else high = mid;
+            }
+            while (low != 0u) {
+                uint16_t slot = --low;
+                log_record_t record;
+                uint32_t time;
+                if (read_slot(kind, &header, address, slot, &record) != 1 ||
+                    !log_record_time(kind, record.period_index, header.year_descriptor, reference, &time)) break;
+                if (header.epoch == before_epoch && time == before_time &&
+                    (header.generation > ceiling_generation ||
+                     (header.generation == ceiling_generation && slot >= ceiling_slot))) continue;
+                if (!found || header.epoch > best.epoch || time > best.time ||
+                    (header.epoch == best.epoch && time == best.time &&
+                     (header.generation > chosen_generation ||
+                      (header.generation == chosen_generation && slot > chosen_slot)))) {
+                    best = (log_stored_t){record, time, header.epoch, header.year_descriptor, (uint16_t)(header.generation * 512u + slot)};
+                    chosen_generation = header.generation;
+                    chosen_slot = slot;
+                    found = true;
+                }
+                break;
+            }
+        }
+        if (!found) return false;
+        if (skip != 0u && best.epoch == before_epoch && best.time == before_time) {
+            --skip; ceiling_generation = chosen_generation; ceiling_slot = chosen_slot; continue;
+        }
+        *item = best;
+        return true;
+    }
+}
+
+bool spi_log_expire_alerts(uint8_t year)
+{
+    if (!log_ready) return false;
+    spi_log_stream_t *stream = &streams[2];
+    for (uint16_t sector = 0u; sector < stream->sector_count; ++sector) {
+        uint32_t address = sector_address(stream, sector);
+        spi_log_header_t header;
+        if (read_header(address, &header) != 1 || !(header.year_descriptor & LOG_YEAR_VALID) ||
+            ((year - header.year_descriptor) & LOG_YEAR_MASK) < 15u) continue;
+        uint8_t retired = SPI_LOG_HEADER_RETIRED;
+        if (!spi_nor_program_page(address + SPI_LOG_HEADER_RETIRE_OFFSET, &retired, 1u) ||
+            !erase_and_verify(address)) return false;
+        if (stream->has_active && stream->active_address == address) {
+            stream->has_active = stream->appendable = false;
+        }
+        ++query_revision;
+    }
+    return true;
+}

@@ -17,7 +17,7 @@ const CAP_SET_RTC = 1 << 6;
 const CAP_DEVICE_ACTION = 1 << 7;
 const MAX_PAYLOAD = 64;
 const LOG_BATCH_SIZE = 5;
-const LOG_INITIAL_TARGETS = { seconds: 90 };
+const LOG_INITIAL_TARGETS = { minutes: 60, hours: 24, days: 30, alerts: 5 };
 const STM32_FLASH_BASE = 0x08000000;
 const STM32_FLASH_SIZE = 64 * 1024;
 const STM32_FLASH_PAGE_SIZE = 128;
@@ -506,7 +506,7 @@ let deviceSettings = null;
 let deviceHiddenSettings = null;
 let selectedResetAction = 0;
 let logInfo = null;
-let selectedLogType = 'seconds';
+let selectedLogType = 'minutes';
 let logRecords = [];
 let logStartOffset = 0;
 let rateHistoryUnit = 'CPM';
@@ -519,6 +519,10 @@ let logInfoLoading = false;
 let logRefreshBusy = false;
 let logCountsRefreshBusy = false;
 const logViewCache = new Map();
+let logCursor = { time: 0xffffffff, epoch: 0xffff, skip: 0 };
+let logHasMore = true;
+let logHistorical = false;
+let logSelectedDate = "";
 let clockSyncBusy = false;
 const rateHistory = [];
 const rateStatsHistory = [];
@@ -697,563 +701,259 @@ function renderDebugLogInfo() {
   elements.memoryJedec.textContent = logInfo.jedec ? logInfo.jedec : '—';
 }
 
+function applyLogInfo(payload) {
+  if (payload.length !== 30 || payload[0] !== 0 || payload[26] !== 2) {
+    throw new ProtocolError('Update the device firmware to use the new logs.');
+  }
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  logInfo = {
+    memory: payload[1], source: payload[27], spi: payload[27] === 1,
+    minutes: view.getUint16(2, true), hours: view.getUint16(4, true),
+    days: view.getUint16(6, true), alerts: view.getUint16(8, true), seconds: payload[29],
+    calendarValid: !!payload[10], calendarSeconds: view.getUint32(11, true),
+    calendarAnchorSeconds: view.getUint32(11, true), calendarAnchorUptime: view.getUint32(22, true),
+    spiSizeMb: payload[15], spiReady: !!payload[16],
+    jedec: Array.from(payload.subarray(17, 20), (byte) => byte.toString(16).padStart(2, '0')).join(' ').toUpperCase(),
+    rtcStatus: ({1: 'OSC ERR', 2: 'INIT ERR', 3: 'SYNC ERR', 4: 'DBP ERR', 5: 'SET', 6: 'NOT SET', 7: 'NOT READY'}[payload[20]] || 'UNKNOWN'),
+    clockSource: payload[21] === 1 ? 'LSE' : 'LSI', error: !!payload[28],
+  };
+  if (!logHistorical && logInfo.calendarValid) elements.logDate.value = deviceLogDate();
+  renderDebugLogInfo();
+  for (const type of logTypes) {
+    const cell = document.querySelector(`#debug-${type.id}`);
+    if (cell) cell.textContent = logInfo[type.countKey].toLocaleString('en-US');
+  }
+  const store = document.querySelector('#debug-log-store');
+  if (store) store.textContent = logInfo.error ? 'ERR' : ['EEPROM', 'SPI', 'OFF'][logInfo.memory];
+  elements.logTabs.querySelectorAll('[data-log-type]').forEach((button) => {
+    const type = logTypes.find((item) => item.id === button.dataset.logType);
+    if (type) button.textContent = `${type.label} (${logInfo[type.countKey].toLocaleString('en-US')})`;
+  });
+  updateDeviceDateTime();
+}
+
 async function refreshLogCounts() {
   if (!serial || !logInfo || logCountsRefreshBusy) return;
   logCountsRefreshBusy = true;
   const activeSerial = serial;
   try {
-    const payload = await activeSerial.request(OP_GET_LOG_INFO, undefined, 5000);
-    if (serial !== activeSerial || ![15, 22, 26].includes(payload.length) || payload[0] !== 0) return;
-    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-    logInfo.seconds = view.getUint16(2, true);
-    logInfo.hours = 0;
-    logInfo.days = 0;
-    logInfo.alerts = 0;
-    renderDebugLogInfo();
-    elements.logTabs.querySelectorAll('[data-log-type]').forEach((button) => {
-      const type = logTypes.find((item) => item.id === button.dataset.logType);
-      if (type) button.textContent = `${type.label} (${logInfo[type.countKey].toLocaleString('en-US')})`;
-    });
-  } catch {
-    // A transient index read should not interrupt the live readings or logs.
-  } finally {
-    logCountsRefreshBusy = false;
-  }
+    const payload = await activeSerial.request(OP_GET_LOG_INFO, undefined, 10000);
+    if (serial === activeSerial) applyLogInfo(payload);
+  } catch { /* The next poll retries a transient transport error. */ }
+  finally { logCountsRefreshBusy = false; }
 }
 
 const logTypes = [
-  { id: 'seconds', protocolId: 0, label: 'SECONDS', countKey: 'seconds' },
+  { id: 'minutes', protocolId: 0, label: 'MINUTES', countKey: 'minutes', period: 60 },
+  { id: 'hours', protocolId: 1, label: 'HOURS', countKey: 'hours', period: 3600 },
+  { id: 'days', protocolId: 2, label: 'DAYS', countKey: 'days', period: 86400 },
+  { id: 'alerts', protocolId: 3, label: 'ALERTS', countKey: 'alerts', period: 60 },
 ];
+
+function deviceLogDate() {
+  return new Date(Date.UTC(2000, 0, 1) + logInfo.calendarSeconds * 1000).toISOString().slice(0, 10);
+}
+function logViewKey() { return `${selectedLogType}:${logHistorical ? logSelectedDate : 'latest'}`; }
+function saveLogView() {
+  logViewCache.set(logViewKey(), {records: logRecords.slice(), cursor: {...logCursor}, more: logHasMore});
+}
+function restoreLogView() {
+  const saved = logViewCache.get(logViewKey());
+  if (!saved) return false;
+  logRecords = saved.records.slice(); logCursor = {...saved.cursor}; logHasMore = saved.more;
+  return true;
+}
+function clearLogView() {
+  logRecords = []; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0}; logHasMore = true;
+  logStartOffset = 0; logPageTotal = 0;
+}
+function hasCurrentLogDate() { return !logHistorical; }
+function logDateLimit() {
+  if (!logHistorical || !logSelectedDate) return 0;
+  const end = Date.parse(`${logSelectedDate}T00:00:00Z`) + 86400000 - 1000;
+  return Math.max(0, Math.floor((end - Date.UTC(2000, 0, 1)) / 1000));
+}
+function logRecordKey(record) {
+  return `${record.epoch}:${record.timestamp}:${selectedLogType === 'alerts' ? record.id : 0}`;
+}
 
 function renderLogTabs() {
   elements.logTabs.replaceChildren();
   if (!logInfo) return;
-  const enabled = logTypes.filter((type) => !type.spi || logInfo.spi);
-  if (!enabled.some((type) => type.id === selectedLogType)) selectedLogType = enabled[0]?.id || 'seconds';
-  for (const type of enabled) {
-    const button = document.createElement('button');
-    button.type = 'button';
+  for (const type of logTypes) {
+    const button = document.createElement('button'); button.type = 'button';
     button.className = `log-tab${type.id === selectedLogType ? ' active' : ''}`;
     button.textContent = `${type.label} (${logInfo[type.countKey].toLocaleString('en-US')})`;
     button.dataset.logType = type.id;
     button.setAttribute('aria-selected', String(type.id === selectedLogType));
     button.addEventListener('click', () => {
-      saveLogView();
+      if (selectedLogType === type.id) return;
+      saveLogView(); ++logPageGeneration;
       selectedLogType = type.id;
-      if (!restoreLogView()) {
-        logRecords = [];
-        logPageTotal = 0;
-        logStartOffset = 0;
-      }
+      if (!restoreLogView()) clearLogView();
       renderLogTabs();
-      if (logRecords.length) {
-        if (hasCurrentLogDate()) loadNewerLogRecords();
-        else refreshLatestLogRecord();
-      }
-      else if (hasCurrentLogDate()) loadLogPage(true);
-      else loadLogNearDate();
+      if (logPageLoading) { logPageReloadPending = true; return; }
+      if (!logRecords.length) loadLogPage(false);
+      else if (hasCurrentLogDate()) loadNewerLogRecords();
     });
     elements.logTabs.append(button);
   }
   renderLogSummary();
 }
 
-function logViewKey() {
-  return `${selectedLogType}:${elements.logDate.value || 'latest'}`;
+function formatLogDate(seconds, type, calendar = true) {
+  if (!calendar) return `UP ${Math.floor(seconds / 3600)}:${String(Math.floor(seconds / 60) % 60).padStart(2, '0')}`;
+  const date = new Date(Date.UTC(2000, 0, 1) + seconds * 1000);
+  const day = `${String(date.getUTCFullYear()).slice(-2)}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+  if (type === 'days') return day;
+  return `${day} ${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
 }
-
-function saveLogView() {
-  logViewCache.set(logViewKey(), {
-    records: logRecords.slice(),
-    startOffset: logStartOffset,
-    total: logPageTotal,
-  });
+function formatLogRadiation(valueUsv, isRate = false) {
+  const prefix = deviceSettings?.[isRate ? 10 : 11] ?? 1;
+  const symbol = (deviceSettings?.[9] ?? 0) === 2 ? 'R' : 'Sv';
+  return formatRadiation(valueUsv * (symbol === 'R' ? 100 : 1), prefix, symbol, isRate);
 }
-
-function restoreLogView() {
-  const view = logViewCache.get(logViewKey());
-  if (!view) return false;
-  logRecords = view.records.slice();
-  logStartOffset = view.startOffset;
-  logPageTotal = view.total;
-  return true;
+function logValueCells(record) {
+  const cnt = (deviceSettings?.[9] ?? 0) === 1;
+  const dose = formatLogRadiation(record.dose * 0.000111);
+  const average = formatLogRadiation(record.average * 0.00666, true);
+  const maximum = formatLogRadiation(record.maximum * 0.00666, true);
+  const values = [cnt ? `${record.dose.toLocaleString('en-US')} CNT` : `${dose.value} ${dose.unit}`,
+    cnt ? `${record.average} CPM` : `${average.value} ${average.unit}`,
+    cnt ? `${record.maximum} CPM` : `${maximum.value} ${maximum.unit}`];
+  const duration = `${Math.floor(record.covered / 60)}:${String(record.covered % 60).padStart(2, '0')}`;
+  return selectedLogType === 'alerts' ? [duration, ...values] :
+    [...values, record.live ? `${record.covered}s · live` : (record.partial ? `${record.covered}s · partial` : 'Full')];
 }
-
-function hasCurrentLogDate() {
-  if (!logInfo?.calendarValid) return true;
-  const today = new Date(Date.UTC(2000, 0, 1) + logInfo.calendarSeconds * 1000)
-    .toISOString().slice(0, 10);
-  return elements.logDate.value === today;
-}
-
 function renderLogSummary() {
   elements.logContent.replaceChildren();
-  elements.logDate.disabled = !logInfo || selectedLogType === 'alerts';
+  elements.logDate.disabled = !logInfo?.calendarValid || selectedLogType === 'alerts';
   elements.loadLogDate.disabled = elements.logDate.disabled;
-  elements.loadMoreLogs.hidden = !logInfo || logPageLoading ||
-    logStartOffset + logRecords.length >= logPageTotal || logPageTotal === 0;
+  elements.loadMoreLogs.hidden = !logInfo || !logHasMore;
+  elements.loadMoreLogs.disabled = logPageLoading;
   if (!logInfo) return;
-  const type = logTypes.find((item) => item.id === selectedLogType) || logTypes[0];
-  if (logPageTotal === 0) {
-    elements.logContent.textContent = 'No records stored.';
-    return;
-  }
-  elements.logsStatus.textContent = `${(logStartOffset + logRecords.length).toLocaleString('en-US')} of ${logPageTotal.toLocaleString('en-US')} records`;
-  const displayRecords = mergeAggregateLogPeriods(logRecords, selectedLogType);
-  const maxDose = Math.max(1, displayRecords.reduce((maximum, record) =>
-    Math.max(maximum, record.dose), 0));
-  const header = document.createElement('div');
-  header.className = 'log-grid log-grid-header';
+  const type = logTypes.find((item) => item.id === selectedLogType);
+  elements.logsStatus.textContent = `${logRecords.length.toLocaleString('en-US')} records loaded · ${logInfo[type.countKey].toLocaleString('en-US')} stored entries${logInfo.memory === 2 ? ' · recording off' : ''}${logInfo.error ? ' · storage error' : ''}`;
+  if (!logRecords.length) { elements.logContent.textContent = logPageLoading ? 'Loading records…' : 'No records available.'; return; }
+  const header = document.createElement('div'); header.className = 'log-grid log-grid-header';
   header.innerHTML = selectedLogType === 'alerts' ?
     '<span>Date</span><span>Duration</span><span>Dose</span><span>Average</span><span>Maximum</span>' :
-    '<span>Date</span><span>Dose</span><span>Minimum</span><span>Average</span><span>Maximum</span>';
+    '<span>Date</span><span>Dose</span><span>Average</span><span>Maximum</span><span>Coverage</span>';
   elements.logContent.append(header);
-  displayRecords.forEach((record, index) => {
+  const maximum = logRecords.reduce((maximum, record) => Math.max(maximum, record.dose), 1);
+  for (const record of logRecords) {
     const row = document.createElement('div');
-    const severity = record.maximum >= 136 ? 'red' : (record.maximum >= 61 ? 'yellow' : 'normal');
-    row.className = `log-grid log-record severity-${severity}`;
-    row.style.setProperty('--bar-width', `${Math.min(100, record.dose * 100 / maxDose)}%`);
-    const cells = [formatLogDate(record.timestamp, selectedLogType),
-      ...logValueCells(record, logStartOffset + index)];
-    cells.forEach((value) => {
-      const cell = document.createElement('span');
-      cell.textContent = value;
-      row.append(cell);
-    });
+    row.className = `log-grid log-record severity-${record.maximum >= 136 ? 'red' : (record.maximum >= 61 ? 'yellow' : 'normal')}`;
+    row.style.setProperty('--bar-width', `${Math.min(100, record.dose * 100 / maximum)}%`);
+    row.title = `Clock period ${record.epoch}${record.live ? ' · live' : ''}${record.partial ? ' · incomplete coverage' : ''}`;
+    for (const value of [formatLogDate(record.timestamp, selectedLogType, record.calendar), ...logValueCells(record)]) {
+      const cell = document.createElement('span'); cell.textContent = value; row.append(cell);
+    }
     elements.logContent.append(row);
-  });
-  elements.loadMoreLogs.hidden = logPageLoading || logStartOffset + logRecords.length >= logPageTotal;
-}
-
-function mergeAggregateLogPeriods(records, type) {
-  if (type === 'seconds' || type === 'alerts' || records.length < 2) return records;
-  const periodSeconds = type === 'minutes' ? 60 :
-    (type === 'hours' ? 3600 : 86400);
-  const merged = [];
-  const byPeriod = new Map();
-  records.forEach((record) => {
-    if (!record.timestamp) {
-      merged.push({ ...record });
-      return;
-    }
-    const period = Math.floor(record.timestamp / periodSeconds);
-    const existing = byPeriod.get(period);
-    if (!existing) {
-      const entry = { ...record };
-      byPeriod.set(period, entry);
-      merged.push(entry);
-      return;
-    }
-    existing.dose += record.dose;
-    existing.minimum = Math.min(existing.minimum, record.minimum);
-    existing.maximum = Math.max(existing.maximum, record.maximum);
-  });
-  return merged;
-}
-
-function logValueCells(record, index) {
-  const isCount = (deviceSettings?.[9] ?? 0) === 1;
-  if (selectedLogType === 'alerts') {
-    const seconds = record.duration;
-    const duration = seconds < 600 ? `${seconds}s` :
-      (seconds < 3600 ? `${Math.max(1, Math.round(seconds / 60))}m` :
-        `${(seconds / 3600).toFixed(1)}h`);
-    const averageCpm = Math.round(record.dose * 60 / Math.max(1, seconds));
-    if (isCount) return [duration, `${record.dose.toLocaleString('en-US')} CNT`,
-      `${averageCpm} CPM`, `${record.maximum} CPM`];
-    const dose = formatLogRadiation(record.dose * 0.000111);
-    const average = formatLogRadiation(averageCpm * 0.00666, true);
-    const maximum = formatLogRadiation(record.maximum * 0.00666, true);
-    return [duration, `${dose.value} ${dose.unit}`, `${average.value} ${average.unit}`,
-      `${maximum.value} ${maximum.unit}`];
   }
-  const periodSeconds = selectedLogType === 'seconds' ? 1 : (selectedLogType === 'minutes' ? 60 :
-    (selectedLogType === 'hours' ? 3600 : 86400));
-  const seconds = index === 0 && logInfo?.calendarValid ?
-    (logInfo.calendarSeconds % periodSeconds || periodSeconds) : periodSeconds;
-  const averageCpm = Math.round(record.dose * 60 / seconds);
-  if (isCount) return [`${record.dose.toLocaleString('en-US')} CNT`,
-    `${record.minimum} CPM`, `${averageCpm} CPM`, `${record.maximum} CPM`];
-  const dose = formatLogRadiation(record.dose * 0.000111);
-  const minimum = formatLogRadiation(record.minimum * 0.00666, true);
-  const average = formatLogRadiation(averageCpm * 0.00666, true);
-  const maximum = formatLogRadiation(record.maximum * 0.00666, true);
-  return [`${dose.value} ${dose.unit}`, `${minimum.value} ${minimum.unit}`,
-    `${average.value} ${average.unit}`, `${maximum.value} ${maximum.unit}`];
+}
+
+async function queryLogPage(type, cursor, limit, count = 2) {
+  const request = new Uint8Array(18); const view = new DataView(request.buffer);
+  request[0] = type.protocolId; request[1] = count;
+  view.setUint32(2, type.period, true); view.setUint32(6, cursor.time, true);
+  view.setUint16(10, cursor.epoch, true); view.setUint16(12, cursor.skip, true); view.setUint32(14, limit, true);
+  const payload = await serial.request(OP_GET_LOG_PAGE, request, 15000);
+  if (payload.length < 12 || payload[0] !== 0 || payload[1] !== type.protocolId ||
+      payload[2] > count || payload.length !== 12 + payload[2] * 25) throw new ProtocolError('Invalid canonical log response.');
+  const data = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  const records = [];
+  for (let i = 0; i < payload[2]; ++i) {
+    const at = 12 + i * 25, flags = payload[at + 22];
+    records.push({timestamp: data.getUint32(at, true), dose: data.getUint32(at + 4, true),
+      average: data.getUint32(at + 8, true), maximum: data.getUint32(at + 12, true),
+      covered: data.getUint32(at + 16, true), epoch: data.getUint16(at + 20, true),
+      id: data.getUint16(at + 23, true), available: !!(flags & 1), partial: !!(flags & 2),
+      live: !!(flags & 4), calendar: !!(flags & 8)});
+  }
+  return {records, more: !!payload[3], cursor: {time: data.getUint32(4, true), epoch: data.getUint16(8, true), skip: data.getUint16(10, true)}};
 }
 
 async function loadLogNearDate() {
-  if (!serial || !logInfo?.calendarValid || !elements.logDate.value ||
-      selectedLogType === 'alerts') return;
-  const selectedDateValue = elements.logDate.value;
-  const selectedDateUnixMs = new Date(`${selectedDateValue}T00:00:00Z`).getTime();
-  const epoch2000UnixMs = Date.UTC(2000, 0, 1);
-  const selectedDateStart = Math.floor(
-    (selectedDateUnixMs - epoch2000UnixMs) / 1000);
-  const selectedDateEnd = selectedDateStart + 86400;
-  const type = logTypes.find((item) => item.id === selectedLogType) || logTypes[0];
-  const typeId = type.protocolId;
-  const physicalCount = logInfo.seconds;
-  const total = physicalCount;
-  let targetOffset = Math.max(0, total - 1);
-  let found = false;
-
-  if (logPageLoading) return;
-  elements.logsStatus.textContent = 'Finding the last record for that date…';
-  try {
-    for (let offset = 0; offset < total; offset += 3) {
-      const requested = Math.min(3, total - offset);
-      const payload = await serial.request(OP_GET_LOG_PAGE,
-        Uint8Array.of(typeId, offset & 0xff, (offset >> 8) & 0xff, requested), 5000);
-      if (selectedLogType !== type.id || elements.logDate.value !== selectedDateValue) return;
-      if (payload.length < 7 || payload[0] !== 0 || payload[1] !== typeId) {
-        throw new ProtocolError('Invalid log page response.');
-      }
-      const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-      const responseOffset = view.getUint16(2, true);
-      const responseTotal = view.getUint16(4, true);
-      const count = payload[6];
-      if (responseOffset !== offset || payload.length !== 7 + count * 16) {
-        throw new ProtocolError('Log page is incomplete or out of sequence.');
-      }
-      for (let index = 0; index < count; index += 1) {
-        const timestamp = view.getUint32(7 + index * 16, true);
-        if (timestamp < selectedDateEnd) {
-          targetOffset = offset + index;
-          found = true;
-          break;
-        }
-      }
-      if (found || count < requested || responseTotal <= offset + count) break;
-    }
-    logStartOffset = targetOffset;
-    logRecords = [];
-    logPageTotal = 0;
-    loadLogPage(true);
-  } catch (error) {
-    elements.logsStatus.textContent = error.message;
-  }
-}
-
-function formatLogDate(seconds, type) {
-  if (!seconds) return 'Time unavailable';
-  const date = new Date(Date.UTC(2000, 0, 1) + seconds * 1000);
-  const datePart = [String(date.getUTCFullYear()).slice(-2),
-    String(date.getUTCMonth() + 1).padStart(2, '0'),
-    String(date.getUTCDate()).padStart(2, '0')].join('-');
-  if (type === 'days') return datePart;
-  const timePart = `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
-  return type === 'seconds' ? `${datePart} ${timePart}:${String(date.getUTCSeconds()).padStart(2, '0')}` : (type === 'hours' ? `${datePart} ${timePart.slice(0, 2)}h` : `${datePart} ${timePart}`);
-}
-
-function formatLogRadiation(valueUsv, isRate = false) {
-  const prefixSetting = deviceSettings?.[isRate ? 10 : 11] ?? 1;
-  const symbol = (deviceSettings?.[9] ?? 0) === 2 ? 'R' : 'Sv';
-  return formatRadiation(valueUsv * (symbol === 'R' ? 100 : 1), prefixSetting,
-    symbol, isRate);
-}
-
-function formatAggregateCells(record, index) {
-  const periodSeconds = selectedLogType === 'seconds' ? 1 : (selectedLogType === 'minutes' ? 60 :
-    (selectedLogType === 'hours' ? 3600 : 86400));
-  let seconds = periodSeconds;
-  if (index === 0 && logInfo?.calendarValid) {
-    seconds = logInfo.calendarSeconds % periodSeconds || periodSeconds;
-  }
-  const averageCpm = Math.round(record.dose * 60 / seconds);
-  if ((deviceSettings?.[9] ?? 0) === 1) {
-    return `D ${record.dose.toLocaleString('en-US')} CNT · MIN ${record.minimum} · AVG ${averageCpm} · MAX ${record.maximum} CPM`;
-  }
-  const dose = formatLogRadiation(record.dose * 0.000111);
-  const minimum = formatLogRadiation(record.minimum * 0.00666, true);
-  const maximum = formatLogRadiation(record.maximum * 0.00666, true);
-  const average = formatLogRadiation(averageCpm * 0.00666, true);
-  return `D ${dose.value} ${dose.unit} · MIN ${minimum.value} · AVG ${average.value} · MAX ${maximum.value}`;
-}
-
-function formatAlertCells(record) {
-  const seconds = record.duration;
-  const duration = seconds < 600 ? `${seconds}s` :
-    (seconds < 3600 ? `${Math.max(1, Math.round(seconds / 60))}m` :
-      `${(seconds / 3600).toFixed(1)}h`);
-  if ((deviceSettings?.[9] ?? 0) === 1) {
-    const avg = Math.round(record.dose * 60 / Math.max(1, seconds));
-    return `${duration} · D ${record.dose.toLocaleString('en-US')} CNT · AVG ${avg} · MAX ${record.maximum} CPM`;
-  }
-  const dose = formatLogRadiation(record.dose * 0.000111);
-  const maximum = formatLogRadiation(record.maximum * 0.00666, true);
-  const average = formatLogRadiation(record.dose * 60 / Math.max(1, seconds) * 0.00666, true);
-  return `${duration} · D ${dose.value} ${dose.unit} · AVG ${average.value} · MAX ${maximum.value}`;
+  if (!serial || !logInfo?.calendarValid || !elements.logDate.value) return;
+  saveLogView(); ++logPageGeneration;
+  logHistorical = elements.logDate.value !== deviceLogDate();
+  logSelectedDate = logHistorical ? elements.logDate.value : "";
+  if (!restoreLogView()) clearLogView();
+  renderLogSummary();
+  if (!logRecords.length) await loadLogPage(false);
+  else if (hasCurrentLogDate()) await loadNewerLogRecords();
 }
 
 async function loadLogPage(reset = false) {
   if (!serial || !logInfo) return;
-  if (logPageLoading) {
-    if (reset) {
-      logPageGeneration += 1;
-      logPageReloadPending = true;
-    }
-    return;
-  }
-  const type = logTypes.find((item) => item.id === selectedLogType) || logTypes[0];
-  if (reset) {
-    logPageGeneration += 1;
-    logRecords = [];
-    logPageTotal = 0;
-  }
-  const generation = logPageGeneration;
-  logPageLoading = true;
-  elements.loadMoreLogs.disabled = true;
-  elements.logsStatus.textContent = 'Loading records…';
-  renderLogSummary();
-  const typeId = type.protocolId;
-  const target = logRecords.length +
-    (LOG_INITIAL_TARGETS[type.id] || LOG_BATCH_SIZE);
-  let failure = '';
-  let exhausted = false;
+  if (logPageLoading) { if (reset) ++logPageGeneration; logPageReloadPending = true; return; }
+  if (reset) { ++logPageGeneration; clearLogView(); }
+  const generation = logPageGeneration, type = logTypes.find((item) => item.id === selectedLogType);
+  const target = logRecords.length + LOG_INITIAL_TARGETS[type.id];
+  const limit = logDateLimit();
+  logPageLoading = true; renderLogSummary();
   try {
-    while (generation === logPageGeneration && !exhausted &&
-        logRecords.length < target &&
-        (logStartOffset + logRecords.length < logPageTotal || logPageTotal === 0)) {
-      const batchTarget = Math.min(target, logRecords.length + LOG_BATCH_SIZE);
-      while (generation === logPageGeneration &&
-          !exhausted &&
-          logRecords.length < batchTarget &&
-          (logStartOffset + logRecords.length < logPageTotal || logPageTotal === 0)) {
-        const offset = logStartOffset + logRecords.length;
-        const requested = Math.min(3, batchTarget - logRecords.length);
-        const payload = await serial.request(OP_GET_LOG_PAGE,
-          Uint8Array.of(typeId, offset & 0xff, (offset >> 8) & 0xff, requested), 5000);
+    while (generation === logPageGeneration && logHasMore && logRecords.length < target) {
+      const batchEnd = Math.min(target, logRecords.length + LOG_BATCH_SIZE);
+      while (generation === logPageGeneration && logHasMore && logRecords.length < batchEnd) {
+        const page = await queryLogPage(type, logCursor, limit, Math.min(2, batchEnd - logRecords.length));
         if (generation !== logPageGeneration) break;
-        if (payload.length < 7 || payload[0] !== 0 || payload[1] !== typeId) {
-          throw new ProtocolError('Invalid log page response.');
-        }
-        const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-        const responseOffset = view.getUint16(2, true);
-        const total = view.getUint16(4, true);
-        const count = payload[6];
-        if (responseOffset !== offset || payload.length !== 7 + count * 16) {
-          throw new ProtocolError('Log page is incomplete or out of sequence.');
-        }
-        logPageTotal = total;
-        for (let i = 0; i < count; i += 1) {
-          const at = 7 + i * 16;
-          const timestamp = view.getUint32(at, true);
-          if (typeId === 3) {
-            logRecords.push({
-              timestamp,
-              duration: view.getUint32(at + 4, true),
-              dose: view.getUint32(at + 8, true),
-              maximum: view.getUint32(at + 12, true),
-            });
-          } else {
-            logRecords.push({
-              timestamp,
-              dose: view.getUint32(at + 4, true),
-              minimum: view.getUint32(at + 8, true),
-              maximum: view.getUint32(at + 12, true),
-            });
-          }
-        }
-        if (count < requested) {
-          logPageTotal = offset + count;
-          exhausted = true;
-          break;
-        }
+        const keys = new Set(logRecords.map(logRecordKey));
+        for (const record of page.records) if (!keys.has(logRecordKey(record))) { logRecords.push(record); keys.add(logRecordKey(record)); }
+        logCursor = page.cursor; logHasMore = page.more && page.records.length > 0;
       }
-      if (generation !== logPageGeneration) break;
-      renderLogSummary();
-      if (logStartOffset + logRecords.length < logPageTotal) {
-        elements.logsStatus.textContent =
-          `Loading ${(logStartOffset + logRecords.length).toLocaleString('en-US')} of ${logPageTotal.toLocaleString('en-US')} records…`;
-      }
+      if (generation === logPageGeneration) { renderLogSummary(); saveLogView(); }
     }
   } catch (error) {
-    failure = error.message;
+    if (generation === logPageGeneration) elements.logsStatus.textContent = error.message;
   } finally {
     logPageLoading = false;
-    elements.loadMoreLogs.disabled = false;
-    renderLogSummary();
-    saveLogView();
-    if (failure) elements.logsStatus.textContent = failure;
-    if (logPageReloadPending && serial && logInfo) {
-      logPageReloadPending = false;
-      loadLogPage(true);
-    }
+    if (generation === logPageGeneration) { logPageTotal = logRecords.length; saveLogView(); elements.loadMoreLogs.disabled = false; }
+    if (logPageReloadPending && serial && logInfo) { logPageReloadPending = false; if (!logRecords.length) loadLogPage(false); else if (hasCurrentLogDate()) loadNewerLogRecords(); }
   }
 }
 
-async function refreshLatestLogRecord() {
-  if (!serial || !logInfo || logRefreshBusy || logPageLoading ||
-      elements.logsPage.hidden || !hasCurrentLogDate()) return;
+async function refreshLatestLogRecord() { return loadNewerLogRecords(false); }
+async function loadNewerLogRecords(catchUp = true) {
+  if (!serial || !logInfo || logPageLoading || logRefreshBusy || elements.logsPage.hidden || !hasCurrentLogDate()) return;
+  if (!logRecords.length) return loadLogPage(false);
   logRefreshBusy = true;
-  const type = logTypes.find((item) => item.id === selectedLogType) || logTypes[0];
-  const typeId = type.protocolId;
-  const generation = logPageGeneration;
+  const generation = logPageGeneration, type = logTypes.find((item) => item.id === selectedLogType);
+  const known = new Set(logRecords.map(logRecordKey));
+  const fresh = []; let cursor = {time: 0xffffffff, epoch: 0xffff, skip: 0}, boundary = false, more = true;
   try {
-    const payload = await serial.request(OP_GET_LOG_PAGE,
-      Uint8Array.of(typeId, 0, 0, 1), 5000);
-    if (generation !== logPageGeneration || selectedLogType !== type.id ||
-        !logRecords.length || elements.logsPage.hidden || !hasCurrentLogDate()) return;
-    if (payload.length !== 23 || payload[0] !== 0 || payload[1] !== typeId ||
-        new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getUint16(2, true) !== 0 ||
-        payload[6] !== 1) {
-      throw new ProtocolError('Invalid latest log record response.');
-    }
-    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-    const record = typeId === 3 ? {
-      timestamp: view.getUint32(7, true),
-      duration: view.getUint32(11, true),
-      dose: view.getUint32(15, true),
-      maximum: view.getUint32(19, true),
-    } : {
-      timestamp: view.getUint32(7, true),
-      dose: view.getUint32(11, true),
-      minimum: view.getUint32(15, true),
-      maximum: view.getUint32(19, true),
-    };
-    if (logStartOffset === 0 && record.timestamp > logRecords[0].timestamp) {
-      logRecords.unshift(record);
-      logPageTotal = Math.max(logPageTotal + 1, 1);
-      logRecords.pop();
-    } else if (record.timestamp === logRecords[0].timestamp) {
-      logRecords[0] = record;
-    } else return;
-    renderLogSummary();
-    saveLogView();
-  } catch (error) {
-    elements.logsStatus.textContent = error.message;
-  } finally {
-    logRefreshBusy = false;
-  }
-}
-
-async function loadNewerLogRecords() {
-  if (!serial || !logInfo || logPageLoading || logRefreshBusy ||
-      elements.logsPage.hidden || !hasCurrentLogDate()) return;
-  logRefreshBusy = true;
-  const type = logTypes.find((item) => item.id === selectedLogType) || logTypes[0];
-  const typeId = type.protocolId;
-  const generation = logPageGeneration;
-  try {
-    const infoPayload = await serial.request(OP_GET_LOG_INFO, undefined, 5000);
-    if (![15, 22, 26].includes(infoPayload.length) || infoPayload[0] !== 0) {
-      throw new ProtocolError('Invalid log index response.');
-    }
-    if (generation !== logPageGeneration || selectedLogType !== type.id || !hasCurrentLogDate()) return;
-    const info = new DataView(infoPayload.buffer, infoPayload.byteOffset, infoPayload.byteLength);
-    const countOffset = { seconds: 2 }[type.id];
-    const count = info.getUint16(countOffset, true);
-    const additional = Math.max(0, count - logPageTotal);
-    if (additional === 0) {
-      await refreshLatestLogRecord();
-      return;
-    }
-
-    const newerRecords = [];
-    let fetched = 0;
-    while (fetched < additional) {
-      const batchEnd = Math.min(additional, fetched + LOG_BATCH_SIZE);
-      while (fetched < batchEnd) {
-        const requested = Math.min(3, batchEnd - fetched);
-        const payload = await serial.request(OP_GET_LOG_PAGE,
-          Uint8Array.of(typeId, fetched & 0xff, (fetched >> 8) & 0xff, requested), 5000);
-        if (generation !== logPageGeneration || selectedLogType !== type.id || !hasCurrentLogDate()) return;
-        if (payload.length < 7 || payload[0] !== 0 || payload[1] !== typeId) {
-          throw new ProtocolError('Invalid log page response.');
-        }
-        const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-        const responseOffset = view.getUint16(2, true);
-        const returned = payload[6];
-        if (responseOffset !== fetched || payload.length !== 7 + returned * 16) {
-          throw new ProtocolError('Log page is incomplete or out of sequence.');
-        }
-        for (let index = 0; index < returned; index += 1) {
-          const at = 7 + index * 16;
-          newerRecords.push(typeId === 3 ? {
-            timestamp: view.getUint32(at, true),
-            duration: view.getUint32(at + 4, true),
-            dose: view.getUint32(at + 8, true),
-            maximum: view.getUint32(at + 12, true),
-          } : {
-            timestamp: view.getUint32(at, true),
-            dose: view.getUint32(at + 4, true),
-            minimum: view.getUint32(at + 8, true),
-            maximum: view.getUint32(at + 12, true),
-          });
-        }
-        if (returned < requested) break;
-        fetched += returned;
+    while (!boundary && more && generation === logPageGeneration) {
+      let batch = 0;
+      while (batch < LOG_BATCH_SIZE && !boundary && more) {
+        const page = await queryLogPage(type, cursor, 0, Math.min(2, LOG_BATCH_SIZE - batch));
+        if (generation !== logPageGeneration || elements.logsPage.hidden) return;
+        for (const record of page.records) { fresh.push(record); if (known.has(logRecordKey(record))) boundary = true; }
+        batch += page.records.length; cursor = page.cursor; more = page.more && page.records.length > 0;
+        if (!catchUp) boundary = true;
       }
-      if (fetched < batchEnd) break;
-      renderLogSummary();
-      elements.logsStatus.textContent = `Loading newer records… ${fetched} of ${additional}`;
+      const replacements = new Map(fresh.map((record) => [logRecordKey(record), record]));
+      const older = logRecords.filter((record) => !(type.id === 'alerts' && record.live) && !replacements.has(logRecordKey(record)))
+        .map((record) => ({...record, live: false}));
+      logRecords = [...replacements.values(), ...older];
+      renderLogSummary(); saveLogView();
     }
-    if (generation !== logPageGeneration || selectedLogType !== type.id) return;
-    const existingTimestamps = new Set(logRecords.map((record) => record.timestamp));
-    const uniqueNewer = newerRecords.filter((record) => !existingTimestamps.has(record.timestamp));
-    logRecords = [...uniqueNewer, ...logRecords];
-    logPageTotal = count;
-    logStartOffset = 0;
-    renderLogSummary();
-    saveLogView();
   } catch (error) {
-    elements.logsStatus.textContent = error.message;
-  } finally {
-    logRefreshBusy = false;
-  }
+    if (generation === logPageGeneration) elements.logsStatus.textContent = error.message;
+  } finally { logRefreshBusy = false; }
 }
 
 async function loadLogInfo() {
   if (!serial || logInfoLoading) return;
-  if ((protocolCapabilities & (1 << 3)) === 0 ||
-      (protocolCapabilities & (1 << 4)) === 0) {
-    elements.logsStatus.textContent = 'Firmware log transfer is not supported.';
-    return;
-  }
   logInfoLoading = true;
-  elements.logsStatus.textContent = 'Reading log index…';
   try {
-    const payload = await serial.request(OP_GET_LOG_INFO);
-    if (![15, 22, 26].includes(payload.length) || payload[0] !== 0) {
-      throw new ProtocolError('Invalid log index response.');
-    }
-    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-    logInfo = {
-      spi: payload[1] !== 0,
-      seconds: view.getUint16(2, true),
-      hours: 0, days: 0, alerts: 0,
-      calendarValid: payload[10] !== 0,
-      calendarSeconds: view.getUint32(11, true),
-      calendarAnchorSeconds: view.getUint32(11, true),
-      calendarAnchorUptime: payload.length >= 26 ? view.getUint32(22, true) : null,
-      spiSizeMb: payload.length >= 22 ? payload[15] : null,
-      spiReady: payload.length >= 22 && payload[16] !== 0,
-      jedec: payload.length >= 22 ? Array.from(payload.subarray(17, 20),
-        (byte) => byte.toString(16).padStart(2, '0')).join(' ').toUpperCase() : '',
-      rtcStatus: payload.length >= 22 ? ({
-        1: 'OSC ERR', 2: 'INIT ERR', 3: 'SYNC ERR', 4: 'DBP ERR',
-        5: 'SET', 6: 'NOT SET', 7: 'NOT READY',
-      }[payload[20]] || 'UNKNOWN') : '',
-      clockSource: payload.length >= 22 ? (payload[21] === 1 ? 'LSE' : 'LSI') : '',
-    };
-    renderDebugLogInfo();
-    if (logInfo.calendarValid) {
-      elements.logDate.value = new Date(Date.UTC(2000, 0, 1) +
-        logInfo.calendarSeconds * 1000)
-        .toISOString().slice(0, 10);
-    }
-    updateDeviceDateTime();
-    selectedLogType = 'seconds';
-    renderLogTabs();
-    elements.logsStatus.textContent = 'Latest one-second records · live buffer (up to 90)';
-    if (!elements.logsPage.hidden) loadLogPage(true);
-  } catch (error) {
-    elements.logsStatus.textContent = error.message;
-  } finally {
-    logInfoLoading = false;
-    updateSpiDumpAvailability();
-  }
+    applyLogInfo(await serial.request(OP_GET_LOG_INFO, undefined, 15000));
+    if (!logTypes.some((type) => type.id === selectedLogType) || (!logRecords.length && !logViewCache.size))
+      selectedLogType = logTypes.find((type) => logInfo[type.countKey] > 0)?.id || 'minutes';
+    renderLogTabs(); updateSpiDumpAvailability();
+    if (!elements.logsPage.hidden && !logRecords.length) loadLogPage(false);
+  } catch (error) { elements.logsStatus.textContent = error.message; }
+  finally { logInfoLoading = false; }
 }
 
 async function synchronizeDeviceClock() {
@@ -1789,7 +1489,7 @@ async function writeSetting(settingId, value, control) {
   control.disabled = true;
   elements.settingsStatus.textContent = 'Saving…';
   try {
-    const result = await serial.request(OP_SET_SETTING, Uint8Array.of(settingId, value));
+    const result = await serial.request(OP_SET_SETTING, Uint8Array.of(settingId, value), settingId === 13 ? 120000 : 5000);
     if (result.length !== 1 || result[0] !== 0) throw new ProtocolError('Device rejected this setting.');
     if (settingId === 9) {
       rateHistory.length = 0;
@@ -1843,7 +1543,7 @@ async function runDeviceAction(action, value, button) {
     if (action === 0 && ![0, 7, 9].includes(value)) {
       logInfo = null;
       logRecords = [];
-      logViewCache.clear();
+      logViewCache.clear(); logHistorical = false; logSelectedDate = ""; logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
       logPageTotal = 0;
       await loadLogInfo();
     }
@@ -2819,7 +2519,7 @@ async function connectDevice(portOverride = null) {
   rateStatsHistory.length = 0;
   logInfo = null;
   logRecords = [];
-  logViewCache.clear();
+  logViewCache.clear(); logHistorical = false; logSelectedDate = ""; logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
   logStartOffset = 0;
   logPageTotal = 0;
   elements.settingsList.replaceChildren();
@@ -2837,7 +2537,7 @@ async function connectDevice(portOverride = null) {
       deviceHiddenSettings = null;
       logInfo = null;
       logRecords = [];
-      logViewCache.clear();
+      logViewCache.clear(); logHistorical = false; logSelectedDate = ""; logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
       logStartOffset = 0;
       logPageTotal = 0;
       elements.settingsList.replaceChildren();
@@ -2873,7 +2573,7 @@ async function connectDevice(portOverride = null) {
     deviceHiddenSettings = null;
     logInfo = null;
     logRecords = [];
-    logViewCache.clear();
+    logViewCache.clear(); logHistorical = false; logSelectedDate = ""; logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
     logPageTotal = 0;
     elements.settingsList.replaceChildren();
     elements.logTabs.replaceChildren();
@@ -2898,7 +2598,7 @@ async function disconnectDevice() {
   deviceHiddenSettings = null;
   logInfo = null;
   logRecords = [];
-  logViewCache.clear();
+  logViewCache.clear(); logHistorical = false; logSelectedDate = ""; logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
   logPageTotal = 0;
   elements.settingsList.replaceChildren();
   elements.logTabs.replaceChildren();

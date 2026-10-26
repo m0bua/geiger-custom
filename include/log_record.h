@@ -11,6 +11,8 @@
 #define LOG_ALERT_DATA_BYTES 11u
 #define LOG_RECORD_CPM_CEILING 262144u
 #define LOG_SEGMENT_ID_COUNT 64u
+#define LOG_YEAR_VALID 0x20u
+#define LOG_YEAR_MASK 0x1Fu
 
 typedef enum {
     LOG_RECORD_MINUTE = 0u,
@@ -27,6 +29,7 @@ typedef struct {
     uint8_t segment_id;
 } log_record_t;
 
+uint16_t log_crc16(const uint8_t *data, uint16_t length, uint16_t initial);
 size_t log_record_data_size(log_record_kind_t kind);
 uint32_t log_record_period_seconds(log_record_kind_t kind);
 uint32_t log_record_count_ceiling(log_record_kind_t kind);
@@ -36,4 +39,16 @@ bool log_record_decode(log_record_kind_t kind, const uint8_t *data,
                        size_t length, log_record_t *record);
 uint32_t log_record_average_cpm(uint32_t count, uint32_t duration_seconds);
 
+typedef struct {
+    log_record_t record;
+    uint32_t time;
+    uint16_t epoch;
+    uint8_t year;
+    uint16_t id;
+} log_stored_t;
+
+bool log_record_location(log_record_kind_t kind, uint32_t seconds,
+                          bool calendar_valid, uint32_t *index, uint8_t *year);
+bool log_record_time(log_record_kind_t kind, uint32_t index, uint8_t year,
+                      uint32_t reference, uint32_t *seconds);
 #endif
