@@ -214,9 +214,15 @@ button { font: inherit; }
 .panel-heading h2 { margin: 0; font-size: 15px; }
 #last-update { color: var(--muted); font: 10px "DM Mono", Consolas, monospace; }
 .detail-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
-.debug-subpage { grid-template-columns: minmax(0, 1fr); }
-.debug-subpage .detail { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
-.debug-subpage .detail strong { text-align: right; }
+.debug-usage-table { width: 100%; border-collapse: collapse; table-layout: fixed; font: 12px "DM Mono", Consolas, monospace; }
+.debug-usage-table th, .debug-usage-table td { padding: 10px 12px; border-bottom: 1px solid rgba(160,186,194,.12); text-align: right; }
+.debug-usage-table thead th { color: var(--muted); font-size: 10px; font-weight: 500; }
+.debug-usage-table th:first-child { width: 34%; text-align: left; }
+.debug-usage-table th:nth-child(2) { width: 27%; }
+.debug-usage-table tbody th { color: #aebbc0; font-weight: 500; }
+.debug-usage-table tbody td { color: #d8e2e4; font-variant-numeric: tabular-nums; }
+.debug-usage-table .debug-section th { padding-top: 16px; padding-bottom: 9px; border-bottom-color: var(--line); color: #8fc9bd; font: 600 13px "DM Mono", Consolas, monospace; letter-spacing: .14em; text-align: left; }
+.debug-usage-table .debug-section:first-child th { padding-top: 10px; }
 .detail { min-height: 66px; display: flex; flex-direction: column; justify-content: center; gap: 7px; padding: 10px 12px 8px 0; border-bottom: 1px solid rgba(160,186,194,.08); }
 .detail:nth-last-child(-n+3) { border-bottom: 0; }
 .detail span { color: #819096; font-size: 11px; }
@@ -252,7 +258,6 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .metric-value small { font-size: 10px; }
   .metric-value { margin-top: 14px; }
   .detail-grid { grid-template-columns: repeat(2, 1fr); }
-  .debug-subpage { grid-template-columns: minmax(0, 1fr); }
   .settings-pair { grid-template-columns: 1fr; grid-template-rows: none; grid-auto-flow: row; }
   .settings-clock-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .log-tabs { overflow-x: auto; }

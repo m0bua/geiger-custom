@@ -20,6 +20,7 @@ static bool idle_clock_active;
 static volatile uint32_t detector_pulse_count;
 static volatile bool board_hv_enabled = true;
 static volatile uint16_t lcd_adc_battery_raw;
+static uint16_t lcd_adc_battery_start_raw;
 static volatile uint16_t lcd_adc_sun_raw;
 static volatile uint16_t lcd_adc_usb_raw;
 static bool adc_ready;
@@ -273,6 +274,7 @@ static uint16_t lcd_displayed_battery_percent;
 static uint16_t lcd_battery_percent_candidate;
 static uint32_t lcd_battery_percent_candidate_since_ms;
 static bool lcd_battery_percent_initialized;
+static uint16_t lcd_battery_start_percent;
 static uint16_t lcd_displayed_solar_percent;
 static bool lcd_solar_sample_ready;
 static uint16_t lcd_solar_brightness_samples[
@@ -285,6 +287,9 @@ static uint8_t lcd_screen_page;
 static uint8_t lcd_main_return_page;
 static uint8_t lcd_last_extra_page = 2u;
 static uint8_t lcd_debug_subpage;
+static uint32_t lcd_debug_screen_seconds;
+static uint32_t lcd_debug_sleep_seconds;
+static uint32_t lcd_debug_usb_seconds;
 static uint8_t lcd_graph_range_index = 3u;
 static uint8_t lcd_graph_column_y[LCD_WIDTH];
 static char lcd_graph_stat_values[4][5];
@@ -1781,6 +1786,29 @@ static uint8_t lcd_debug_u32_digits(char *text, uint32_t value)
     return digits;
 }
 
+static uint8_t lcd_debug_time_percent(char *text, uint32_t seconds)
+{
+    const uint32_t uptime = board_uptime_seconds;
+    uint32_t hours = seconds / 3600u;
+    const uint32_t minutes = (seconds / 60u) % 60u;
+    uint32_t percent = uptime == 0u ? 0u : (uint32_t)(
+        ((uint64_t)seconds * 100u + uptime / 2u) / uptime);
+
+    text[0] = (char)('0' + percent / 100u);
+    text[1] = (char)('0' + (percent / 10u) % 10u);
+    text[2] = (char)('0' + percent % 10u);
+    text[3] = '%';
+    text[4] = ' ';
+    text[5] = (char)('0' + (hours / 1000u) % 10u);
+    text[6] = (char)('0' + (hours / 100u) % 10u);
+    text[7] = (char)('0' + (hours / 10u) % 10u);
+    text[8] = (char)('0' + hours % 10u);
+    text[9] = ':';
+    text[10] = (char)('0' + minutes / 10u);
+    text[11] = (char)('0' + minutes % 10u);
+    return 12u;
+}
+
 static void lcd_debug_put_right(char *line, uint8_t end, const char *value,
                                 uint8_t length)
 {
@@ -1797,17 +1825,6 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
     const char *label;
     const uint8_t subpage = lcd_debug_subpage;
     for (uint8_t i = 0u; i < 20u; ++i) line[i] = ' ';
-
-    if (row == 0u) {
-        const char *title = subpage == 0u ? "DEBUG" :
-            subpage == 1u ? "DEBUG MEM" :
-            subpage == 2u ? "DEBUG LOGS" : "DEBUG VOLT";
-        uint8_t length = 0u;
-        while (title[length] != '\0') ++length;
-        const uint8_t start = (uint8_t)((20u - length) / 2u);
-        for (uint8_t i = 0u; i < length; ++i) line[start + i] = title[i];
-        return 20u;
-    }
 
     if (subpage == 0u) {
         const uint32_t seconds = board_uptime_seconds;
@@ -1853,7 +1870,7 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
             line[i] = label[i];
         }
         lcd_debug_put_right(line, 20u, value, value_length);
-    } else if (subpage == 1u) {
+    } else if (subpage == 3u) {
         uint32_t amount = 0u;
         switch (row) {
         case 1u: label = "FLASH"; amount = 64u; break;
@@ -1918,22 +1935,31 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
             label = "";
         }
     } else {
-        if (row < 1u || row > 3u) return 20u;
-        const uint8_t value_row = (uint8_t)(row - 1u);
-        const uint16_t raw = value_row == 0u ? lcd_adc_battery_raw :
-            (value_row == 1u ? lcd_adc_sun_raw : lcd_adc_usb_raw);
-        const uint16_t percent = value_row == 0u ?
-            lcd_displayed_battery_percent : lcd_displayed_solar_percent;
-        label = value_row == 0u ? "BATT" :
-            (value_row == 1u ? "SOL" : "USB");
-        for (uint8_t i = 0u; label[i] != '\0'; ++i) line[i] = label[i];
-        if (value_row < 2u) {
+        if (row < 1u || row > 6u) return 20u;
+        if (row <= 3u) {
+            const uint16_t raw = row == 1u ? lcd_adc_battery_raw :
+                (row == 2u ? lcd_adc_battery_start_raw : lcd_adc_sun_raw);
+            const uint16_t percent = row == 1u ?
+                lcd_displayed_battery_percent : (row == 2u ?
+                    lcd_battery_start_percent : lcd_displayed_solar_percent);
+            label = row == 1u ? "BATT" :
+                (row == 2u ? "BATT START" : "SOL");
+            for (uint8_t i = 0u; label[i] != '\0'; ++i) line[i] = label[i];
             value_length = lcd_debug_u32_digits(value, percent);
             value[value_length++] = '%';
-            lcd_debug_put_right(line, 12u, value, value_length);
+            lcd_debug_put_right(line, 16u, value, value_length);
+            value_length = lcd_debug_u32_digits(value, raw);
+            lcd_debug_put_right(line, 20u, value, value_length);
+        } else {
+            const uint32_t duration = row == 4u ? lcd_debug_usb_seconds :
+                (row == 5u ? lcd_debug_screen_seconds :
+                             lcd_debug_sleep_seconds);
+            label = row == 4u ? "CHARGE" :
+                (row == 5u ? "SCREEN" : "SLEEP");
+            for (uint8_t i = 0u; label[i] != '\0'; ++i) line[i] = label[i];
+            value_length = lcd_debug_time_percent(value, duration);
+            lcd_debug_put_right(line, 20u, value, value_length);
         }
-        value_length = lcd_debug_u32_digits(value, raw);
-        lcd_debug_put_right(line, 20u, value, value_length);
         return 20u;
     }
 
@@ -3797,7 +3823,7 @@ static bool lcd_text_prepare_glyph(void)
                 return false;
             }
             const uint8_t length = lcd_info_make_line(
-                lcd_text_glyph_index, text);
+                (uint8_t)(lcd_text_glyph_index + 1u), text);
             const uint16_t row_width = (uint16_t)(length *
                 (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP) -
                 LCD_SMALL_TEXT_GAP);
@@ -3824,7 +3850,7 @@ static bool lcd_text_prepare_glyph(void)
                     const bool lit = column < length &&
                         glyph_x < FONT_SMALL_CELL_WIDTH &&
                         font_small_pixel(text[column], glyph_x, y);
-                    const bool spi_error = lcd_debug_subpage == 1u &&
+                    const bool spi_error = lcd_debug_subpage == 3u &&
                         lcd_text_glyph_index == 4u && column >= 17u &&
                         column <= 19u && text[17] == 'E' &&
                         text[18] == 'R' && text[19] == 'R';
@@ -3893,7 +3919,7 @@ static bool lcd_text_prepare_glyph(void)
             const uint16_t sun_color = lcd_displayed_solar_percent > 79u ?
                 LCD_TEXT_GREEN : (lcd_displayed_solar_percent > 49u ?
                 LCD_TEXT_YELLOW : LCD_TEXT_FOREGROUND);
-            const uint16_t battery_color = lcd_adc_usb_raw > 1000u ?
+            const uint16_t battery_color = lcd_adc_usb_raw > 100u ?
                 LCD_TEXT_GREEN : LCD_TEXT_FOREGROUND;
             lcd_top_row_draw_percent(7u, FONT_SMALL_GLYPH_SUN, 106u,
                                      sun_color);
@@ -4335,9 +4361,14 @@ uint8_t board_display_dose_period(void)
     return lcd_settings_value_index[SETTING_DOSE_PERIOD];
 }
 
+uint16_t board_display_battery_start_raw(void)
+{
+    return lcd_adc_battery_start_raw;
+}
+
 bool board_display_usb_connected(void)
 {
-    return lcd_adc_usb_raw > 1000u;
+    return lcd_adc_usb_raw > 100u;
 }
 
 bool board_display_rate_long_press(void)
@@ -6434,6 +6465,15 @@ void board_display_history_updated(void)
     }
 }
 
+void board_display_set_debug_usage(uint32_t screen_seconds,
+                                  uint32_t sleep_seconds,
+                                  uint32_t usb_seconds)
+{
+    lcd_debug_screen_seconds = screen_seconds;
+    lcd_debug_sleep_seconds = sleep_seconds;
+    lcd_debug_usb_seconds = usb_seconds;
+}
+
 uint8_t board_display_rate_led_mask(void)
 {
     return lcd_rate_led_mask;
@@ -6584,6 +6624,8 @@ void board_display_set_adc(uint16_t channel2, uint16_t channel8,
         battery_percent = lcd_battery_percent(channel2);
         if (!lcd_battery_percent_initialized) {
             /* Give the display a useful initial value; debounce later changes. */
+            lcd_adc_battery_start_raw = channel2;
+            lcd_battery_start_percent = battery_percent;
             lcd_displayed_battery_percent = battery_percent;
             lcd_battery_percent_candidate = battery_percent;
             lcd_battery_percent_candidate_since_ms = board_millis;

@@ -83,6 +83,7 @@ void board_display_set_dose(uint32_t dose_thousandths,
                             uint32_t total_pulse_count,
                             uint32_t measurement_seconds);
 uint8_t board_display_dose_period(void);
+uint16_t board_display_battery_start_raw(void);
 void board_display_set_rate_stats(uint32_t minimum_minute,
                                   uint32_t average_minute,
                                   uint32_t maximum_minute,
@@ -90,6 +91,9 @@ void board_display_set_rate_stats(uint32_t minimum_minute,
                                   uint32_t average_hour,
                                   uint32_t maximum_hour);
 void board_display_set_count(uint32_t count);
+void board_display_set_debug_usage(uint32_t screen_seconds,
+                                  uint32_t sleep_seconds,
+                                  uint32_t usb_seconds);
 uint32_t board_display_screen_timeout_ms(void);
 bool board_display_cleanup_feedback_active(void);
 bool board_display_take_cleanup_feedback_dismissed(void);

@@ -247,9 +247,18 @@ const elements = {
   doseUnit: document.querySelector('#dose-unit'),
   doseFoot: document.querySelector('#dose-foot'),
   uptime: document.querySelector('#uptime'),
-  debugBattery: document.querySelector('#debug-battery'),
-  debugSolar: document.querySelector('#debug-solar'),
-  debugUsb: document.querySelector('#debug-usb'),
+  debugBatteryPercent: document.querySelector('#debug-battery-percent'),
+  debugBatteryRaw: document.querySelector('#debug-battery-raw'),
+  debugBatteryStartPercent: document.querySelector('#debug-battery-start-percent'),
+  debugBatteryStartRaw: document.querySelector('#debug-battery-start-raw'),
+  debugSolarPercent: document.querySelector('#debug-solar-percent'),
+  debugSolarRaw: document.querySelector('#debug-solar-raw'),
+  debugChargePercent: document.querySelector('#debug-charge-percent'),
+  debugChargeTime: document.querySelector('#debug-charge-time'),
+  debugScreenPercent: document.querySelector('#debug-screen-percent'),
+  debugScreenTime: document.querySelector('#debug-screen-time'),
+  debugSleepPercent: document.querySelector('#debug-sleep-percent'),
+  debugSleepTime: document.querySelector('#debug-sleep-time'),
   debugCount: document.querySelector('#debug-count'),
   debugRtc: document.querySelector('#debug-rtc'),
   debugClock: document.querySelector('#debug-clock'),
@@ -259,7 +268,6 @@ const elements = {
   debugAlerts: document.querySelector('#debug-alerts'),
   memorySpi: document.querySelector('#memory-spi'),
   memoryJedec: document.querySelector('#memory-jedec'),
-  debugHeading: document.querySelector('#debug-heading'),
 };
 
 class ProtocolError extends Error {}
@@ -504,7 +512,6 @@ let logInfo = null;
 let selectedLogType = 'days';
 let logRecords = [];
 let logStartOffset = 0;
-let selectedDebugPage = 'main';
 let rateHistoryUnit = 'CPM';
 let rateLevel = 'blue';
 let logPageTotal = 0;
@@ -679,21 +686,6 @@ function selectPage(page, updateUrl = true) {
     if (logRecords.length === 0) loadLogPage(true);
     else refreshLatestLogRecord();
   }
-}
-
-function selectDebugPage(name) {
-  selectedDebugPage = name;
-  elements.debugHeading.textContent = {
-    main: 'DEBUG', memory: 'DEBUG MEM', logs: 'DEBUG LOGS', voltage: 'DEBUG VOLT',
-  }[name];
-  document.querySelectorAll('[data-debug-panel]').forEach((panel) => {
-    panel.hidden = panel.dataset.debugPanel !== name;
-  });
-  document.querySelectorAll('[data-debug-page]').forEach((button) => {
-    const active = button.dataset.debugPage === name;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-selected', String(active));
-  });
 }
 
 function renderDebugLogInfo() {
@@ -1347,6 +1339,18 @@ function formatUptime(seconds) {
   };
 }
 
+function formatDebugUsage(seconds, uptimeSeconds) {
+  const percent = uptimeSeconds ? Math.min(100,
+    Math.floor((seconds * 100 + uptimeSeconds / 2) / uptimeSeconds)) : 0;
+  const hours = Math.floor(seconds / 3600);
+  const hoursText = String(hours % 10000).padStart(4, '0');
+  const minutes = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
+  return {
+    percent: String(percent).padStart(3, '0'),
+    time: `${hoursText}:${minutes}`,
+  };
+}
+
 function localCalendarSeconds(date) {
   return Math.floor((date.getTime() - date.getTimezoneOffset() * 60000) / 1000) -
     946684800;
@@ -1677,9 +1681,21 @@ function renderOfflinePreview() {
   elements.debugCount.textContent = '0';
   elements.debugRtc.textContent = 'Not set';
   elements.debugClock.textContent = 'Demo data';
-  elements.debugBattery.textContent = '0% · 0';
-  elements.debugSolar.textContent = '0% · 0';
-  elements.debugUsb.textContent = '0';
+  elements.debugBatteryPercent.textContent = '0%';
+  elements.debugBatteryRaw.textContent = '0';
+  elements.debugBatteryStartPercent.textContent = '0%';
+  elements.debugBatteryStartRaw.textContent = '0';
+  elements.debugSolarPercent.textContent = '0%';
+  elements.debugSolarRaw.textContent = '0';
+  for (const [percentElement, timeElement] of [
+    [elements.debugChargePercent, elements.debugChargeTime],
+    [elements.debugScreenPercent, elements.debugScreenTime],
+    [elements.debugSleepPercent, elements.debugSleepTime],
+  ]) {
+    const usage = formatDebugUsage(0, 0);
+    percentElement.textContent = usage.percent;
+    timeElement.textContent = usage.time;
+  }
   elements.debugMinutes.textContent = '0';
   elements.debugHours.textContent = '0';
   elements.debugDays.textContent = '0';
@@ -1932,7 +1948,7 @@ function doseRowText(unit, period, mode, uptime, uptimePulses, dayPulses, totalP
 }
 
 function handleStatus(payload) {
-  if (![25, 29, 31, 35].includes(payload.length) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
+  if (![25, 29, 31, 35, 47].includes(payload.length) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const uptimeSeconds = view.getUint32(1, true);
   const count = view.getUint32(5, true);
@@ -1942,9 +1958,13 @@ function handleStatus(payload) {
   const doseNsv = doseNsvWhole + doseFraction / 3600;
   const batteryRaw = view.getUint16(17, true);
   const solarRaw = view.getUint16(19, true);
-  const usbRaw = view.getUint16(21, true);
   const countTotal = payload.length >= 29 ? view.getUint32(25, true) : count;
   const lifetimePulses = payload.length >= 35 ? view.getUint32(31, true) : countTotal;
+  const screenSeconds = payload.length >= 47 ? view.getUint32(35, true) : null;
+  const sleepSeconds = payload.length >= 47 ? view.getUint32(39, true) : null;
+  const usbSeconds = payload.length >= 47 ? view.getUint32(43, true) : null;
+  const statusFlags = view.getUint16(23, true);
+  const batteryStartRaw = payload.length >= 47 ? (statusFlags >>> 4) & 0x0fff : null;
   const dosePeriod = deviceSettings?.[23] ?? 1;
   const doseRowMode = deviceSettings?.[22] ?? 0;
   const derivedDosePulses = payload.length >= 31 ?
@@ -2022,9 +2042,28 @@ function handleStatus(payload) {
   elements.solarPercent.classList.toggle('solar-good', solarPercent > 79);
   const batteryPercent = percentFromAdc(batteryRaw, 1300, 2000);
   elements.batteryPercent.textContent = `${batteryPercent}%`;
-  elements.debugBattery.textContent = `${batteryPercent}% · ${batteryRaw}`;
-  elements.debugSolar.textContent = `${solarPercent}% · ${solarRaw}`;
-  elements.debugUsb.textContent = usbRaw.toLocaleString('en-US');
+  elements.debugBatteryPercent.textContent = `${batteryPercent}%`;
+  elements.debugBatteryRaw.textContent = batteryRaw.toLocaleString('en-US');
+  elements.debugBatteryStartPercent.textContent = batteryStartRaw === null ? '—' :
+    `${percentFromAdc(batteryStartRaw, 1300, 2000)}%`;
+  elements.debugBatteryStartRaw.textContent = batteryStartRaw === null ? '—' :
+    batteryStartRaw.toLocaleString('en-US');
+  elements.debugSolarPercent.textContent = `${solarPercent}%`;
+  elements.debugSolarRaw.textContent = solarRaw.toLocaleString('en-US');
+  for (const [seconds, percentElement, timeElement] of [
+    [usbSeconds, elements.debugChargePercent, elements.debugChargeTime],
+    [screenSeconds, elements.debugScreenPercent, elements.debugScreenTime],
+    [sleepSeconds, elements.debugSleepPercent, elements.debugSleepTime],
+  ]) {
+    if (seconds === null) {
+      percentElement.textContent = '—';
+      timeElement.textContent = '—';
+    } else {
+      const usage = formatDebugUsage(seconds, uptimeSeconds);
+      percentElement.textContent = usage.percent;
+      timeElement.textContent = usage.time;
+    }
+  }
 }
 
 function setStateValue(element, active, onText, offText) {
@@ -2092,10 +2131,6 @@ window.addEventListener('hashchange', () => {
   const page = window.location.hash.slice(1);
   selectPage(page || 'overview');
 });
-document.querySelectorAll('[data-debug-page]').forEach((button) => {
-  button.addEventListener('click', () => selectDebugPage(button.dataset.debugPage));
-});
-selectDebugPage(selectedDebugPage);
 selectPage(window.location.hash.slice(1) || 'overview');
 window.addEventListener('resize', drawRateChart);
 detectLocalBuild();

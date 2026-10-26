@@ -18,6 +18,9 @@ typedef struct {
     uint32_t count_total;
     uint16_t dose_fraction_3600;
     uint32_t dose_count_total;
+    uint32_t screen_seconds;
+    uint32_t sleep_seconds;
+    uint32_t usb_seconds;
 } protocol_v1_status_t;
 
 enum {

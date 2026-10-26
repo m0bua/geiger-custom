@@ -10,6 +10,7 @@
 #define BATTERY_ACTIVE_SAMPLE_INTERVAL_MS 30000u
 #define BATTERY_IDLE_SAMPLE_INTERVAL_MS 600000u
 #define BATTERY_CRITICAL_SAMPLE_INTERVAL_MS 30000u
+#define USB_SAMPLE_INTERVAL_MS 60000u
 #define TOTAL_PULSE_CHECKPOINT_MS 60000u
 #define TOTAL_PULSE_MAGIC 0xC7u
 #define TOTAL_PULSE_SLOT_COUNT 2u
@@ -137,6 +138,7 @@ int main(void)
     uint32_t next_sample;
     uint32_t next_solar_sample;
     uint32_t next_battery_sample;
+    uint32_t next_usb_sample;
     uint32_t inactivity_deadline;
     uint32_t screen_timeout_ms;
     uint32_t event_count = 0u;
@@ -171,6 +173,10 @@ int main(void)
     uint8_t minute_head = 0u;
     uint32_t led_blink_deadline = 0u;
     uint32_t high_speed_deadline = 0u;
+    uint32_t debug_usage_last_uptime;
+    uint32_t debug_screen_seconds = 0u;
+    uint32_t debug_sleep_seconds = 0u;
+    uint32_t debug_usb_seconds = 0u;
     uint32_t light_alarm_deadline = 0u;
     uint32_t startup_led_deadline;
     bool backlight_on = false;
@@ -184,6 +190,9 @@ int main(void)
     bool idle_tick_active = false;
     bool idle_clock_active = false;
     bool adc_screen_was_on = false;
+    bool debug_usage_screen_was_on;
+    bool debug_usage_sleep_was_on;
+    bool debug_usage_usb_was_on;
     bool log_checkpoint_on_wake = false;
     bool hv_enabled;
     bool left_long_repeat_navigation = false;
@@ -256,12 +265,17 @@ int main(void)
     next_sample = board_millis;
     next_solar_sample = board_millis;
     next_battery_sample = board_millis;
+    next_usb_sample = board_millis;
     next_minute_tick = board_millis + 1000u;
     next_total_checkpoint = board_millis + TOTAL_PULSE_CHECKPOINT_MS;
     cpm_history_init();
     next_cpm_history_tick = board_millis + 500u;
     screen_timeout_ms = board_display_screen_timeout_ms();
     inactivity_deadline = board_millis + screen_timeout_ms;
+    debug_usage_last_uptime = board_uptime_seconds_get();
+    debug_usage_screen_was_on = backlight_on;
+    debug_usage_sleep_was_on = idle_clock_active;
+    debug_usage_usb_was_on = board_display_usb_connected();
 
     for (;;) {
         protocol_v1_service();
@@ -782,7 +796,9 @@ int main(void)
                 (int32_t)(now - next_solar_sample) >= 0;
             const bool battery_due =
                 (int32_t)(now - next_battery_sample) >= 0;
-            if (read_solar || battery_due) {
+            const bool read_usb = battery_due ||
+                (int32_t)(now - next_usb_sample) >= 0;
+            if (read_solar || battery_due || read_usb) {
                 uint16_t channel2;
                 uint16_t channel8;
                 uint16_t channel9;
@@ -791,7 +807,7 @@ int main(void)
                     (void)board_set_idle_clock(false);
                     idle_clock_active = false;
                 }
-                board_adc_read_selected(battery_due, battery_due, read_solar,
+                board_adc_read_selected(battery_due, read_usb, read_solar,
                     &channel2, &channel8, &channel9);
                 if (channel2 != UINT16_MAX) battery_adc_raw = channel2;
                 if (channel8 != UINT16_MAX) usb_adc_raw = channel8;
@@ -809,6 +825,9 @@ int main(void)
                             BATTERY_CRITICAL_SAMPLE_INTERVAL_MS :
                             BATTERY_IDLE_SAMPLE_INTERVAL_MS);
                     next_battery_sample = sampled_at + battery_interval;
+                }
+                if (read_usb) {
+                    next_usb_sample = sampled_at + USB_SAMPLE_INTERVAL_MS;
                 }
             }
         }
@@ -839,6 +858,29 @@ int main(void)
         }
 
         {
+            /* Sleep time tracks the low-clock idle mode. Charge is independent
+             * and may overlap with either screen or sleep time. */
+            const uint32_t sample_uptime = board_uptime_seconds_get();
+            const uint32_t elapsed_seconds = sample_uptime -
+                debug_usage_last_uptime;
+            if (debug_usage_screen_was_on) {
+                debug_screen_seconds += elapsed_seconds;
+            }
+            if (debug_usage_sleep_was_on) {
+                debug_sleep_seconds += elapsed_seconds;
+            }
+            if (debug_usage_usb_was_on) {
+                debug_usb_seconds += elapsed_seconds;
+            }
+            debug_usage_last_uptime = sample_uptime;
+            debug_usage_screen_was_on = backlight_on;
+            debug_usage_sleep_was_on = idle_clock_active;
+            debug_usage_usb_was_on = board_display_usb_connected();
+            board_display_set_debug_usage(debug_screen_seconds,
+                debug_sleep_seconds, debug_usb_seconds);
+        }
+
+        {
             protocol_v1_status_t status;
             status.uptime_seconds = board_uptime_seconds_get();
             status.count_today = today_pulse_count;
@@ -847,11 +889,15 @@ int main(void)
             status.battery_raw = battery_adc_raw;
             status.solar_raw = solar_adc_raw;
             status.usb_raw = usb_adc_raw;
-            status.flags = (hv_enabled ? 1u : 0u) |
-                (board_display_usb_connected() ? 2u : 0u);
+            status.flags = (uint16_t)((hv_enabled ? 1u : 0u) |
+                (board_display_usb_connected() ? 2u : 0u) |
+                ((board_display_battery_start_raw() & 0x0FFFu) << 4u));
             status.count_total = board_detector_count();
             status.dose_fraction_3600 = (uint16_t)dose_fraction;
             status.dose_count_total = total_pulse_count;
+            status.screen_seconds = debug_screen_seconds;
+            status.sleep_seconds = debug_sleep_seconds;
+            status.usb_seconds = debug_usb_seconds;
             protocol_v1_set_status(&status);
         }
         protocol_v1_service();

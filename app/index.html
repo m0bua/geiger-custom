@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1115">
   <title>Device Monitor</title>
-  <link rel="stylesheet" href="style.css?v=20261024-1">
+  <link rel="stylesheet" href="style.css?v=20261026-6">
 </head>
 <body>
   <main class="shell">
@@ -61,37 +61,35 @@
 
     <section id="debug-page" class="page" hidden>
       <section class="details-panel">
-        <div class="panel-heading"><h2 id="debug-heading">DEBUG</h2></div>
-        <nav id="debug-subtabs" class="log-tabs" aria-label="Debug pages">
-          <button class="log-tab active" type="button" data-debug-page="main">DEBUG</button>
-          <button class="log-tab" type="button" data-debug-page="memory">DEBUG MEM</button>
-          <button class="log-tab" type="button" data-debug-page="logs">DEBUG LOGS</button>
-          <button class="log-tab" type="button" data-debug-page="voltage">DEBUG VOLT</button>
-        </nav>
-        <div class="debug-subpage detail-grid" data-debug-panel="main">
-          <div class="detail"><span>UPTIME</span><strong id="uptime">—</strong></div>
-          <div class="detail"><span>CNT</span><strong id="debug-count">—</strong></div>
-          <div class="detail"><span>RTC</span><strong id="debug-rtc">—</strong></div>
-          <div class="detail"><span>CLOCK</span><strong id="debug-clock">—</strong></div>
-        </div>
-        <div class="debug-subpage detail-grid" data-debug-panel="memory" hidden>
-          <div class="detail"><span>FLASH</span><strong id="memory-flash">64 KB</strong></div>
-          <div class="detail"><span>RAM</span><strong id="memory-ram">8 KB</strong></div>
-          <div class="detail"><span>EEPROM</span><strong id="memory-eeprom">2 KB</strong></div>
-          <div class="detail"><span>SPI</span><strong id="memory-spi">—</strong></div>
-          <div class="detail"><span>JEDEC</span><strong id="memory-jedec">—</strong></div>
-        </div>
-        <div class="debug-subpage detail-grid" data-debug-panel="logs" hidden>
-          <div class="detail"><span>MIN</span><strong id="debug-minutes">—</strong></div>
-          <div class="detail"><span>HOUR</span><strong id="debug-hours">—</strong></div>
-          <div class="detail"><span>DAY</span><strong id="debug-days">—</strong></div>
-          <div class="detail"><span>ALERTS</span><strong id="debug-alerts">—</strong></div>
-        </div>
-        <div class="debug-subpage detail-grid" data-debug-panel="voltage" hidden>
-          <div class="detail"><span>BATT</span><strong id="debug-battery">—</strong></div>
-          <div class="detail"><span>SOL</span><strong id="debug-solar">—</strong></div>
-          <div class="detail"><span>USB</span><strong id="debug-usb">—</strong></div>
-        </div>
+        <div class="panel-heading"><h2>DEBUG</h2></div>
+        <table class="debug-usage-table">
+          <thead><tr><th scope="col">FIELD</th><th scope="col">VALUE</th><th scope="col" aria-label="Raw reading or duration"></th></tr></thead>
+          <tbody>
+            <tr class="debug-section"><th scope="colgroup" colspan="3">SYSTEM</th></tr>
+            <tr><th scope="row">UPTIME</th><td id="uptime">—</td><td></td></tr>
+            <tr><th scope="row">CNT</th><td id="debug-count">—</td><td></td></tr>
+            <tr><th scope="row">RTC</th><td id="debug-rtc">—</td><td></td></tr>
+            <tr><th scope="row">CLOCK</th><td id="debug-clock">—</td><td></td></tr>
+            <tr class="debug-section"><th scope="colgroup" colspan="3">POWER</th></tr>
+            <tr><th scope="row">BATT</th><td id="debug-battery-percent">—</td><td id="debug-battery-raw">—</td></tr>
+            <tr><th scope="row">BATT START</th><td id="debug-battery-start-percent">—</td><td id="debug-battery-start-raw">—</td></tr>
+            <tr><th scope="row">SOL</th><td id="debug-solar-percent">—</td><td id="debug-solar-raw">—</td></tr>
+            <tr><th scope="row">CHARGE</th><td id="debug-charge-percent">—</td><td id="debug-charge-time">—</td></tr>
+            <tr><th scope="row">SCREEN</th><td id="debug-screen-percent">—</td><td id="debug-screen-time">—</td></tr>
+            <tr><th scope="row">SLEEP</th><td id="debug-sleep-percent">—</td><td id="debug-sleep-time">—</td></tr>
+            <tr class="debug-section"><th scope="colgroup" colspan="3">LOGS</th></tr>
+            <tr><th scope="row">MIN</th><td id="debug-minutes">—</td><td></td></tr>
+            <tr><th scope="row">HOUR</th><td id="debug-hours">—</td><td></td></tr>
+            <tr><th scope="row">DAY</th><td id="debug-days">—</td><td></td></tr>
+            <tr><th scope="row">ALERTS</th><td id="debug-alerts">—</td><td></td></tr>
+            <tr class="debug-section"><th scope="colgroup" colspan="3">MEMORY</th></tr>
+            <tr><th scope="row">FLASH</th><td id="memory-flash">64 KB</td><td></td></tr>
+            <tr><th scope="row">RAM</th><td id="memory-ram">8 KB</td><td></td></tr>
+            <tr><th scope="row">EEPROM</th><td id="memory-eeprom">2 KB</td><td></td></tr>
+            <tr><th scope="row">SPI</th><td id="memory-spi">—</td><td></td></tr>
+            <tr><th scope="row">JEDEC</th><td id="memory-jedec">—</td><td></td></tr>
+          </tbody>
+        </table>
       </section>
     </section>
 
@@ -196,7 +194,7 @@
           <li><strong>Overview:</strong> current rate, dose today, solar and battery readings, device clock, and recent rate chart.</li>
           <li><strong>Logs:</strong> browse day, minute, hour, and alert records when available. Load older pages as needed.</li>
           <li><strong>Settings:</strong> read and change settings supported by the connected firmware.</li>
-          <li><strong>Debug:</strong> inspect uptime, counters, clock, memory, log counts, and raw voltage readings.</li>
+          <li><strong>Debug:</strong> inspect uptime, counters, clock, memory, log counts, and battery, solar, charging, screen, and sleep readings in one sectioned table. Battery at startup appears when supported by the firmware.</li>
         </ul>
       </details>
       <details class="information-card device-manual">
@@ -241,7 +239,7 @@
 
         <details class="manual-chapter">
         <summary>1.3 · Debug</summary>
-        <p>Shows diagnostic information across four views: DEBUG (uptime, pulse count, RTC and clock), DEBUG MEM (memory and SPI status), DEBUG LOGS (minute, hour, day, and alert record counts), and DEBUG VOLT (battery, solar, and USB readings). Long Right cycles through the diagnostic views. Short Left/Right moves between Time, Settings, and Debug.</p>
+        <p>Shows diagnostic information across four views: DEBUG (uptime, pulse count, RTC and clock), DEBUG MEM (memory and SPI status), DEBUG LOGS (minute, hour, day, and alert record counts), and DEBUG VOLT (battery and solar readings plus charge, screen, and sleep time). Long Right cycles through the diagnostic views. Short Left/Right moves between Time, Settings, and Debug.</p>
         </details>
 
         <details class="manual-chapter">
@@ -289,6 +287,6 @@
 
     <footer>Protocol V1</footer>
   </main>
-  <script defer src="app.js?v=20261023-34"></script>
+  <script defer src="app.js?v=20261026-5"></script>
 </body>
 </html>
