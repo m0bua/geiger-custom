@@ -1,6 +1,6 @@
 #include "protocol_v1.h"
 #include "board.h"
-#include "log_storage.h"
+#include "second_log.h"
 #include "spi_nor.h"
 
 #include <stdbool.h>
@@ -45,8 +45,6 @@ static uint8_t tx_frame[MAX_WIRE_SIZE];
 static uint8_t encoded_length;
 static bool discard_until_delimiter;
 static protocol_v1_status_t current_status;
-static uint16_t cached_alert_episode_count;
-static bool cached_alert_episode_count_valid;
 
 static uint16_t read_u16(const uint8_t *p)
 {
@@ -259,15 +257,11 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         if (!deferred_action) response[0] = PROTOCOL_STATUS_INVALID_VALUE;
     } else if (opcode == PROTOCOL_V1_OP_GET_LOG_INFO &&
                payload_length == 0u) {
-        uint16_t minutes;
-        uint16_t hours;
-        uint16_t days;
-        log_storage_log_counts(&minutes, &hours, &days);
         response[1] = board_display_use_spi() ? 1u : 0u;
-        write_u16(&response[2], minutes);
-        write_u16(&response[4], hours);
-        write_u16(&response[6], days);
-        write_u16(&response[8], log_storage_alert_record_count());
+        write_u16(&response[2], second_log_count());
+        write_u16(&response[4], 0u);
+        write_u16(&response[6], 0u);
+        write_u16(&response[8], 0u);
         uint32_t uptime_seconds = 0u;
         uint32_t calendar_seconds = 0u;
         bool calendar_valid = false;
@@ -286,109 +280,38 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         response[21] = board_rtc_clock_source();
         write_u32(&response[22], uptime_seconds);
         response_length = 26u;
-    } else if (opcode == PROTOCOL_V1_OP_GET_LOG_PAGE &&
-               payload_length == 4u) {
+    } else if (opcode == PROTOCOL_V1_OP_GET_LOG_PAGE && payload_length == 4u) {
         const uint8_t type = frame[8];
         const uint16_t offset = read_u16(&frame[9]);
         const uint8_t requested = frame[11];
-        uint16_t total = 0u;
+        uint32_t uptime_seconds = 0u, calendar_seconds = 0u;
+        bool calendar_valid = false;
+        const uint16_t total = second_log_count();
         uint8_t count = 0u;
-        uint32_t doses[3];
-        uint8_t packed_min_max[15];
-        uint32_t timestamps[3] = {0u, 0u, 0u};
-        if (requested == 0u || requested > 3u || type > 3u ||
-            (type != 0u && !board_display_use_spi())) {
+        if (type != 0u || requested == 0u || requested > 3u) {
             response[0] = PROTOCOL_STATUS_INVALID_VALUE;
             response_length = 1u;
         } else {
             response[1] = type;
             write_u16(&response[2], offset);
-            if (type == 3u) {
-                uint32_t starts[3];
-                uint32_t durations[3];
-                uint32_t alert_doses[3];
-                uint32_t alert_maxima[3];
-                if (offset == 0u || !cached_alert_episode_count_valid) {
-                    cached_alert_episode_count =
-                        log_storage_alert_episode_count();
-                    cached_alert_episode_count_valid = true;
-                }
-                total = cached_alert_episode_count;
-                count = offset >= total ? 0u :
-                    log_storage_alert_page(offset, starts, durations,
-                        alert_doses, alert_maxima, requested);
-                for (uint8_t i = 0u; i < count; ++i) {
-                    uint8_t *entry = &response[7u + (uint16_t)i * 16u];
-                    write_u32(&entry[0], starts[i]);
-                    write_u32(&entry[4], durations[i]);
-                    write_u32(&entry[8], alert_doses[i]);
-                    write_u32(&entry[12], alert_maxima[i]);
-                }
-            } else {
-                uint16_t minutes;
-                uint16_t hours;
-                uint16_t days;
-                uint32_t uptime_seconds = 0u;
-                uint32_t calendar_seconds = 0u;
-                bool calendar_valid = false;
-                const log_graph_period_t period = type == 0u ?
-                    LOG_GRAPH_DAYS : (type == 1u ? LOG_GRAPH_MINUTES :
-                    LOG_GRAPH_HOURS);
-                const uint32_t period_seconds = type == 0u ? 86400u :
-                    (type == 1u ? 60u : 3600u);
-                log_storage_log_counts(&minutes, &hours, &days);
-                total = (type == 0u ? days :
-                    (type == 1u ? minutes : hours));
-                if (total != UINT16_MAX) ++total; /* current RAM period */
-                const uint8_t actual = offset >= total ? 0u :
-                    (uint8_t)(((uint16_t)(total - offset) < requested) ?
-                    (total - offset) : requested);
-                if (actual != 0u && !log_storage_graph_page(period, offset,
-                        doses, packed_min_max, actual, &count)) {
-                    response[0] = PROTOCOL_STATUS_INVALID_VALUE;
-                    response_length = 1u;
-                    goto log_page_done;
-                }
-                (void)board_rtc_log_time(&uptime_seconds, &calendar_seconds,
-                    &calendar_valid);
-                if (calendar_valid) {
-                    const uint32_t progress =
-                        log_storage_graph_current_seconds(period);
-                    const uint32_t period_start = calendar_seconds >= progress ?
-                        calendar_seconds - progress : 0u;
-                    for (uint8_t i = 0u; i < count; ++i) {
-                        const uint16_t index = (uint16_t)(offset + i);
-                        const int64_t nominal = (int64_t)period_start -
-                            (int64_t)index * period_seconds;
-                        int32_t correction = 0;
-                        if (index != 0u && type != 0u) {
-                            correction = log_storage_graph_time_correction(
-                                period, index, period_start);
-                        }
-                        const int64_t adjusted = nominal + correction;
-                        timestamps[i] = adjusted < 0 ? 0u :
-                            (uint32_t)adjusted;
-                    }
-                }
-                for (uint8_t i = 0u; i < count; ++i) {
-                    uint8_t *entry = &response[7u + (uint16_t)i * 16u];
-                    const uint8_t *pair = &packed_min_max[(uint16_t)i * 5u];
-                    uint64_t packed = 0u;
-                    for (uint8_t b = 0u; b < 5u; ++b) {
-                        packed |= (uint64_t)pair[b] << (b * 8u);
-                    }
-                    write_u32(&entry[0], timestamps[i]);
-                    write_u32(&entry[4], doses[i]);
-                    write_u32(&entry[8], (uint32_t)(packed & 0x3FFFFu));
-                    write_u32(&entry[12], (uint32_t)((packed >> 18u) & 0x3FFFFu));
-                }
+            (void)board_rtc_log_time(&uptime_seconds, &calendar_seconds, &calendar_valid);
+            while (count < requested && (uint16_t)(offset + count) < total) {
+                uint32_t pulses = 0u;
+                const uint8_t age = (uint8_t)(offset + count);
+                if (!second_log_get(age, &pulses)) break;
+                uint8_t *entry = &response[7u + (uint16_t)count * 16u];
+                const uint32_t timestamp = calendar_valid && calendar_seconds >= age ? calendar_seconds - age : 0u;
+                const uint32_t cpm = pulses > UINT32_MAX / 60u ? UINT32_MAX : pulses * 60u;
+                write_u32(&entry[0], timestamp);
+                write_u32(&entry[4], pulses);
+                write_u32(&entry[8], cpm);
+                write_u32(&entry[12], cpm);
+                ++count;
             }
             write_u16(&response[4], total);
             response[6] = count;
             response_length = (uint16_t)(7u + (uint16_t)count * 16u);
         }
-log_page_done:
-        ;
     } else if (opcode == PROTOCOL_V1_OP_GET_SPI_DUMP_PAGE &&
                payload_length == 5u) {
         const uint32_t offset = read_u32(&frame[8]);

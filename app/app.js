@@ -17,7 +17,7 @@ const CAP_SET_RTC = 1 << 6;
 const CAP_DEVICE_ACTION = 1 << 7;
 const MAX_PAYLOAD = 64;
 const LOG_BATCH_SIZE = 5;
-const LOG_INITIAL_TARGETS = { days: 30, minutes: 60, hours: 24, alerts: 5 };
+const LOG_INITIAL_TARGETS = { seconds: 90 };
 const STM32_FLASH_BASE = 0x08000000;
 const STM32_FLASH_SIZE = 64 * 1024;
 const STM32_FLASH_PAGE_SIZE = 128;
@@ -262,10 +262,7 @@ const elements = {
   debugCount: document.querySelector('#debug-count'),
   debugRtc: document.querySelector('#debug-rtc'),
   debugClock: document.querySelector('#debug-clock'),
-  debugMinutes: document.querySelector('#debug-minutes'),
-  debugHours: document.querySelector('#debug-hours'),
-  debugDays: document.querySelector('#debug-days'),
-  debugAlerts: document.querySelector('#debug-alerts'),
+  debugSeconds: document.querySelector('#debug-seconds'),
   memorySpi: document.querySelector('#memory-spi'),
   memoryJedec: document.querySelector('#memory-jedec'),
 };
@@ -509,7 +506,7 @@ let deviceSettings = null;
 let deviceHiddenSettings = null;
 let selectedResetAction = 0;
 let logInfo = null;
-let selectedLogType = 'days';
+let selectedLogType = 'seconds';
 let logRecords = [];
 let logStartOffset = 0;
 let rateHistoryUnit = 'CPM';
@@ -693,10 +690,7 @@ function renderDebugLogInfo() {
   elements.debugRtc.textContent = logInfo.rtcStatus ||
     (logInfo.calendarValid ? 'SET' : 'NOT SET');
   elements.debugClock.textContent = logInfo.clockSource || '—';
-  elements.debugMinutes.textContent = logInfo.minutes.toLocaleString('en-US');
-  elements.debugHours.textContent = logInfo.hours.toLocaleString('en-US');
-  elements.debugDays.textContent = logInfo.days.toLocaleString('en-US');
-  elements.debugAlerts.textContent = logInfo.alerts.toLocaleString('en-US');
+  elements.debugSeconds.textContent = logInfo.seconds.toLocaleString('en-US');
   elements.memorySpi.textContent = logInfo.spiSizeMb === null ? '—' :
     `${logInfo.spiSizeMb}MB`;
   elements.memorySpi.classList.toggle('state-error', logInfo.spi && !logInfo.spiReady);
@@ -711,10 +705,10 @@ async function refreshLogCounts() {
     const payload = await activeSerial.request(OP_GET_LOG_INFO, undefined, 5000);
     if (serial !== activeSerial || ![15, 22, 26].includes(payload.length) || payload[0] !== 0) return;
     const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-    logInfo.minutes = view.getUint16(2, true);
-    logInfo.hours = view.getUint16(4, true);
-    logInfo.days = view.getUint16(6, true);
-    logInfo.alerts = view.getUint16(8, true);
+    logInfo.seconds = view.getUint16(2, true);
+    logInfo.hours = 0;
+    logInfo.days = 0;
+    logInfo.alerts = 0;
     renderDebugLogInfo();
     elements.logTabs.querySelectorAll('[data-log-type]').forEach((button) => {
       const type = logTypes.find((item) => item.id === button.dataset.logType);
@@ -728,17 +722,14 @@ async function refreshLogCounts() {
 }
 
 const logTypes = [
-  { id: 'minutes', protocolId: 1, label: 'MINUTES', countKey: 'minutes', spi: true },
-  { id: 'hours', protocolId: 2, label: 'HOURS', countKey: 'hours', spi: true },
-  { id: 'days', protocolId: 0, label: 'DAYS', countKey: 'days' },
-  { id: 'alerts', protocolId: 3, label: 'ALERTS', countKey: 'alerts', spi: true },
+  { id: 'seconds', protocolId: 0, label: 'SECONDS', countKey: 'seconds' },
 ];
 
 function renderLogTabs() {
   elements.logTabs.replaceChildren();
   if (!logInfo) return;
   const enabled = logTypes.filter((type) => !type.spi || logInfo.spi);
-  if (!enabled.some((type) => type.id === selectedLogType)) selectedLogType = enabled[0]?.id || 'days';
+  if (!enabled.some((type) => type.id === selectedLogType)) selectedLogType = enabled[0]?.id || 'seconds';
   for (const type of enabled) {
     const button = document.createElement('button');
     button.type = 'button';
@@ -835,7 +826,7 @@ function renderLogSummary() {
 }
 
 function mergeAggregateLogPeriods(records, type) {
-  if (type === 'alerts' || records.length < 2) return records;
+  if (type === 'seconds' || type === 'alerts' || records.length < 2) return records;
   const periodSeconds = type === 'minutes' ? 60 :
     (type === 'hours' ? 3600 : 86400);
   const merged = [];
@@ -876,8 +867,8 @@ function logValueCells(record, index) {
     return [duration, `${dose.value} ${dose.unit}`, `${average.value} ${average.unit}`,
       `${maximum.value} ${maximum.unit}`];
   }
-  const periodSeconds = selectedLogType === 'minutes' ? 60 :
-    (selectedLogType === 'hours' ? 3600 : 86400);
+  const periodSeconds = selectedLogType === 'seconds' ? 1 : (selectedLogType === 'minutes' ? 60 :
+    (selectedLogType === 'hours' ? 3600 : 86400));
   const seconds = index === 0 && logInfo?.calendarValid ?
     (logInfo.calendarSeconds % periodSeconds || periodSeconds) : periodSeconds;
   const averageCpm = Math.round(record.dose * 60 / seconds);
@@ -902,9 +893,8 @@ async function loadLogNearDate() {
   const selectedDateEnd = selectedDateStart + 86400;
   const type = logTypes.find((item) => item.id === selectedLogType) || logTypes[0];
   const typeId = type.protocolId;
-  const physicalCount = selectedLogType === 'minutes' ? logInfo.minutes :
-    (selectedLogType === 'hours' ? logInfo.hours : logInfo.days);
-  const total = physicalCount + 1;
+  const physicalCount = logInfo.seconds;
+  const total = physicalCount;
   let targetOffset = Math.max(0, total - 1);
   let found = false;
 
@@ -953,7 +943,7 @@ function formatLogDate(seconds, type) {
     String(date.getUTCDate()).padStart(2, '0')].join('-');
   if (type === 'days') return datePart;
   const timePart = `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
-  return type === 'hours' ? `${datePart} ${timePart.slice(0, 2)}h` : `${datePart} ${timePart}`;
+  return type === 'seconds' ? `${datePart} ${timePart}:${String(date.getUTCSeconds()).padStart(2, '0')}` : (type === 'hours' ? `${datePart} ${timePart.slice(0, 2)}h` : `${datePart} ${timePart}`);
 }
 
 function formatLogRadiation(valueUsv, isRate = false) {
@@ -964,8 +954,8 @@ function formatLogRadiation(valueUsv, isRate = false) {
 }
 
 function formatAggregateCells(record, index) {
-  const periodSeconds = selectedLogType === 'minutes' ? 60 :
-    (selectedLogType === 'hours' ? 3600 : 86400);
+  const periodSeconds = selectedLogType === 'seconds' ? 1 : (selectedLogType === 'minutes' ? 60 :
+    (selectedLogType === 'hours' ? 3600 : 86400));
   let seconds = periodSeconds;
   if (index === 0 && logInfo?.calendarValid) {
     seconds = logInfo.calendarSeconds % periodSeconds || periodSeconds;
@@ -1152,7 +1142,7 @@ async function loadNewerLogRecords() {
     }
     if (generation !== logPageGeneration || selectedLogType !== type.id || !hasCurrentLogDate()) return;
     const info = new DataView(infoPayload.buffer, infoPayload.byteOffset, infoPayload.byteLength);
-    const countOffset = { minutes: 2, hours: 4, days: 6, alerts: 8 }[type.id];
+    const countOffset = { seconds: 2 }[type.id];
     const count = info.getUint16(countOffset, true);
     const additional = Math.max(0, count - logPageTotal);
     if (additional === 0) {
@@ -1231,10 +1221,8 @@ async function loadLogInfo() {
     const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
     logInfo = {
       spi: payload[1] !== 0,
-      minutes: view.getUint16(2, true),
-      hours: view.getUint16(4, true),
-      days: view.getUint16(6, true),
-      alerts: view.getUint16(8, true),
+      seconds: view.getUint16(2, true),
+      hours: 0, days: 0, alerts: 0,
       calendarValid: payload[10] !== 0,
       calendarSeconds: view.getUint32(11, true),
       calendarAnchorSeconds: view.getUint32(11, true),
@@ -1256,12 +1244,9 @@ async function loadLogInfo() {
         .toISOString().slice(0, 10);
     }
     updateDeviceDateTime();
-    selectedLogType = logInfo.spi ? 'minutes' : 'days';
+    selectedLogType = 'seconds';
     renderLogTabs();
-    elements.logsStatus.textContent = 'Physical records on device';
-    if (!logInfo.spi) {
-      elements.logsStatus.textContent = 'EEPROM · day history';
-    }
+    elements.logsStatus.textContent = 'Latest one-second records · live buffer (up to 90)';
     if (!elements.logsPage.hidden) loadLogPage(true);
   } catch (error) {
     elements.logsStatus.textContent = error.message;
@@ -1696,17 +1681,12 @@ function renderOfflinePreview() {
     percentElement.textContent = usage.percent;
     timeElement.textContent = usage.time;
   }
-  elements.debugMinutes.textContent = '0';
-  elements.debugHours.textContent = '0';
-  elements.debugDays.textContent = '0';
-  elements.debugAlerts.textContent = '0';
+  elements.debugSeconds.textContent = '0';
   elements.memorySpi.textContent = '—';
   elements.memoryJedec.textContent = '—';
   elements.rateChart.setAttribute('aria-label', 'Illustrative demo graph, not device data');
   elements.logsStatus.textContent = 'Demo preview · no device logs loaded';
-  const demoLogTypes = [
-    ['minutes', 'MINUTES'], ['hours', 'HOURS'], ['days', 'DAYS'], ['alerts', 'ALERTS'],
-  ];
+  const demoLogTypes = [['seconds', 'SECONDS']];
   elements.logTabs.replaceChildren();
   elements.logContent.replaceChildren();
   const renderDemoLog = (type) => {

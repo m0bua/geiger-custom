@@ -347,26 +347,11 @@ MCU не має виділяти RAM за неперевіреною length: л�
 | `SET_SETTINGS` | Перевірити й атомарно застосувати пакет змін у RAM |
 | `COMMIT_SETTINGS` | Зберегти обрану revision до EEPROM, повернути результат |
 | `SET_TIME_ANCHOR` | Встановити UNIX anchor з прив’язкою до монотонного часу без очищення логу |
-| `GET_LOG_INFO` | Доступні типи логів, обсяги, діапазони, record layout/version |
-| `OPEN_SNAPSHOT` | Зафіксувати метадані читання й доступний діапазон |
-| `READ_LOG` | Прочитати блок з snapshot + logical offset |
-| `CLOSE_SNAPSHOT` | Звільнити стан читання |
-| `SUBSCRIBE_STATUS` | Узгоджена частота live-оновлень; для v1 можна замінити GET_STATUS 1/с |
-| `REBOOT` / `ENTER_BOOTLOADER` | Окремі явні сервісні операції |
+| `GET_LOG_INFO` �� �������� request; response layout ������� ������� �� ��������: `status:u8 | use_spi:u8 | seconds_count:u16 | reserved:u16[3] | calendar_valid:u8 | calendar_seconds:u32 | spi_size_mb:u8 | spi_ready:u8 | jedec[3] | rtc_status:u8 | clock_source:u8 | uptime_seconds:u32`. `seconds_count` � ������� ������ ������ ���������� ��������� ������ (�� 90); ����� ��������� ������� ����. ���� SPI �������� ��� ������ ����� ���������, � �� ��� ������������.
 
-Коди status мінімально: OK, BAD_VERSION, BAD_LENGTH, BAD_CRC/помилка кадру за узгодженою політикою, UNKNOWN_OPCODE, INVALID_VALUE, BUSY, CONFLICT, SNAPSHOT_EXPIRED, STORAGE_ERROR. Пошкоджений CRC кадр за замовчуванням просто відкидається; відповісти BAD_CRC можна лише якщо безпечно встановлена адресація запиту.
+`GET_LOG_PAGE` request: `type:u8 | offset:u16 | limit:u8`; ����������� ���� type `0` (SECONDS), limit 1�3. Response: `status:u8 | type:u8 | offset:u16 | total:u16 | count:u8 | records[count]`. �����: `timestamp_seconds_since_2000:u32 | pulse_count:u32 | minimum_cpm:u32 | maximum_cpm:u32`. ��� ������������ �� RTC �� ��� ������; ��� RTC timestamp ������� ����. `offset=0` � �������� �������. ���� ��������� � �������� 90-���������� RAM-������.
 
-Не додавати текстові debug printf у той самий stream поза кадрами. Debug — окремий framed event або окремий режим.
-
-### Реалізований початковий зріз у кастомній прошивці
-
-Firmware має USART1 на PA9/PA10, 115200 8N1, приймання через RX interrupt і обмежену RAM-чергу. Реалізовано COBS + CRC-16/CCITT-FALSE та запити `HELLO`, `GET_STATUS`, `GET_SETTINGS`, `SET_SETTING`, `SET_RTC`, `GET_LOG_INFO` і `GET_LOG_PAGE`; максимальний payload — **64 байти**. Пошкоджені кадри відкидаються без відповіді. Текстових повідомлень у serial stream немає.
-
-`HELLO` response payload (10 байтів): `status:u8 | model_id:u16 | protocol_version:u8 | max_payload:u16 | capabilities:u32`. Наразі `model_id=1` (Geiger-2), `protocol_version=1`, `max_payload=64`, bit 0 capabilities означає підтримку `GET_STATUS`.
-
-`GET_STATUS` response payload (25 байтів): `status:u8 | uptime_seconds:u32 | count_today:u32 | rate_cpm:u32 | dose_nsv:u32 | battery_raw:u16 | solar_raw:u16 | usb_raw:u16 | flags:u16`. `dose_nsv` — накопичена за поточну добу доза в nSv; `flags` bit 0 — HV увімкнено, bit 1 — USB визначено як підключений. Усі багатобайтові значення little-endian. Response має `kind=2` і повторює `request_id` та `opcode` запиту. Status `0` — OK, `1` — невідома/непідтримана операція.
-
-Capability bits: bit 0 — `GET_STATUS`, bit 1 — `GET_SETTINGS`, bit 2 — `SET_SETTING`, bit 3 — `GET_LOG_INFO`, bit 4 — `GET_LOG_PAGE`, bit 5 — `GET_SPI_DUMP_PAGE`, bit 6 — `SET_RTC`.
+`GET_SPI_DUMP_PAGE`, bit 6 — `SET_RTC`.
 
 `SET_RTC` (8) request: `seconds_since_2000:u32` little-endian, interpreted as the device's local wall-clock date/time. The device validates the 2000–2099 range, flushes and cuts off the log timeline, then writes the RTC and marks it set. Response is the one-byte status.
 

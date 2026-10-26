@@ -16,6 +16,7 @@ FEAT: кольори тем
 FEAT: експорт логів з додатку
 FEAT: перемикачі режимів: після делею (30s) не перемикати режими далі а вимикати. Інвізібл вимикати навіть з вимкненого екрану.
 FEAT: docs\docs\CLICK_SOUND_SPEC.md
+FEAT: js graph - val on mouseover & time select
 
 BUG: після бутлодеру в додатку початок прошивки через platformio перезапускає в прошивку
     docs\docs\USB_UART_REENUMERATION_RECOVERY.md

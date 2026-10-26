@@ -1,7 +1,8 @@
 #include "board.h"
 #include "cpm_history.h"
-#include "log_storage.h"
+#include "daily_dose.h"
 #include "protocol_v1.h"
+#include "second_log.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -143,7 +144,6 @@ int main(void)
     uint32_t screen_timeout_ms;
     uint32_t event_count = 0u;
     uint32_t previous_minute_sample = 0u;
-    uint32_t minute_total = 0u;
     uint32_t pulses_since_start = 0u;
     uint32_t session_pulses_total = 0u;
     uint32_t session_elapsed_seconds = 0u;
@@ -152,7 +152,6 @@ int main(void)
     uint64_t hour_sum_cpm = 0u;
     uint32_t hour_sample_count = 0u;
     uint32_t hour_bucket = UINT32_MAX;
-    uint8_t rate_window_seconds = 0u;
     uint32_t dose_thousandths = 0u;
     uint32_t dose_fraction = 0u;
     uint32_t dose_measurement_seconds = 0u;
@@ -163,14 +162,12 @@ int main(void)
     uint8_t total_pulse_sequence = 0u;
     uint16_t calendar_day_key = UINT16_MAX;
     bool calendar_day_valid = false;
-    uint32_t minute_bins[60] = {0u};
     uint32_t next_minute_tick;
     uint32_t next_cpm_history_tick;
     uint32_t latest_cpm = 0u;
     uint16_t battery_adc_raw = 0u;
     uint16_t solar_adc_raw = 0u;
     uint16_t usb_adc_raw = 0u;
-    uint8_t minute_head = 0u;
     uint32_t led_blink_deadline = 0u;
     uint32_t high_speed_deadline = 0u;
     uint32_t debug_usage_last_uptime;
@@ -193,7 +190,6 @@ int main(void)
     bool debug_usage_screen_was_on;
     bool debug_usage_sleep_was_on;
     bool debug_usage_usb_was_on;
-    bool log_checkpoint_on_wake = false;
     bool hv_enabled;
     bool left_long_repeat_navigation = false;
     bool right_long_repeat_navigation = false;
@@ -212,7 +208,8 @@ int main(void)
     board_lcd_backlight_set_brightness(10u);
     board_lcd_backlight_set(false);
     board_display_init();
-    log_storage_init(board_display_use_spi());
+    second_log_init();
+    daily_dose_init(UINT16_MAX, 0u);
     (void)total_pulse_load(&total_pulse_count, &total_pulse_sequence);
     {
         uint32_t uptime_seconds;
@@ -223,15 +220,8 @@ int main(void)
             if (calendar_valid) {
                 calendar_day_key = (uint16_t)(calendar_seconds / 86400u);
                 calendar_day_valid = true;
-                const bool day_checkpoint_matches =
-                    log_storage_calendar_day(calendar_day_key, true);
-                log_storage_restore_live(calendar_seconds, true);
-                today_pulse_count = log_storage_today_pulse_count();
-                if ((!day_checkpoint_matches || today_pulse_count == 0u) &&
-                    log_storage_spi_available()) {
-                    today_pulse_count = log_storage_today_recover_from_hours(
-                        (uint8_t)((calendar_seconds % 86400u) / 3600u));
-                }
+                daily_dose_set_day(calendar_day_key, 0u);
+                today_pulse_count = daily_dose_count();
                 dose_measurement_seconds = board_display_dose_period() == 1u ?
                     calendar_seconds % 86400u : 0u;
                 dose_from_pulse_count(selected_dose_pulses(
@@ -239,8 +229,6 @@ int main(void)
                         total_pulse_count),
                     &dose_thousandths, &dose_fraction);
             }
-            log_storage_time_cutoff(uptime_seconds, calendar_seconds,
-                calendar_valid, LOG_CUTOFF_REASON_BOOT);
         }
     }
     if (board_display_dose_period() == 0u) {
@@ -285,6 +273,7 @@ int main(void)
                 total_pulse_save(total_pulse_count, &total_pulse_sequence)) {
                 total_pulse_saved = total_pulse_count;
             }
+            (void)daily_dose_checkpoint();
             next_total_checkpoint = now + TOTAL_PULSE_CHECKPOINT_MS;
         }
         const uint8_t button_wakeup_mask =
@@ -307,7 +296,6 @@ int main(void)
             now = board_millis;
             screen_backlight_wake();
             backlight_on = true;
-            log_checkpoint_on_wake = true;
             inactivity_deadline = now + screen_timeout_ms;
             board_buttons_suppress_until_release(button_wakeup_mask |
                 currently_pressed);
@@ -361,7 +349,6 @@ int main(void)
                     (BOARD_BUTTON_LEFT_DOWN | BOARD_BUTTON_RIGHT_DOWN));
                 screen_backlight_wake();
                 backlight_on = true;
-                log_checkpoint_on_wake = true;
                 inactivity_deadline = now + screen_timeout_ms;
                 events &= (uint8_t)~button_events;
             } else if ((events & button_events) != 0u) {
@@ -449,11 +436,7 @@ int main(void)
                     detected_pulses = board_detector_count();
                     event_count = detected_pulses;
                     previous_minute_sample = detected_pulses;
-                    minute_total = 0u;
-                    rate_window_seconds = 0u;
-                    for (uint8_t i = 0u; i < 60u; ++i) {
-                        minute_bins[i] = 0u;
-                    }
+                    second_log_reset_rate_window();
                     if (hv_enabled) {
                         pulses_since_start = 0u;
                         board_display_set_count(0u);
@@ -474,7 +457,6 @@ int main(void)
                     }
                     screen_backlight_wake();
                     backlight_on = true;
-                    log_checkpoint_on_wake = true;
                     inactivity_deadline = now + screen_timeout_ms;
                 } else if (!alarm_active && screen_alarm_active) {
                     inactivity_deadline = now + screen_timeout_ms;
@@ -564,7 +546,6 @@ int main(void)
                 }
                 screen_backlight_wake();
                 backlight_on = true;
-                log_checkpoint_on_wake = true;
                 inactivity_deadline = now + screen_timeout_ms;
             }
 
@@ -581,18 +562,11 @@ int main(void)
                         if (!calendar_day_valid ||
                             current_day != calendar_day_key) {
                             const bool time_was_valid = calendar_day_valid;
-                            const bool day_matches =
-                                log_storage_calendar_day(current_day,
-                                                         time_was_valid);
                             calendar_day_key = current_day;
                             calendar_day_valid = true;
-                            if (!time_was_valid && !day_matches) {
-                                log_storage_today_seed(session_pulses_total);
-                                today_pulse_count = session_pulses_total;
-                            } else {
-                                today_pulse_count =
-                                    log_storage_today_pulse_count();
-                            }
+                            daily_dose_set_day(current_day,
+                                time_was_valid ? 0u : session_pulses_total);
+                            today_pulse_count = daily_dose_count();
                             if (board_display_dose_period() == 1u) {
                                 dose_measurement_seconds =
                                     calendar_seconds % 86400u;
@@ -607,10 +581,6 @@ int main(void)
                                 today_pulse_count, total_pulse_count,
                                 dose_measurement_seconds);
                         }
-                        log_storage_checkpoint(calendar_seconds, true,
-                            board_display_usb_connected(),
-                            log_checkpoint_on_wake);
-                        log_checkpoint_on_wake = false;
                     }
                 }
                 if (hv_enabled) {
@@ -636,26 +606,14 @@ int main(void)
                 } else {
                     total_pulse_count += second_pulses;
                 }
-                minute_total -= minute_bins[minute_head];
-                minute_bins[minute_head] = second_pulses;
-                minute_total += second_pulses;
-                minute_head = (uint8_t)((minute_head + 1u) % 60u);
-                if (rate_window_seconds < 60u) ++rate_window_seconds;
-                uint32_t cpm = minute_total;
-                if (rate_window_seconds < 60u) {
-                    cpm = (uint32_t)(((uint64_t)minute_total * 60u +
-                        rate_window_seconds / 2u) / rate_window_seconds);
-                }
+                const uint32_t cpm = second_log_add(second_pulses);
                 /* Rate = normalized CPM * 0.00666 µSv/h. */
                 const uint32_t rate_thousandths = (uint32_t)(
                     ((uint64_t)cpm * 666u + 50u) / 100u);
                 latest_cpm = cpm;
-                log_storage_second(second_pulses);
+                daily_dose_add(second_pulses);
                 today_pulse_count = calendar_day_valid ?
-                    log_storage_today_pulse_count() : session_pulses_total;
-                log_storage_alert_sample(cpm, second_pulses,
-                    board_uptime_seconds_get(),
-                    pulses_since_start >= 25u);
+                    daily_dose_count() : session_pulses_total;
                 board_display_set_rate(rate_thousandths, cpm,
                                        pulses_since_start,
                                        pulses_since_start >= 25u);
@@ -678,8 +636,7 @@ int main(void)
                                        total_pulse_count,
                                        dose_measurement_seconds);
                 } else {
-                    log_storage_alert_sample(0u, 0u,
-                        board_uptime_seconds_get(), false);
+                    latest_cpm = second_log_add(0u);
                 }
                 {
                     uint32_t minute_min = UINT32_MAX;
@@ -722,7 +679,6 @@ int main(void)
 
             if ((int32_t)(now - next_cpm_history_tick) >= 0) {
                 cpm_history_push(latest_cpm);
-                if (hv_enabled) log_storage_sample_cpm(latest_cpm);
                 board_display_history_updated();
                 /* Do not fabricate a burst of old samples after a delayed
                  * service pass; resume the regular 500 ms cadence from now. */

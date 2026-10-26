@@ -78,10 +78,7 @@
             <tr><th scope="row">SCREEN</th><td id="debug-screen-percent">—</td><td id="debug-screen-time">—</td></tr>
             <tr><th scope="row">SLEEP</th><td id="debug-sleep-percent">—</td><td id="debug-sleep-time">—</td></tr>
             <tr class="debug-section"><th scope="colgroup" colspan="3">LOGS</th></tr>
-            <tr><th scope="row">MIN</th><td id="debug-minutes">—</td><td></td></tr>
-            <tr><th scope="row">HOUR</th><td id="debug-hours">—</td><td></td></tr>
-            <tr><th scope="row">DAY</th><td id="debug-days">—</td><td></td></tr>
-            <tr><th scope="row">ALERTS</th><td id="debug-alerts">—</td><td></td></tr>
+            <tr><th scope="row">SEC</th><td id="debug-seconds">—</td><td></td></tr>
             <tr class="debug-section"><th scope="colgroup" colspan="3">MEMORY</th></tr>
             <tr><th scope="row">FLASH</th><td id="memory-flash">64 KB</td><td></td></tr>
             <tr><th scope="row">RAM</th><td id="memory-ram">8 KB</td><td></td></tr>
@@ -250,7 +247,7 @@
 
         <details class="manual-chapter">
         <summary>2.1 · Graphs</summary>
-        <p>Long Right from Dose opens the graph view. Short Left/Right selects a graph type: SEC, MIN, HOUR, DAY, or ALERTS. SEC displays a rolling rate history; long Right steps its window through 10, 30, 60, and 90 seconds. Logged MIN, HOUR, and DAY views show stored history when available. ALERTS shows recorded alarm events. Some log types require SPI logging to be enabled; available history also depends on what the device has recorded.</p>
+        <p>Long Right from Dose opens the graph view. The graph shows live CPM history; long Right cycles its window through 10, 30, 60, and 90 seconds. The Logs page lists the latest 90 one-second records while they remain in the live ring buffer.</p>
         <p>For a log graph, long Right enables the data cursor. Short Left/Right moves between records; the selected record’s date and statistics are shown. Long Right exits cursor selection. Long Left returns from the selected record to graph selection, then returns to Dose.</p>
         <div class="manual-screen-grid">
           <figure><figcaption>2.1 · 90-second rate graph</figcaption><img src="../docs/renders/screens/2.1-graph-90s.svg" alt="Rate graph with a 90-second window" loading="lazy"></figure>
