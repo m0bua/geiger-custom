@@ -317,6 +317,7 @@ static uint64_t lcd_graph_log_summary_dose;
 static uint32_t lcd_graph_log_summary_max;
 static uint32_t lcd_graph_log_summary_average;
 static uint32_t lcd_graph_log_summary_bar_max;
+static uint32_t lcd_graph_log_summary_coverage;
 static uint8_t lcd_graph_yellow_threshold_y = UINT8_MAX;
 static uint8_t lcd_graph_red_threshold_y = UINT8_MAX;
 static uint32_t lcd_graph_refresh_deadline;
@@ -2332,6 +2333,7 @@ static bool lcd_graph_stat_icon_pixel(uint8_t stat, uint8_t x, uint8_t y)
     };
     if (stat == 0u) return font_small_pixel(lcd_graph_log_type ? 'D' : 'C', x, y);
     if (stat == 2u) return font_small_pixel('A', x, y);
+    if (stat == 3u && lcd_graph_log_type) return font_small_pixel('s', x, y);
     if ((stat != 1u && stat != 3u) || x < 1u || x > 5u || y < 1u || y > 7u) return false;
     return (icon_rows[stat == 1u ? 0u : 1u][y - 1u] & (uint8_t)(1u << (5u - x))) != 0u;
 }
@@ -2466,13 +2468,13 @@ static void lcd_graph_format_stat(uint32_t cpm, uint8_t unit, char text[5])
     while (out < 5u) text[out++] = ' ';
 }
 
-static void lcd_graph_format_dose(uint64_t count, char text[5])
+static void lcd_graph_format_dose(uint64_t count, char text[5], uint8_t unit_mode)
 {
     char reversed[6];
     uint8_t out = 0u;
     uint8_t digits = 0u;
 
-    if (lcd_settings_value_index[SETTING_UNIT] == 1u) {
+    if (unit_mode == 1u) {
         if (count > 99999u) {
             text[0] = '>';
             text[1] = '9'; text[2] = '9'; text[3] = '9'; text[4] = '9';
@@ -2800,6 +2802,7 @@ static void lcd_graph_update_log_summary(void)
     lcd_graph_log_summary_average = covered ?
         (uint32_t)((weighted_rate + covered / 2u) / covered) : 0u;
     lcd_graph_log_summary_bar_max = max_dose;
+    lcd_graph_log_summary_coverage = (uint32_t)covered;
     lcd_graph_log_summary_valid = true;
 }
 
@@ -2863,21 +2866,18 @@ static void lcd_graph_build_logs(void)
     lcd_graph_selected_calendar = selected != NULL && selected->calendar_valid;
     lcd_graph_stat_max = lcd_graph_cursor_mode && selected ? selected->maximum_cpm :
         lcd_graph_log_summary_max;
-    lcd_graph_stat_min = 0u;
+    lcd_graph_stat_min = lcd_graph_cursor_mode && selected ?
+        selected->covered_seconds : lcd_graph_log_summary_coverage;
     lcd_graph_stat_average = lcd_graph_cursor_mode && selected ? selected->average_cpm :
         lcd_graph_log_summary_average;
     lcd_graph_format_dose(lcd_graph_cursor_mode && selected ? selected->count :
-        lcd_graph_log_summary_dose,
-        lcd_graph_stat_values[0]);
+        lcd_graph_log_summary_dose, lcd_graph_stat_values[0],
+        lcd_settings_value_index[SETTING_UNIT]);
     const uint8_t unit = lcd_graph_stat_unit(lcd_graph_stat_max);
     lcd_graph_format_stat(lcd_graph_stat_max, unit, lcd_graph_stat_values[1]);
     lcd_graph_format_stat(lcd_graph_stat_average, unit,
         lcd_graph_stat_values[2]);
-    lcd_graph_stat_values[3][0] = ' ';
-    lcd_graph_stat_values[3][1] = ' ';
-    lcd_graph_stat_values[3][2] = ' ';
-    lcd_graph_stat_values[3][3] = ' ';
-    lcd_graph_stat_values[3][4] = ' ';
+    lcd_graph_format_dose(lcd_graph_stat_min, lcd_graph_stat_values[3], 1u);
     /* These bars show accumulated dose, so CPM threshold lines would use a
      * mismatched vertical scale. */
     lcd_graph_yellow_threshold_y = UINT8_MAX;
@@ -2955,13 +2955,14 @@ static bool lcd_graph_prepare_glyph(void)
                 uint16_t color = LCD_TEXT_BACKGROUND;
                 if (x < LCD_GRAPH_STATS_WIDTH - 1u) {
                     static const uint8_t sy[4] = { LCD_GRAPH_TOP + 1u, LCD_GRAPH_TOP + 17u, LCD_GRAPH_TOP + 33u, LCD_GRAPH_TOP + 49u };
-                    for (uint8_t stat = 0u; stat < 4u; ++stat) if ((!lcd_graph_log_type || stat < 3u) && gy >= sy[stat] && gy < sy[stat] + FONT_SMALL_CELL_HEIGHT) {
+                    for (uint8_t stat = 0u; stat < 4u; ++stat) if (gy >= sy[stat] && gy < sy[stat] + FONT_SMALL_CELL_HEIGHT) {
                         const uint8_t yy = (uint8_t)(gy - sy[stat]);
-                        const uint16_t stat_color = !lcd_graph_log_type && stat == 0u ? lcd_rate_color :
-                            (lcd_graph_log_type == 4u && stat == 1u ?
-                                (lcd_graph_stat_max >= LCD_GRAPH_RED_THRESHOLD_CPM ? LCD_TEXT_RED :
-                                 (lcd_graph_stat_max >= LCD_GRAPH_YELLOW_THRESHOLD_CPM ? LCD_TEXT_YELLOW : LCD_TEXT_FOREGROUND)) :
-                                LCD_TEXT_FOREGROUND);
+                        uint16_t stat_color = LCD_TEXT_FOREGROUND;
+                        if (!lcd_graph_log_type && stat == 0u) stat_color = lcd_rate_color;
+                        else if (lcd_graph_log_type == 4u && stat == 1u) {
+                            if (lcd_graph_stat_max >= LCD_GRAPH_RED_THRESHOLD_CPM) stat_color = LCD_TEXT_RED;
+                            else if (lcd_graph_stat_max >= LCD_GRAPH_YELLOW_THRESHOLD_CPM) stat_color = LCD_TEXT_YELLOW;
+                        }
                         if (x < FONT_SMALL_CELL_WIDTH) { if (lcd_graph_stat_icon_pixel(stat, (uint8_t)x, yy)) color = stat_color; }
                         else if (x >= 8u && x < 48u) { const uint8_t rel = (uint8_t)(x - 8u); const uint8_t digit = rel / 8u; if (digit < 5u && rel % 8u < 7u && font_small_pixel(lcd_graph_stat_values[stat][digit], (uint8_t)(rel % 8u), yy)) color = stat_color; }
                         break;
@@ -3682,9 +3683,8 @@ bool board_display_graph_long_press(void)
     if (lcd_screen_page != LCD_GRAPH_PAGE) return false;
     if (lcd_graph_input_locked) { lcd_graph_pending_action = LCD_GRAPH_PENDING_TOGGLE; return true; }
     if (lcd_graph_log_type) {
-        if (lcd_graph_cursor_mode) return true;
-        lcd_graph_cursor_mode = true;
-        lcd_graph_selected = 0u;
+        lcd_graph_cursor_mode = !lcd_graph_cursor_mode;
+        if (lcd_graph_cursor_mode) lcd_graph_selected = 0u;
     } else {
         lcd_graph_range_index = (uint8_t)((lcd_graph_range_index + 1u) % 4u);
     }

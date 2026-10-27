@@ -216,7 +216,7 @@ GET_LOG_PAGE v2 повертає до двох канонічних записі
 
 Кількості у DEBUG і табах — фізично збережені записи. Поточні RAM-точки й агреговані старші інтервали можуть додавати видимі рядки без запису пам’яті.
 
-Short Left/Right switches SEC/MIN/HOUR/DAY/ALERT. On log graphs, the sidebar shows dose, MAX, and AVG. With no selected bar, the MINUTES graph summarizes up to 60 minute records, the HOURS graph up to 24 hour records, and the DAYS graph summarizes all retained day records. At most 50 day bars are drawn. Alerts use the same graph style and a 50-record cap. Selecting a bar switches dose, MAX, and AVG to that record only. The minimum statistic is shown only on the seconds graph. The graph viewport pages through up to 13 bars at a time.
+Short Left/Right switches SEC/MIN/HOUR/DAY/ALERT. On log graphs, the sidebar shows dose, MAX, and AVG. With no selected bar, the MINUTES graph summarizes up to 60 minute records, the HOURS graph up to 24 hour records, and the DAYS graph summarizes all retained day records. At most 50 day bars are drawn. Alerts use the same graph style and a 50-record cap. Selecting a bar shows dose, MAX, AVG, and that record?s covered duration. Duration for an unselected view is summed across its records. The minimum statistic is shown only on the seconds graph; long Right leaves column selection. The graph viewport pages through up to 13 bars at a time.
 
 Буфер LCD використовує палітру до 32 точних RGB565-кольорів. DMA передає порції по 160 пікселів і завершує поле після останньої. Для курсорів під час перенесення використовується буфер LCD після завершення DMA. Лінкер резервує 2 KiB стеку.
 
