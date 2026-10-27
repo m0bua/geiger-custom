@@ -820,15 +820,16 @@ static void board_rtc_init(void)
     rtc_init_error = 0u;
 }
 
+static const uint64_t lcd_sv_unit_scales[4] = {
+    18000000000ull, 18000000u, 18000u, 18u
+};
+
 static void lcd_format_scaled_sv(uint64_t value_picosv_x18,
                                  uint8_t prefix_setting,
                                  bool dose_value)
 {
     /* Scales are multiplied by 18 to retain the dose accumulator's
      * 1/18-pSv remainder without floating-point arithmetic. */
-    static const uint64_t unit_scales[] = {
-        18000000000ull, 18000000u, 18000u, 18u
-    };
     static const char unit_prefixes[] = { 'm', (char)0xB5u, 'n', 'p' };
     uint8_t unit = 3u;
     uint8_t fallback_unit = 3u;
@@ -844,7 +845,7 @@ static void lcd_format_scaled_sv(uint64_t value_picosv_x18,
         unit = selected_prefix;
     } else {
         for (uint8_t i = 0u; i < 4u; ++i) {
-            const uint64_t whole = value_picosv_x18 / unit_scales[i];
+            const uint64_t whole = value_picosv_x18 / lcd_sv_unit_scales[i];
             if (whole >= 10u && whole < 1000u) {
                 unit = i;
                 has_fallback = false;
@@ -859,14 +860,14 @@ static void lcd_format_scaled_sv(uint64_t value_picosv_x18,
     if (selected_prefix == 3u && has_fallback) {
         /* A value from 1 to 9.999 has no adjacent SI prefix that yields
          * 10..999, so retain that unit and pad to two integer places. */
-        const uint64_t whole = value_picosv_x18 / unit_scales[unit];
+        const uint64_t whole = value_picosv_x18 / lcd_sv_unit_scales[unit];
         if (whole < 10u || whole >= 1000u) {
             unit = fallback_unit;
         }
     }
 
     for (;;) {
-        const uint64_t scale = unit_scales[unit];
+        const uint64_t scale = lcd_sv_unit_scales[unit];
         const uint64_t whole = value_picosv_x18 / scale;
         uint8_t integer_digits = 1u;
         uint8_t decimals;
@@ -1583,45 +1584,37 @@ void *board_log_workspace(uint16_t bytes)
 
 static void lcd_send_controller_config(void)
 {
-    static const uint8_t frame[] = {0x01u, 0x2Cu, 0x2Du};
-    static const uint8_t frame3[] = {0x01u, 0x2Cu, 0x2Du, 0x01u, 0x2Cu, 0x2Du};
-    static const uint8_t power1[] = {0xA2u, 0x02u, 0x84u};
-    static const uint8_t power2[] = {0x0Au, 0x00u};
-    static const uint8_t power3[] = {0x8Au, 0x2Au};
-    static const uint8_t power4[] = {0x8Au, 0xEEu};
-    static const uint8_t madctl[] = {0xA8u};
-    static const uint8_t colmod[] = {0x05u};
-    static const uint8_t gamma_pos[] = {
-        0x02u, 0x1Cu, 0x07u, 0x12u, 0x37u, 0x32u, 0x29u, 0x2Du,
-        0x29u, 0x25u, 0x2Bu, 0x39u, 0x00u, 0x01u, 0x03u, 0x10u
+    /* Stock command order and payloads; delays remain in the init state machine.
+     * Each entry is command, payload length, payload. */
+    static const uint8_t config[] = {
+        0xB1u, 3u, 0x01u, 0x2Cu, 0x2Du,
+        0xB2u, 3u, 0x01u, 0x2Cu, 0x2Du,
+        0xB3u, 6u, 0x01u, 0x2Cu, 0x2Du, 0x01u, 0x2Cu, 0x2Du,
+        0xB4u, 1u, 0x07u,
+        0xC0u, 3u, 0xA2u, 0x02u, 0x84u,
+        0xC1u, 1u, 0xC5u,
+        0xC2u, 2u, 0x0Au, 0x00u,
+        0xC3u, 2u, 0x8Au, 0x2Au,
+        0xC4u, 2u, 0x8Au, 0xEEu,
+        0xC5u, 1u, 0x0Eu,
+        0x20u, 0u, /* INVOFF */
+        0x36u, 1u, 0xA8u,
+        0x3Au, 1u, 0x05u,
+        /* Stock 80 x 160 init window, before rotation. */
+        0x2Au, 4u, 0x00u, 0x00u, 0x00u, 0x4Fu,
+        0x2Bu, 4u, 0x00u, 0x00u, 0x00u, 0x9Fu,
+        0x21u, 0u, /* INVON */
+        0xE0u, 16u, 0x02u, 0x1Cu, 0x07u, 0x12u, 0x37u, 0x32u, 0x29u, 0x2Du,
+                   0x29u, 0x25u, 0x2Bu, 0x39u, 0x00u, 0x01u, 0x03u, 0x10u,
+        0xE1u, 16u, 0x03u, 0x1Du, 0x07u, 0x06u, 0x2Eu, 0x2Cu, 0x29u, 0x2Du,
+                   0x2Eu, 0x2Eu, 0x37u, 0x3Fu, 0x00u, 0x00u, 0x02u, 0x10u
     };
-    static const uint8_t gamma_neg[] = {
-        0x03u, 0x1Du, 0x07u, 0x06u, 0x2Eu, 0x2Cu, 0x29u, 0x2Du,
-        0x2Eu, 0x2Eu, 0x37u, 0x3Fu, 0x00u, 0x00u, 0x02u, 0x10u
-    };
-    /* Match the stock controller init window (80 x 160, before rotation).
-     * Drawing later sets the actual 160 x 80 window with its Y offset. */
-    static const uint8_t x_window[] = {0x00u, 0x00u, 0x00u, 0x4Fu};
-    static const uint8_t y_window[] = {0x00u, 0x00u, 0x00u, 0x9Fu};
-
-    lcd_command(0xB1u, frame, sizeof(frame));
-    lcd_command(0xB2u, frame, sizeof(frame));
-    lcd_command(0xB3u, frame3, sizeof(frame3));
-    { const uint8_t value = 0x07u; lcd_command(0xB4u, &value, 1u); }
-    lcd_command(0xC0u, power1, sizeof(power1));
-    { const uint8_t value = 0xC5u; lcd_command(0xC1u, &value, 1u); }
-    lcd_command(0xC2u, power2, sizeof(power2));
-    lcd_command(0xC3u, power3, sizeof(power3));
-    lcd_command(0xC4u, power4, sizeof(power4));
-    { const uint8_t value = 0x0Eu; lcd_command(0xC5u, &value, 1u); }
-    lcd_command(0x20u, 0, 0u); /* INVOFF */
-    lcd_command(0x36u, madctl, sizeof(madctl));
-    lcd_command(0x3Au, colmod, sizeof(colmod));
-    lcd_command(0x2Au, x_window, sizeof(x_window));
-    lcd_command(0x2Bu, y_window, sizeof(y_window));
-    lcd_command(0x21u, 0, 0u); /* INVON, matching the stock LCD sequence */
-    lcd_command(0xE0u, gamma_pos, sizeof(gamma_pos));
-    lcd_command(0xE1u, gamma_neg, sizeof(gamma_neg));
+    for (uint8_t offset = 0u; offset < sizeof(config); ) {
+        const uint8_t command = config[offset++];
+        const uint8_t length = config[offset++];
+        lcd_command(command, &config[offset], length);
+        offset = (uint8_t)(offset + length);
+    }
 }
 
 void board_lcd_backlight_set(bool enabled)
@@ -2078,7 +2071,6 @@ static const char *const prefix_values[] = { "m", "\xB5", "n", "AUTO", "CPM", "C
 static const char *const rate_row_values[] = {
     "CPM", "CPS", "OFF", "MIN_M", "AVG_M", "MAX_M", "MIN_H", "AVG_H", "MAX_H"
 };
-static const char *const dose_row_values[] = { "CNT", "OFF", "SV", "R" };
 static const char *const dose_period_values[] = { "UPTIME", "DAY", "TOTAL" };
 static const char *const log_memory_values[] = { "EEPROM", "SPI", "OFF" };
 static const char *const on_off_values[] = { "ON", "OFF" };
@@ -2139,24 +2131,20 @@ static const char *const *const lcd_settings_values[LCD_SETTINGS_COUNT] = {
     zero_values, unit_values, prefix_values, prefix_values, rate_row_values,
     log_memory_values, empty_values, on_off_values, rate_custom_values, stop_values,
     empty_values, empty_values, tone_values, long_press_values,
-    dose_row_values, dose_period_values, alarm_values, alarm_values,
+    empty_values, dose_period_values, alarm_values, alarm_values,
     alarm_values, dose_alarm_values, empty_values
 };
 
 static const uint8_t lcd_settings_value_counts[LCD_SETTINGS_COUNT] = {
-    6u, 6u, 4u, 4u, 4u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 3u, 3u, 1u, 2u,
+    6u, 6u, 4u, 4u, 4u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 9u, 3u, 1u, 2u,
     9u, 2u, 1u, 1u, 3u, 6u, 4u, 3u, 4u, 4u, 4u, 8u, 1u
 };
 
-static uint8_t lcd_settings_value_count(uint8_t item)
+static __attribute__((noinline)) uint8_t lcd_settings_value_count(uint8_t item)
 {
-    if (item == 5u || item == 6u) return 9u;
-    if (item == SETTING_RATE_CUSTOM) return 9u;
-    if (item == SETTING_DOSE_CUSTOM) return 8u;
     if (item == 10u || item == 11u) {
         return lcd_settings_value_index[SETTING_UNIT] == 1u ? 2u : 4u;
     }
-    if (item == SETTING_RATE_ROW_2) return 9u;
     if (item == SETTING_DOSE_ROW_2) return lcd_dose_row_option_count();
     return lcd_settings_value_counts[item];
 }
@@ -2171,20 +2159,16 @@ static const char *lcd_settings_value_text(uint8_t item)
         lcd_settings_value_index[SETTING_UNIT] == 1u) {
         return lcd_settings_values[item][value_index + 4u];
     }
-    if (item == SETTING_RATE_ROW_2 && lcd_settings_value_index[SETTING_UNIT] == 1u) {
-        static const char *const count_rate_row_values[] = {
-            "SV", "R", "OFF", "MIN_M", "AVG_M", "MAX_M", "MIN_H", "AVG_H", "MAX_H"
-        };
-        return count_rate_row_values[value_index];
+    if (item == SETTING_RATE_ROW_2 &&
+        lcd_settings_value_index[SETTING_UNIT] == 1u && value_index < 2u) {
+        return unit_values[value_index == 0u ? 0u : 2u];
     }
     if (item == SETTING_DOSE_ROW_2) {
-        static const char *const unit_names[] = { "SV", "CNT", "R" };
-        static const char *const period_names[] = { "UPTIME", "DAY", "TOTAL" };
         const uint8_t option = lcd_dose_row_option(value_index);
         if (option == LCD_DOSE_ROW_OFF) return "OFF";
         if (option == LCD_DOSE_ROW_TIME) return "TIME";
-        if (option < 3u) return unit_names[option];
-        if (option < 6u) return period_names[option - LCD_DOSE_ROW_PERIOD_BASE];
+        if (option < 3u) return unit_values[option];
+        if (option < 6u) return dose_period_values[option - LCD_DOSE_ROW_PERIOD_BASE];
         return "OFF";
     }
     return lcd_settings_values[item][value_index];
@@ -2333,7 +2317,10 @@ static bool lcd_graph_stat_icon_pixel(uint8_t stat, uint8_t x, uint8_t y)
     };
     if (stat == 0u) return font_small_pixel(lcd_graph_log_type ? 'D' : 'C', x, y);
     if (stat == 2u) return font_small_pixel('A', x, y);
-    if (stat == 3u && lcd_graph_log_type) return font_small_pixel('s', x, y);
+    if (stat == 3u && lcd_graph_log_type) {
+        return lcd_graph_stat_min > 9990u &&
+            font_small_pixel('>', x, y);
+    }
     if ((stat != 1u && stat != 3u) || x < 1u || x > 5u || y < 1u || y > 7u) return false;
     return (icon_rows[stat == 1u ? 0u : 1u][y - 1u] & (uint8_t)(1u << (5u - x))) != 0u;
 }
@@ -2374,156 +2361,19 @@ static uint8_t lcd_graph_stat_unit(uint32_t maximum_cpm)
     return fallback;
 }
 
-static void lcd_graph_format_stat(uint32_t cpm, uint8_t unit, char text[5])
+/* Shared five-cell number writer for graph rate, dose and raw counters. */
+static void lcd_graph_format_number(uint64_t scaled, uint64_t factor,
+                                     uint8_t decimals, char text[5])
 {
-    if (lcd_settings_value_index[SETTING_UNIT] == 1u) {
-        char reversed[5];
-        uint8_t digits = 0u;
-        uint8_t out = 0u;
-
-        if (cpm > 99999u) {
-            text[0] = '>';
-            text[1] = '9';
-            text[2] = '9';
-            text[3] = '9';
-            text[4] = '9';
-            return;
-        }
-        do {
-            reversed[digits++] = (char)('0' + cpm % 10u);
-            cpm /= 10u;
-        } while (cpm != 0u && digits < sizeof(reversed));
-        while (digits != 0u) text[out++] = reversed[--digits];
-        while (out < 5u) text[out++] = ' ';
-        return;
-    }
-
-    uint64_t numerator = lcd_graph_stat_rate(cpm);
-    uint64_t denominator = 1u;
-    uint64_t whole;
-    uint64_t factor = 1u;
-    uint64_t scaled;
-    uint64_t integer_part;
-    uint64_t fraction;
-    uint8_t decimals;
-    uint8_t decimal_limit = unit == 0u || unit == 3u ? 5u :
-        (unit == 1u ?
-            (lcd_settings_value_index[SETTING_UNIT] == 2u ? 1u : 3u) : 0u);
-    char reversed[5];
-    uint8_t digits = 0u;
-    uint8_t out = 0u;
-
-    if (unit == 0u) denominator = 1000000u;
-    else if (unit == 1u) denominator = 1000u;
-    else if (unit == 3u) numerator *= 1000u;
-    whole = numerator / denominator;
-    decimals = whole == 0u ?
-        (lcd_settings_value_index[SETTING_LEAD_ZERO] == 0u ? 3u : 4u) : 4u;
-    if (whole != 0u) {
-        uint64_t digit_count = whole;
-        uint8_t integer_digits = 1u;
-        while (digit_count >= 10u) {
-            digit_count /= 10u;
-            ++integer_digits;
-        }
-        decimals = integer_digits < 5u ?
-            (uint8_t)(5u - integer_digits - 1u) : 0u;
-    }
-    if (decimals > decimal_limit) decimals = decimal_limit;
-    for (uint8_t i = 0u; i < decimals; ++i) factor *= 10u;
-    scaled = (numerator * factor + denominator / 2u) / denominator;
-    integer_part = scaled / factor;
-    while (decimals != 0u && integer_part >= 100000u) {
-        --decimals;
-        factor /= 10u;
-        scaled = (numerator * factor + denominator / 2u) / denominator;
-        integer_part = scaled / factor;
-    }
-    if (integer_part > 99999u) {
-        text[0] = '>';
-        text[1] = '9';
-        text[2] = '9';
-        text[3] = '9';
-        text[4] = '9';
-        return;
-    }
-    fraction = scaled % factor;
-    if (integer_part != 0u || decimals == 0u ||
-        lcd_settings_value_index[SETTING_LEAD_ZERO] == 0u) {
-        uint64_t remaining = integer_part;
-        do {
-            reversed[digits++] = (char)('0' + remaining % 10u);
-            remaining /= 10u;
-        } while (remaining != 0u && digits < sizeof(reversed));
-        while (digits != 0u) text[out++] = reversed[--digits];
-    }
-    if (decimals != 0u) {
-        uint64_t divisor = factor / 10u;
-        text[out++] = '.';
-        for (uint8_t i = 0u; i < decimals; ++i) {
-            text[out++] = (char)('0' + ((fraction / divisor) % 10u));
-            if (divisor > 1u) divisor /= 10u;
-        }
-    }
-    while (out < 5u) text[out++] = ' ';
-}
-
-static void lcd_graph_format_dose(uint64_t count, char text[5], uint8_t unit_mode)
-{
-    char reversed[6];
-    uint8_t out = 0u;
-    uint8_t digits = 0u;
-
-    if (unit_mode == 1u) {
-        if (count > 99999u) {
-            text[0] = '>';
-            text[1] = '9'; text[2] = '9'; text[3] = '9'; text[4] = '9';
-            return;
-        }
-        do {
-            reversed[digits++] = (char)('0' + count % 10u);
-            count /= 10u;
-        } while (count != 0u);
-        while (digits != 0u) text[out++] = reversed[--digits];
-        while (out < 5u) text[out++] = ' ';
-        return;
-    }
-
-    static const uint64_t scales[4] = {
-        18000000000ull, 18000000u, 18000u, 18u
-    };
-    uint64_t value = (uint64_t)count * 1998u;
-    if (lcd_settings_value_index[SETTING_UNIT] == 2u) value *= 100u;
-    uint8_t unit = lcd_settings_value_index[SETTING_DOSE_PREFIX];
-    if (unit > 2u) {
-        uint8_t fallback = 3u;
-        bool have_fallback = false;
-        for (uint8_t i = 0u; i < 4u; ++i) {
-            uint64_t whole = value / scales[i];
-            if (whole >= 10u && whole < 1000u) { unit = i; break; }
-            if (whole != 0u && !have_fallback) {
-                fallback = i;
-                have_fallback = true;
-            }
-            unit = fallback;
-        }
-    }
-
-    uint64_t factor = 1u;
-    uint64_t whole = value / scales[unit];
-    uint8_t integer_digits = 1u;
-    for (uint64_t n = whole; n >= 10u; n /= 10u) ++integer_digits;
-    uint8_t decimals = whole == 0u ?
-        (lcd_settings_value_index[SETTING_LEAD_ZERO] == 0u ? 4u : 3u) :
-        (integer_digits < 4u ? (uint8_t)(4u - integer_digits) : 0u);
-    for (uint8_t i = 0u; i < decimals; ++i) factor *= 10u;
-    uint64_t scaled = (value * factor + scales[unit] / 2u) / scales[unit];
     uint64_t integer = scaled / factor;
-    if (integer >= 100000u) {
-        text[0] = '>'; text[1] = '9'; text[2] = '9'; text[3] = '9'; text[4] = '9';
+    if (integer > 99999u) {
+        text[0] = '>';
+        for (uint8_t i = 1u; i < 5u; ++i) text[i] = '9';
         return;
     }
-    uint64_t fraction = scaled % factor;
+    const uint64_t fraction = scaled % factor;
+    char reversed[5];
+    uint8_t digits = 0u, out = 0u;
     if (integer != 0u || decimals == 0u ||
         lcd_settings_value_index[SETTING_LEAD_ZERO] == 0u) {
         do {
@@ -2541,6 +2391,111 @@ static void lcd_graph_format_dose(uint64_t count, char text[5], uint8_t unit_mod
         }
     }
     while (out < 5u) text[out++] = ' ';
+}
+
+static void lcd_graph_set_auto_prefix(char text[5], uint8_t unit)
+{
+    static const char prefixes[4] = { 'm', (char)0xB5u, 'n', 'p' };
+    if (unit < 4u) {
+        uint8_t end = 4u;
+        while (end != 0u && text[end] == ' ') --end;
+        if (end < 4u) ++end;
+        if (end != 0u && text[end - 1u] == '.') {
+            text[end - 1u] = prefixes[unit];
+            text[end] = ' ';
+        } else {
+            text[end] = prefixes[unit];
+        }
+    }
+}
+
+static void lcd_graph_format_stat(uint32_t cpm, uint8_t unit, char text[5])
+{
+    if (lcd_settings_value_index[SETTING_UNIT] == 1u) {
+        lcd_graph_format_number(cpm, 1u, 0u, text);
+        return;
+    }
+    uint64_t numerator = lcd_graph_stat_rate(cpm);
+    uint64_t denominator = 1u;
+    uint64_t factor = 1u;
+    uint8_t decimal_limit = unit == 0u || unit == 3u ? 5u :
+        (unit == 1u ?
+            (lcd_settings_value_index[SETTING_UNIT] == 2u ? 1u : 3u) : 0u);
+    if (unit == 0u) denominator = 1000000u;
+    else if (unit == 1u) denominator = 1000u;
+    else if (unit == 3u) numerator *= 1000u;
+    const uint64_t whole = numerator / denominator;
+    uint8_t decimals = whole == 0u ?
+        (lcd_settings_value_index[SETTING_LEAD_ZERO] == 0u ? 3u : 4u) : 4u;
+    if (whole != 0u) {
+        uint8_t integer_digits = 1u;
+        for (uint64_t n = whole; n >= 10u; n /= 10u) ++integer_digits;
+        decimals = integer_digits < 5u ?
+            (uint8_t)(5u - integer_digits - 1u) : 0u;
+    }
+    if (decimals > decimal_limit) decimals = decimal_limit;
+    for (uint8_t i = 0u; i < decimals; ++i) factor *= 10u;
+    uint64_t scaled = (numerator * factor + denominator / 2u) / denominator;
+    while (decimals != 0u && scaled / factor >= 100000u) {
+        --decimals;
+        factor /= 10u;
+        scaled = (numerator * factor + denominator / 2u) / denominator;
+    }
+    lcd_graph_format_number(scaled, factor, decimals, text);
+    if (lcd_settings_value_index[SETTING_RATE_PREFIX] == 3u)
+        lcd_graph_set_auto_prefix(text, unit);
+}
+
+static __attribute__((noinline)) void lcd_graph_format_dose(
+    uint64_t count, char text[5], uint8_t unit_mode)
+{
+    if (unit_mode == 1u) {
+        lcd_graph_format_number(count, 1u, 0u, text);
+        return;
+    }
+    uint64_t value = count * 1998u;
+    if (lcd_settings_value_index[SETTING_UNIT] == 2u) value *= 100u;
+    uint8_t unit = lcd_settings_value_index[SETTING_DOSE_PREFIX];
+    if (unit > 2u) {
+        uint8_t fallback = 3u;
+        bool have_fallback = false;
+        for (uint8_t i = 0u; i < 4u; ++i) {
+            uint64_t whole = value / lcd_sv_unit_scales[i];
+            if (whole >= 10u && whole < 1000u) { unit = i; break; }
+            if (whole != 0u && !have_fallback) {
+                fallback = i;
+                have_fallback = true;
+            }
+            unit = fallback;
+        }
+    }
+    uint64_t factor = 1u;
+    const uint64_t whole = value / lcd_sv_unit_scales[unit];
+    uint8_t integer_digits = 1u;
+    for (uint64_t n = whole; n >= 10u; n /= 10u) ++integer_digits;
+    const uint8_t decimals = whole == 0u ?
+        (lcd_settings_value_index[SETTING_LEAD_ZERO] == 0u ? 4u : 3u) :
+        (integer_digits < 4u ? (uint8_t)(4u - integer_digits) : 0u);
+    for (uint8_t i = 0u; i < decimals; ++i) factor *= 10u;
+    const uint64_t scaled = (value * factor + lcd_sv_unit_scales[unit] / 2u) /
+        lcd_sv_unit_scales[unit];
+    lcd_graph_format_number(scaled, factor, decimals, text);
+    if (lcd_settings_value_index[SETTING_DOSE_PREFIX] == 3u)
+        lcd_graph_set_auto_prefix(text, unit);
+}
+
+static void lcd_graph_format_duration(uint32_t seconds, char text[5])
+{
+    uint32_t value = seconds;
+    char suffix = 's';
+    if (seconds > 9990u) {
+        value = 9990u;
+    }
+    text[0] = (char)('0' + value / 1000u);
+    text[1] = (char)('0' + (value / 100u) % 10u);
+    text[2] = (char)('0' + (value / 10u) % 10u);
+    text[3] = (char)('0' + value % 10u);
+    text[4] = suffix;
 }
 
 static void lcd_graph_build_series(uint8_t requested)
@@ -2877,7 +2832,8 @@ static void lcd_graph_build_logs(void)
     lcd_graph_format_stat(lcd_graph_stat_max, unit, lcd_graph_stat_values[1]);
     lcd_graph_format_stat(lcd_graph_stat_average, unit,
         lcd_graph_stat_values[2]);
-    lcd_graph_format_dose(lcd_graph_stat_min, lcd_graph_stat_values[3], 1u);
+    lcd_graph_format_duration(lcd_graph_stat_min,
+        lcd_graph_stat_values[3]);
     /* These bars show accumulated dose, so CPM threshold lines would use a
      * mismatched vertical scale. */
     lcd_graph_yellow_threshold_y = UINT8_MAX;
