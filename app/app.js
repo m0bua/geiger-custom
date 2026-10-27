@@ -1800,15 +1800,15 @@ function handleStatus(payload) {
   const dosePulseCount = payload.length >= 35 ?
     (dosePeriod === 0 ? uptimePulses : dosePeriod === 1 ? dayPulses : lifetimePulses) :
     derivedDosePulses;
-  rateLevel = countTotal < 25 ? 'blue' :
+  rateLevel = countTotal < 30 ? 'blue' :
     (cpm * 666 > 90000 ? 'red' : (cpm * 666 >= 40000 ? 'yellow' : 'green'));
   const levelClass = `level-${rateLevel}`;
   elements.rateDose.classList.remove('level-blue', 'level-green', 'level-yellow', 'level-red');
   elements.rateDose.classList.add(levelClass);
-  const warmupPulses = Math.min(countTotal, 25);
+  const warmupPulses = Math.min(countTotal, 30);
   elements.rateWarmup.hidden = rateLevel !== 'blue';
   elements.rateWarmup.setAttribute('aria-valuenow', String(warmupPulses));
-  elements.rateWarmupFill.style.width = `${(warmupPulses / 25) * 100}%`;
+  elements.rateWarmupFill.style.width = `${(warmupPulses / 30) * 100}%`;
   const uptime = formatUptime(uptimeSeconds);
   if (logInfo?.calendarValid) {
     if (logInfo.calendarAnchorUptime === null) {

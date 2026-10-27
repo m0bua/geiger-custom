@@ -93,7 +93,10 @@ int main(void)
     bool calendar_day_valid = false;
     uint32_t next_minute_tick;
     uint32_t next_cpm_history_tick;
-    uint32_t latest_cpm = 0u;
+    uint32_t next_rate_display_tick;
+    uint32_t latest_cpm = 23u;
+    uint32_t latest_display_cpm = 23u;
+    uint32_t display_rate_cpm_tenths = 230u;
     uint16_t battery_adc_raw = 0u;
     uint16_t solar_adc_raw = 0u;
     uint16_t usb_adc_raw = 0u;
@@ -176,6 +179,11 @@ int main(void)
     sound_alarm_active = board_display_sound_alarm_active();
     board_sound_alarm_set(sound_alarm_active);
     hv_enabled = board_hv_is_enabled();
+    if (!hv_enabled) {
+        latest_cpm = 0u;
+        latest_display_cpm = 0u;
+        display_rate_cpm_tenths = 0u;
+    }
     /* Ignore startup transients accumulated while RTC/display were coming up. */
     event_count = board_detector_count();
     previous_minute_sample = event_count;
@@ -185,6 +193,7 @@ int main(void)
     next_battery_sample = board_millis;
     next_usb_sample = board_millis;
     next_minute_tick = board_millis + 1000u;
+    next_rate_display_tick = board_millis + 500u;
     next_total_checkpoint = board_millis + TOTAL_PULSE_CHECKPOINT_MS;
     cpm_history_init();
     next_cpm_history_tick = board_millis + 500u;
@@ -369,8 +378,17 @@ int main(void)
                     second_log_reset_rate_window();
                     if (hv_enabled) {
                         pulses_since_start = 0u;
+                        latest_cpm = 23u;
+                        latest_display_cpm = 23u;
+                        display_rate_cpm_tenths = 230u;
                         board_display_set_count(0u);
+                        board_display_set_rate_alarm(0u, 0u, false);
                         board_display_set_rate(0u, 0u, 0u, false);
+                    } else {
+                        latest_cpm = 0u;
+                        latest_display_cpm = 0u;
+                        display_rate_cpm_tenths = 0u;
+                        board_display_set_rate_alarm(0u, 0u, false);
                     }
                     next_minute_tick = now + 1000u;
                 }
@@ -537,16 +555,11 @@ int main(void)
                     total_pulse_count += second_pulses;
                 }
                 const uint32_t cpm = second_log_add(second_pulses);
-                /* Rate = normalized CPM * 0.00666 µSv/h. */
-                const uint32_t rate_thousandths = (uint32_t)(
-                    ((uint64_t)cpm * 666u + 50u) / 100u);
                 latest_cpm = cpm;
+                latest_display_cpm = second_log_rate_cpm();
                 daily_dose_add(second_pulses);
                 today_pulse_count = calendar_day_valid ?
                     daily_dose_count() : session_pulses_total;
-                board_display_set_rate(rate_thousandths, cpm,
-                                       pulses_since_start,
-                                       pulses_since_start >= 25u);
                 log_writer_second(second_pulses, cpm,
                     log_uptime_seconds, log_calendar_seconds,
                     log_calendar_valid);
@@ -569,9 +582,40 @@ int main(void)
                                        total_pulse_count,
                                        dose_measurement_seconds);
                 } else {
-                    latest_cpm = second_log_add(0u);
+                    (void)second_log_add(0u);
+                    latest_cpm = 0u;
+                    latest_display_cpm = 0u;
                 }
+                const uint32_t measured_rate_thousandths = (uint32_t)(
+                    ((uint64_t)latest_cpm * 666u + 50u) / 100u);
+                board_display_set_rate_alarm(measured_rate_thousandths,
+                    latest_cpm, pulses_since_start >= 30u);
                 next_minute_tick += 1000u;
+            }
+
+            if ((int32_t)(now - next_rate_display_tick) >= 0) {
+                const uint32_t target_cpm_tenths = latest_display_cpm * 10u;
+                if (!backlight_on) {
+                    display_rate_cpm_tenths = target_cpm_tenths;
+                } else {
+                    const int32_t difference = (int32_t)target_cpm_tenths -
+                        (int32_t)display_rate_cpm_tenths;
+                    int32_t step = difference / 2;
+                    if (difference != 0 && step == 0) {
+                        step = difference > 0 ? 1 : -1;
+                    }
+                    display_rate_cpm_tenths = (uint32_t)(
+                        (int32_t)display_rate_cpm_tenths + step);
+                }
+                const uint32_t display_cpm =
+                    (display_rate_cpm_tenths + 5u) / 10u;
+                const uint32_t display_rate_thousandths = (uint32_t)(
+                    ((uint64_t)display_rate_cpm_tenths * 666u + 500u) /
+                    1000u);
+                board_display_set_rate(display_rate_thousandths,
+                    display_cpm, pulses_since_start,
+                    pulses_since_start >= 30u);
+                next_rate_display_tick = now + 500u;
             }
 
             if ((int32_t)(now - next_cpm_history_tick) >= 0) {
@@ -737,7 +781,7 @@ int main(void)
             protocol_v1_status_t status;
             status.uptime_seconds = board_uptime_seconds_get();
             status.count_today = today_pulse_count;
-            status.rate_cpm = latest_cpm;
+            status.rate_cpm = latest_display_cpm;
             status.dose_nsv = dose_thousandths;
             status.battery_raw = battery_adc_raw;
             status.solar_raw = solar_adc_raw;

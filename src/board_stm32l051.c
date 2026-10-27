@@ -266,6 +266,7 @@ static uint8_t lcd_rate_glyph_count = LCD_RATE_MAX_GLYPHS;
 static bool lcd_rate_has_measurement;
 static bool lcd_dose_has_measurement;
 static uint16_t lcd_rate_color = LCD_COUNTER_BLUE;
+static uint16_t lcd_alarm_rate_color = LCD_COUNTER_BLUE;
 static uint8_t lcd_rate_led_mask = 5u;
 static char lcd_rate_label[] = "mSv/h";
 static char lcd_display_unit_prefix = 'm';
@@ -422,7 +423,9 @@ static bool flashlight_alarm_override;
 static bool flashlight_alarm_output;
 static uint32_t lcd_displayed_minute_key = UINT32_MAX;
 static uint32_t lcd_rate_value_thousandths;
+static uint32_t lcd_alarm_rate_value_thousandths;
 static uint32_t lcd_current_cpm;
+static bool lcd_alarm_rate_window_ready;
 static uint32_t lcd_warmup_pulses;
 static bool lcd_rate_window_ready;
 static bool lcd_warmup_box_visible;
@@ -3353,7 +3356,7 @@ static bool lcd_text_prepare_glyph(void)
                 char warmup_text[LCD_WARMUP_TEXT_LENGTH + 1u] = {
                     '0', '0', ' ', 'C', 'N', 'T', '\0'
                 };
-                const uint32_t count = lcd_warmup_pulses > 25u ? 25u :
+                const uint32_t count = lcd_warmup_pulses > 30u ? 30u :
                     lcd_warmup_pulses;
                 if (warmup_active) {
                     const uint16_t box_x = (uint16_t)((text_width -
@@ -3365,7 +3368,7 @@ static bool lcd_text_prepare_glyph(void)
                     const uint16_t text_x = (uint16_t)(box_x +
                         (LCD_WARMUP_BOX_WIDTH - text_glyph_width) / 2u);
                     const uint16_t fill_width = (uint16_t)(count *
-                        (LCD_WARMUP_BOX_WIDTH - 2u) / 25u);
+                        (LCD_WARMUP_BOX_WIDTH - 2u) / 30u);
                     warmup_text[0] = (char)('0' + count / 10u);
                     warmup_text[1] = (char)('0' + count % 10u);
                     for (uint8_t y = 0u; y < LCD_WARMUP_BOX_HEIGHT; ++y) {
@@ -4963,9 +4966,27 @@ static bool rate_custom_threshold_active(void)
         3u, 4u, 5u, 7u, 9u, 10u, 20u, 50u, 100u
     };
     const uint8_t custom = lcd_settings_value_index[SETTING_RATE_CUSTOM];
-    return lcd_rate_window_ready &&
-        lcd_rate_value_thousandths >=
+    return lcd_alarm_rate_window_ready &&
+        lcd_alarm_rate_value_thousandths >=
             (uint32_t)custom_rate_tenths_usvh[custom] * 100u;
+}
+
+void board_display_set_rate_alarm(uint32_t rate_thousandths, uint32_t cpm,
+                                  bool window_ready)
+{
+    const uint64_t rate_scaled = (uint64_t)cpm * 666u;
+    uint16_t color = LCD_COUNTER_BLUE;
+    lcd_alarm_rate_value_thousandths = rate_thousandths;
+    lcd_alarm_rate_window_ready = window_ready;
+    if (window_ready) {
+        color = LCD_COUNTER_GREEN;
+        if (rate_scaled >= 40000u && rate_scaled <= 90000u) {
+            color = LCD_COUNTER_YELLOW;
+        } else if (rate_scaled > 90000u) {
+            color = LCD_COUNTER_RED;
+        }
+    }
+    lcd_alarm_rate_color = color;
 }
 
 static bool indication_enabled(uint8_t mode, bool screen_on)
@@ -4973,9 +4994,9 @@ static bool indication_enabled(uint8_t mode, bool screen_on)
     if (lcd_indication_mode == 0u) return false;
     if (mode == 1u) return screen_on;
     if (mode == 2u) return true;
-    if (mode == 3u) return lcd_rate_color == LCD_COUNTER_YELLOW ||
-        lcd_rate_color == LCD_COUNTER_RED;
-    if (mode == 4u) return lcd_rate_color == LCD_COUNTER_RED;
+    if (mode == 3u) return lcd_alarm_rate_color == LCD_COUNTER_YELLOW ||
+        lcd_alarm_rate_color == LCD_COUNTER_RED;
+    if (mode == 4u) return lcd_alarm_rate_color == LCD_COUNTER_RED;
     if (mode == 5u) return rate_custom_threshold_active();
     return false;
 }
@@ -5132,10 +5153,10 @@ void board_click_sound_service(void)
 static bool rate_alarm_for_mode(uint8_t mode)
 {
     if (mode == 1u) {
-        return lcd_rate_color == LCD_COUNTER_YELLOW ||
-            lcd_rate_color == LCD_COUNTER_RED;
+        return lcd_alarm_rate_color == LCD_COUNTER_YELLOW ||
+            lcd_alarm_rate_color == LCD_COUNTER_RED;
     }
-    if (mode == 2u) return lcd_rate_color == LCD_COUNTER_RED;
+    if (mode == 2u) return lcd_alarm_rate_color == LCD_COUNTER_RED;
     if (mode == 3u) return rate_custom_threshold_active();
     return false;
 }

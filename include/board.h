@@ -78,6 +78,8 @@ void board_reboot(void);
 void board_power_off(void);
 void board_display_set_rate(uint32_t rate_thousandths, uint32_t cpm,
                             uint32_t pulses_since_start, bool window_ready);
+void board_display_set_rate_alarm(uint32_t rate_thousandths, uint32_t cpm,
+                                  bool window_ready);
 void board_display_history_updated(void);
 uint8_t board_display_rate_led_mask(void);
 void board_display_set_rate_led(void);
