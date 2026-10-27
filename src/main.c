@@ -219,6 +219,10 @@ int main(void)
             board_take_button_wakeup_request();
         const uint8_t currently_pressed = backlight_on ? 0u :
             board_buttons_pressed_mask();
+        const uint8_t wake_buttons = button_wakeup_mask | currently_pressed;
+        const bool exit_invisible_on_wake =
+            board_display_invisible_mode() &&
+            (wake_buttons & BOARD_BUTTON_LEFT_DOWN) != 0u;
 
         /* Button EXTI wakes immediately on the press edge; restore clocks and
          * light the display without waiting for the 10 ms debounce samples. */
@@ -236,8 +240,8 @@ int main(void)
             screen_backlight_wake();
             backlight_on = true;
             inactivity_deadline = now + screen_timeout_ms;
-            board_buttons_suppress_until_release(button_wakeup_mask |
-                currently_pressed);
+            if (exit_invisible_on_wake) board_display_left_short();
+            board_buttons_suppress_until_release(wake_buttons);
         }
 
         if (startup_led_active &&
@@ -280,6 +284,9 @@ int main(void)
             if (!backlight_on &&
                 (events & (BOARD_BUTTON_LEFT_DOWN |
                            BOARD_BUTTON_RIGHT_DOWN)) != 0u) {
+                const bool exit_invisible =
+                    board_display_invisible_mode() &&
+                    (events & BOARD_BUTTON_LEFT_DOWN) != 0u;
                 if (idle_clock_active) {
                     (void)board_set_idle_clock(false);
                     idle_clock_active = false;
@@ -289,6 +296,7 @@ int main(void)
                 screen_backlight_wake();
                 backlight_on = true;
                 inactivity_deadline = now + screen_timeout_ms;
+                if (exit_invisible) board_display_left_short();
                 events &= (uint8_t)~button_events;
             } else if ((events & button_events) != 0u) {
                 inactivity_deadline = now + screen_timeout_ms;

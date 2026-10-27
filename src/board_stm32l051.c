@@ -32,6 +32,7 @@ static volatile bool power_off_wakeup;
 static volatile uint8_t button_wakeup_pending_mask;
 /* Runtime-only indication mode: INVISIBLE, NORMAL, SEARCH. */
 static uint8_t lcd_indication_mode = 1u;
+static uint32_t lcd_search_mode_started;
 
 #define DETECTOR_GPIO_BASE GPIOB_BASE
 #define DETECTOR_PIN       BOARD_DETECTOR_PIN
@@ -3505,6 +3506,17 @@ static bool lcd_text_prepare_glyph(void)
 
 }
 
+static void lcd_indication_mode_next(void)
+{
+    if (lcd_indication_mode == 2u &&
+        (uint32_t)(board_millis - lcd_search_mode_started) >= 10000u) {
+        lcd_indication_mode = 1u;
+    } else {
+        lcd_indication_mode = (uint8_t)((lcd_indication_mode + 1u) % 3u);
+        if (lcd_indication_mode == 2u) lcd_search_mode_started = board_millis;
+    }
+}
+
 void board_display_left_short(void)
 {
     if (lcd_screen_page == LCD_GRAPH_PAGE) {
@@ -3524,7 +3536,7 @@ void board_display_left_short(void)
         return;
     }
     if (lcd_screen_page == 1u) {
-        lcd_indication_mode = (uint8_t)((lcd_indication_mode + 1u) % 3u);
+        lcd_indication_mode_next();
         lcd_dose_row_hidden = false;
         lcd_text_active = false;
         lcd_text_row_commands_queued = false;
@@ -3532,7 +3544,7 @@ void board_display_left_short(void)
         lcd_cpm_redraw_pending = true;
         return;
     }
-    lcd_indication_mode = (uint8_t)((lcd_indication_mode + 1u) % 3u);
+    lcd_indication_mode_next();
     lcd_text_active = false;
     lcd_text_row_commands_queued = false;
     lcd_background_pending = true;
@@ -3576,6 +3588,11 @@ bool board_display_search_mode(void)
     return lcd_indication_mode == 2u;
 }
 
+bool board_display_invisible_mode(void)
+{
+    return lcd_indication_mode == 0u && lcd_screen_page < 2u;
+}
+
 bool board_display_use_spi(void)
 {
     return settings_spi_enabled;
@@ -3608,7 +3625,7 @@ bool board_display_usb_connected(void)
 
 bool board_display_rate_long_press(void)
 {
-    if (lcd_screen_page != 0u || lcd_settings_list_active) return false;
+    if (lcd_screen_page > 1u || lcd_settings_list_active) return false;
 
     flashlight_manual_enabled = !flashlight_manual_enabled;
     flashlight_enabled = flashlight_alarm_override ? flashlight_alarm_output :
