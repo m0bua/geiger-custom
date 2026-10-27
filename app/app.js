@@ -878,7 +878,30 @@ function logValueCells(record) {
     cnt ? `${record.maximum} CPM` : `${maximum.value} ${maximum.unit}`];
   const duration = `${Math.floor(record.covered / 60)}:${String(record.covered % 60).padStart(2, '0')}`;
   return selectedLogType === 'alerts' ? [duration, ...values] :
-    [...values, record.live ? `${record.covered}s · live` : (record.partial ? `${record.covered}s · partial` : 'Full')];
+    [...values, formatLogCoverage(record)];
+}
+function formatLogCoverage(record) {
+  const type = logTypes.find((item) => item.id === selectedLogType);
+  const percent = logCoveragePercent(record, type);
+  const state = record.live ? 'live' : (record.partial ? 'partial' : 'full');
+  return `${percent}% · ${record.covered}s · ${state}`;
+}
+function logCoveragePercent(record, type = logTypes.find((item) => item.id === selectedLogType)) {
+  return Math.round(Math.min(record.covered, type.period) * 100 / type.period);
+}
+function logCoverageClass(record, type = logTypes.find((item) => item.id === selectedLogType)) {
+  const percent = logCoveragePercent(record, type);
+  return percent < 30 ? 'coverage-red' :
+    (percent < 50 ? 'coverage-yellow' : (percent > 90 ? 'coverage-green' : ''));
+}
+function logRateClass(cpm) {
+  return cpm * 666 > 90000 ? 'level-red' :
+    (cpm * 666 >= 40000 ? 'level-yellow' : '');
+}
+function logDoseClass(record) {
+  const averageCpm = record.covered ? record.dose * 60 / record.covered :
+    (record.dose ? Infinity : 0);
+  return logRateClass(averageCpm);
 }
 function renderLogSummary() {
   elements.logContent.replaceChildren();
@@ -898,11 +921,21 @@ function renderLogSummary() {
   const maximum = logRecords.reduce((maximum, record) => Math.max(maximum, record.dose), 1);
   for (const record of logRecords) {
     const row = document.createElement('div');
-    row.className = `log-grid log-record severity-${record.maximum >= 136 ? 'red' : (record.maximum >= 61 ? 'yellow' : 'normal')}`;
+    const isAlert = selectedLogType === 'alerts';
+    row.className = 'log-grid log-record';
     row.style.setProperty('--bar-width', `${Math.min(100, record.dose * 100 / maximum)}%`);
     row.title = `Clock period ${record.epoch}${record.live ? ' · live' : ''}${record.partial ? ' · incomplete coverage' : ''}`;
-    for (const value of [formatLogDate(record.timestamp, selectedLogType, record.calendar), ...logValueCells(record)]) {
-      const cell = document.createElement('span'); cell.textContent = value; row.append(cell);
+    const values = [formatLogDate(record.timestamp, selectedLogType, record.calendar), ...logValueCells(record)];
+    const metricClasses = isAlert ? [null, null, logDoseClass(record),
+      logRateClass(record.average), logRateClass(record.maximum)] :
+      [null, logDoseClass(record), logRateClass(record.average),
+        logRateClass(record.maximum), logCoverageClass(record)];
+    for (let index = 0; index < values.length; ++index) {
+      const cell = document.createElement('span');
+      const isMetric = isAlert ? index >= 2 && index <= 4 : index >= 1 && index <= 3;
+      if (isMetric) cell.className = `log-metric${metricClasses[index] ? ` ${metricClasses[index]}` : ''}`;
+      else if (metricClasses[index]) cell.className = metricClasses[index];
+      cell.textContent = values[index]; row.append(cell);
     }
     elements.logContent.append(row);
   }
@@ -1477,7 +1510,7 @@ function renderOfflinePreview() {
     header.className = 'log-grid log-grid-header';
     const alert = type === 'alerts';
     const columns = alert ? ['DATE', 'DURATION', 'DOSE', 'AVERAGE', 'MAXIMUM'] :
-      ['DATE', 'DOSE', 'MINIMUM', 'AVERAGE', 'MAXIMUM'];
+      ['DATE', 'DOSE', 'AVERAGE', 'MAXIMUM', 'COVERAGE'];
     columns.forEach((text) => {
       const cell = document.createElement('span');
       cell.textContent = text;
@@ -1485,10 +1518,13 @@ function renderOfflinePreview() {
     });
     const record = document.createElement('div');
     record.className = 'log-grid log-record';
-    const values = alert ? ['—', '0 s', '0 µSv', '0 µSv/h', '0 µSv/h'] :
-      ['—', '0 µSv', '0 µSv/h', '0 µSv/h', '0 µSv/h'];
-    values.forEach((text) => {
+    const demoType = logTypes.find((item) => item.id === type);
+    const values = alert ? ['—', '0:00', '0 µSv', '0 µSv/h', '0 µSv/h'] :
+      ['—', '0 µSv', '0 µSv/h', '0 µSv/h', `100% · ${demoType.period}s · full`];
+    values.forEach((text, index) => {
       const cell = document.createElement('span');
+      if (!alert && index === values.length - 1) cell.className = 'coverage-green';
+      else if (alert ? index >= 2 : index >= 1 && index <= 3) cell.className = 'log-metric';
       cell.textContent = text;
       record.append(cell);
     });

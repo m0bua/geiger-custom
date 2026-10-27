@@ -19,7 +19,7 @@ async function main() {
   const debug = {};
   const start = (Date.parse('2026-10-22T12:00:00Z') - Date.UTC(2000, 0, 1)) / 1000;
   const data = [[], [], [], []];
-  for (let i = 0; i < 3200; ++i) data[0].push({time: start - i * 60, count: i + 1, avg: 17 + i, max: 99 + i, covered: 60, epoch: 4, flags: 9, id: 0});
+  for (let i = 0; i < 3200; ++i) data[0].push({time: start - i * 60, count: i + 1, avg: 17 + i, max: 99 + i, covered: i === 0 ? 58 : 60, epoch: 4, flags: i === 0 ? 11 : 9, id: 0});
   for (let i = 0; i < 60; ++i) data[1].push({time: start - i * 3600, count: 3600, avg: 60, max: 120, covered: 3600, epoch: 4, flags: 9, id: 0});
   for (let i = 0; i < 60; ++i) data[2].push({time: start - i * 86400, count: 86400, avg: 60, max: 120, covered: 86400, epoch: 4, flags: 9, id: 0});
   const requests = [];
@@ -72,6 +72,18 @@ async function main() {
   assert.deepEqual(requests.slice(0, 6).map((item) => item.count), [2, 2, 1, 2, 2, 1]);
   assert.equal(run('logRecords[0].average'), 17);
   assert.equal(run('logRecords[0].maximum'), 99);
+  assert.equal(elements.logContent.children[1].children[4].textContent, '97% · 58s · partial');
+  assert.equal(elements.logContent.children[1].children[4].className, 'coverage-green');
+  assert.equal(elements.logContent.children[1].children[1].className, 'log-metric');
+  assert.equal(elements.logContent.children[1].children[2].className, 'log-metric');
+  assert.equal(elements.logContent.children[1].children[3].className, 'log-metric level-yellow');
+  assert.equal(run("formatLogCoverage({covered:59,partial:true,live:false})"), '98% · 59s · partial');
+  assert.equal(run("logCoverageClass({covered:29},logTypes[0])"), 'coverage-yellow');
+  assert.equal(run("logCoverageClass({covered:17},logTypes[0])"), 'coverage-red');
+  assert.equal(run("logCoverageClass({covered:54},logTypes[0])"), '');
+  assert.equal(run('logRateClass(60)'), '');
+  assert.equal(run('logRateClass(61)'), 'level-yellow');
+  assert.equal(run('logRateClass(136)'), 'level-red');
   assert.ok(!elements.logContent.children[0].innerHTML.includes('Minimum'));
   await run('loadLogPage(false)'); assert.equal(run('logRecords.length'), 120);
   run("saveLogView(); ++logPageGeneration; selectedLogType='hours'; clearLogView();");

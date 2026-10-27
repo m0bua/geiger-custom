@@ -185,8 +185,12 @@ button { font: inherit; }
 .log-record::before { position: absolute; z-index: -1; inset: 0 auto 0 0; width: var(--bar-width); content: ""; background: rgba(194,207,211,.12); }
 .log-record span { text-align: right; white-space: nowrap; }
 .log-record span:first-child { color: #aab8bd; text-align: left; }
-.log-record.severity-yellow span:last-child { color: #f0d35e; }
-.log-record.severity-red span:last-child { color: #ff6666; }
+.log-record .log-metric { color: #aab8bd; }
+.log-record .level-yellow { color: #f0d35e; }
+.log-record .level-red { color: #ff6666; }
+.log-record .coverage-red { color: #ff6666; }
+.log-record .coverage-yellow { color: #f0d35e; }
+.log-record .coverage-green { color: var(--green); }
 .log-content { overflow-x: auto; }
 .log-actions { display: flex; justify-content: center; }
 #settings-status { color: var(--muted); font: 10px "DM Mono", Consolas, monospace; }
