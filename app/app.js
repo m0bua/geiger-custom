@@ -576,7 +576,7 @@ const remoteSettings = [
   { id: 5, label: 'LED BRIGHT', options: ['AUTO', '1%', '3%', '5%', '10%', '25%', '50%', '80%', '100%'] },
   { id: 6, label: 'SCREEN BRIGHT', options: ['AUTO', '1%', '3%', '5%', '10%', '25%', '50%', '80%', '100%'] },
   { id: 7, label: 'SCREEN TIMER', options: ['1 s', '5 s', '10 s', '30 s', '60 s', '90 s'] },
-  { id: 20, label: 'TONE', options: ['STOCK', 'CLASSIC', 'MODERN'] },
+  { id: 20, label: 'TONE', options: ['STOCK', 'CLASSIC'] },
   { id: 8, label: 'LEAD ZERO', options: ['SHOW', 'HIDE'] },
   { id: 9, label: 'UNIT', options: ['Sv', 'CNT', 'R'] },
   { id: 10, label: 'RATE PREFIX', options: ['m', 'µ', 'n', 'AUTO'] },

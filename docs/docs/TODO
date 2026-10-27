@@ -1,12 +1,12 @@
 FEAT: battery life improve (speep: 82-85%)
 BUG?: перевірити незбереження налаштувань, особливо прихованих пунктів
 
-FEAT: gh-worker
+- FEAT: gh-worker
 FEAT: експорт логів з додатку
-FEAT: docs\docs\CLICK_SOUND_SPEC.md
 FEAT: кольори тем
 FEAT: затемнення перед вимкненням екрану
 FEAT: refactor long setting items
+BUG: reset
 
 BUG: після бутлодеру в додатку початок прошивки через platformio перезапускає в прошивку
     docs\docs\USB_UART_REENUMERATION_RECOVERY.md

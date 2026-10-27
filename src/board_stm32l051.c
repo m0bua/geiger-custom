@@ -366,7 +366,6 @@ static uint8_t lcd_settings_value_index[SETTING_COUNT] = {
 };
 static bool click_sound_active;
 static uint8_t click_sound_profile;
-static uint8_t click_sound_stage;
 static uint32_t click_sound_deadline;
 static bool sound_alarm_mode;
 static uint8_t sound_alarm_phase;
@@ -2069,7 +2068,7 @@ static const char *const rate_custom_values[] = {
     "0.3", "0.4", "0.5", "0.7", "0.9", "1", "2", "5", "10"
 };
 static const char *const stop_values[] = { "CLEAR", "BUTTON" };
-static const char *const tone_values[] = { "STOCK", "CLASSIC", "MODERN" };
+static const char *const tone_values[] = { "STOCK", "CLASSIC" };
 static const char *const long_press_values[] = {
     "300MS", "500MS", "700MS", "900MS", "1100MS", "1300MS"
 };
@@ -2125,7 +2124,7 @@ static const char *const *const lcd_settings_values[LCD_SETTINGS_COUNT] = {
 
 static const uint8_t lcd_settings_value_counts[LCD_SETTINGS_COUNT] = {
     6u, 6u, 4u, 4u, 4u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 3u, 3u, 1u, 2u,
-    9u, 2u, 1u, 1u, 3u, 6u, 7u, 3u, 4u, 4u, 4u, 8u, 1u
+    9u, 2u, 1u, 1u, 2u, 6u, 7u, 3u, 4u, 4u, 4u, 8u, 1u
 };
 
 static __attribute__((noinline)) uint8_t lcd_settings_value_count(uint8_t item)
@@ -4243,7 +4242,7 @@ static uint16_t settings_long_press_ms(void)
     return long_press_milliseconds[index < count ? index : 3u];
 }
 
-/* EEPROM retains the old MODERN/CLASSIC ordering for compatibility. */
+/* Keep legacy EEPROM ordering: old index 1 was MODERN, index 2 CLASSIC. */
 static uint8_t settings_tone_swap(uint8_t value)
 {
     return value == 1u ? 2u : (value == 2u ? 1u : 0u);
@@ -4254,7 +4253,8 @@ static void settings_click_tone_load(void)
     uint8_t value;
     if (settings_value_read(SETTINGS_CLICK_TONE_EEPROM_BASE,
             SETTINGS_CLICK_TONE_MAGIC, 0x73u, 3u, &value)) {
-        lcd_settings_value_index[SETTING_TONE] = settings_tone_swap(value);
+        value = settings_tone_swap(value);
+        lcd_settings_value_index[SETTING_TONE] = value == 1u ? 0u : value;
     }
 }
 
@@ -5047,7 +5047,6 @@ static void board_click_sound_stop(void)
     board_rgb_apply();
     REG32(GPIOA_BASE + GPIO_MODER) &= ~(3u << 6u);
     pin_input_with_pull(GPIOA_BASE, BOARD_BUTTON_RIGHT_PIN);
-    click_sound_stage = 0u;
 }
 
 void board_click_sound_start(void)
@@ -5066,7 +5065,7 @@ void board_click_sound_start(void)
     (void)RCC_APB1ENR;
     sound_alarm_mode = false;
     click_sound_profile = lcd_settings_value_index[SETTING_TONE];
-    click_sound_stage = 0u;
+    if (click_sound_profile == 1u && click_sound_active) return;
     REG32(TIM2_BASE + TIM_PSC) = 22u;
     REG32(TIM2_BASE + TIM_ARR) = 310u;
     REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) ?
@@ -5082,8 +5081,7 @@ void board_click_sound_start(void)
     REG32(TIM2_BASE + TIM_CCER) |= 1u << 12u;
     REG32(TIM2_BASE + TIM_CR1) |= 1u;
     click_sound_deadline = board_millis +
-        (click_sound_profile == 2u ? 4u :
-            (click_sound_profile == 1u ? 2u : 38u));
+        (click_sound_profile == 1u ? 2u : 38u);
     click_sound_active = true;
 }
 
@@ -5126,52 +5124,24 @@ void board_sound_alarm_set(bool active)
     REG32(TIM2_BASE + TIM_CCER) |= 1u << 12u;
     REG32(TIM2_BASE + TIM_CR1) |= 1u;
     click_sound_deadline = board_millis +
-        (click_sound_profile == 2u ? 120u :
-            (click_sound_profile == 1u ? 240u : 400u));
+        (click_sound_profile == 1u ? 240u : 400u);
 }
 
 void board_click_sound_service(void)
 {
     if (sound_alarm_mode &&
         (int32_t)(board_millis - click_sound_deadline) >= 0) {
-        if (click_sound_profile == 2u) {
-            sound_alarm_phase = (uint8_t)((sound_alarm_phase + 1u) % 4u);
-            if (sound_alarm_phase == 1u) {
-                REG32(TIM2_BASE + TIM_CCR4) = 0u;
-                click_sound_deadline += 50u;
-            } else {
-                REG32(TIM2_BASE + TIM_CCR4) = 50u;
-                REG32(TIM2_BASE + TIM_PSC) =
-                    (sound_alarm_phase == 0u || sound_alarm_phase == 3u) ?
-                    31u : 18u;
-                click_sound_deadline += 120u;
-            }
-        } else {
-            sound_alarm_phase ^= 1u;
-            REG32(TIM2_BASE + TIM_PSC) =
-                (sound_alarm_phase == 0u) ?
-                (click_sound_profile == 1u ? 31u : 22u) :
-                (click_sound_profile == 1u ? 22u : 31u);
-            click_sound_deadline += click_sound_profile == 1u ? 240u : 400u;
-        }
+        sound_alarm_phase ^= 1u;
+        REG32(TIM2_BASE + TIM_PSC) =
+            (sound_alarm_phase == 0u) ?
+            (click_sound_profile == 1u ? 31u : 22u) :
+            (click_sound_profile == 1u ? 22u : 31u);
+        click_sound_deadline += click_sound_profile == 1u ? 240u : 400u;
         REG32(TIM2_BASE + TIM_EGR) = 1u;
         REG32(TIM2_BASE + TIM_CNT) = 0u;
     } else if (click_sound_active && !sound_alarm_mode &&
         (int32_t)(board_millis - click_sound_deadline) >= 0) {
-        if (click_sound_profile != 2u || click_sound_stage >= 2u) {
-            board_click_sound_stop();
-        } else if (click_sound_stage == 0u) {
-            REG32(TIM2_BASE + TIM_CCR4) = 0u;
-            REG32(TIM2_BASE + TIM_EGR) = 1u;
-            click_sound_stage = 1u;
-            click_sound_deadline += 2u;
-        } else {
-            REG32(TIM2_BASE + TIM_PSC) = 31u;
-            REG32(TIM2_BASE + TIM_CCR4) = 50u;
-            REG32(TIM2_BASE + TIM_EGR) = 1u;
-            click_sound_stage = 2u;
-            click_sound_deadline += 8u;
-        }
+        board_click_sound_stop();
     }
 }
 
