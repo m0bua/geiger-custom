@@ -569,6 +569,10 @@ const remoteSettings = [
   { id: 19, label: 'REBOOT', options: [] },
 ];
 
+function formatGroupedNumber(value) {
+  return Number(value).toLocaleString('en-US').replace(/,/g, ' ');
+}
+
 function percentFromAdc(raw, empty, full) {
   if (raw <= empty) return 0;
   if (raw >= full) return 100;
@@ -696,7 +700,7 @@ function showRateChartTooltip(event) {
   const value = rateHistory[rateHoverIndex];
   const unit = deviceSettings?.[9] ?? 0;
   const display = unit === 1 ?
-    { value: Math.round(value).toLocaleString('en-US'), unit: 'CPM' } :
+    { value: formatGroupedNumber(Math.round(value)), unit: 'CPM' } :
     formatRadiation(value, deviceSettings?.[10] ?? 1,
       unit === 2 ? 'R' : 'Sv', true);
   elements.rateTooltip.textContent = `${display.value} ${display.unit}`;
@@ -748,7 +752,7 @@ function renderDebugLogInfo() {
   elements.debugRtc.textContent = logInfo.rtcStatus ||
     (logInfo.calendarValid ? 'SET' : 'NOT SET');
   elements.debugClock.textContent = logInfo.clockSource || '—';
-  elements.debugSeconds.textContent = logInfo.seconds.toLocaleString('en-US');
+  elements.debugSeconds.textContent = formatGroupedNumber(logInfo.seconds);
   elements.memorySpi.textContent = logInfo.spiSizeMb === null ? '—' :
     `${logInfo.spiSizeMb}MB`;
   elements.memorySpi.classList.toggle('state-error', logInfo.spi && !logInfo.spiReady);
@@ -775,13 +779,13 @@ function applyLogInfo(payload) {
   renderDebugLogInfo();
   for (const type of logTypes) {
     const cell = document.querySelector(`#debug-${type.id}`);
-    if (cell) cell.textContent = logInfo[type.countKey].toLocaleString('en-US');
+    if (cell) cell.textContent = formatGroupedNumber(logInfo[type.countKey]);
   }
   const store = document.querySelector('#debug-log-store');
   if (store) store.textContent = logInfo.error ? 'ERR' : ['EEPROM', 'SPI', 'OFF'][logInfo.memory];
   elements.logTabs.querySelectorAll('[data-log-type]').forEach((button) => {
     const type = logTypes.find((item) => item.id === button.dataset.logType);
-    if (type) button.textContent = `${type.label} (${logInfo[type.countKey].toLocaleString('en-US')})`;
+    if (type) button.textContent = `${type.label} (${formatGroupedNumber(logInfo[type.countKey])})`;
   });
   updateDeviceDateTime();
 }
@@ -837,7 +841,7 @@ function renderLogTabs() {
   for (const type of logTypes) {
     const button = document.createElement('button'); button.type = 'button';
     button.className = `log-tab${type.id === selectedLogType ? ' active' : ''}`;
-    button.textContent = `${type.label} (${logInfo[type.countKey].toLocaleString('en-US')})`;
+    button.textContent = `${type.label} (${formatGroupedNumber(logInfo[type.countKey])})`;
     button.dataset.logType = type.id;
     button.setAttribute('aria-selected', String(type.id === selectedLogType));
     button.addEventListener('click', () => {
@@ -872,7 +876,7 @@ function logValueCells(record) {
   const dose = formatLogRadiation(record.dose * 0.000111);
   const average = formatLogRadiation(record.average * 0.00666, true);
   const maximum = formatLogRadiation(record.maximum * 0.00666, true);
-  const values = [cnt ? `${record.dose.toLocaleString('en-US')} CNT` : `${dose.value} ${dose.unit}`,
+  const values = [cnt ? `${formatGroupedNumber(record.dose)} CNT` : `${dose.value} ${dose.unit}`,
     cnt ? `${record.average} CPM` : `${average.value} ${average.unit}`,
     cnt ? `${record.maximum} CPM` : `${maximum.value} ${maximum.unit}`];
   const duration = `${Math.floor(record.covered / 60)}:${String(record.covered % 60).padStart(2, '0')}`;
@@ -910,7 +914,7 @@ function renderLogSummary() {
   elements.loadMoreLogs.disabled = logPageLoading;
   if (!logInfo) return;
   const type = logTypes.find((item) => item.id === selectedLogType);
-  elements.logsStatus.textContent = `${logRecords.length.toLocaleString('en-US')} records loaded · ${logInfo[type.countKey].toLocaleString('en-US')} stored entries${logInfo.memory === 2 ? ' · recording off' : ''}${logInfo.error ? ' · storage error' : ''}`;
+  elements.logsStatus.textContent = `${formatGroupedNumber(logRecords.length)} records loaded · ${formatGroupedNumber(logInfo[type.countKey])} stored entries${logInfo.memory === 2 ? ' · recording off' : ''}${logInfo.error ? ' · storage error' : ''}`;
   if (!logRecords.length) { elements.logContent.textContent = logPageLoading ? 'Loading records…' : 'No records available.'; return; }
   const header = document.createElement('div'); header.className = 'log-grid log-grid-header';
   header.innerHTML = selectedLogType === 'alerts' ?
@@ -1417,26 +1421,28 @@ function renderSettings() {
       controls.append(select);
     }
 
-    const visibilityLabel = document.createElement('label');
-    visibilityLabel.className = 'setting-visible';
-    const visibility = document.createElement('input');
-    visibility.type = 'checkbox';
-    visibility.checked = preview ? !demoHiddenSettings.has(setting.id) :
-      deviceHiddenSettings === null || (deviceHiddenSettings[setting.id] ?? false) === false;
-    visibility.disabled = !preview && (!supported || deviceHiddenSettings === null);
-    visibility.title = 'Show this setting on the device';
-    visibility.addEventListener('change', () => {
-      if (preview) {
-        if (visibility.checked) demoHiddenSettings.delete(setting.id);
-        else demoHiddenSettings.add(setting.id);
-        return;
-      }
-      writeSetting(0x80 + setting.id, visibility.checked ? 0 : 1, visibility);
-    });
-    const visibilityText = document.createElement('span');
-    visibilityText.textContent = 'Show';
-    visibilityLabel.append(visibility, visibilityText);
-    controls.append(visibilityLabel);
+    if (setting.id !== 18) {
+      const visibilityLabel = document.createElement('label');
+      visibilityLabel.className = 'setting-visible';
+      const visibility = document.createElement('input');
+      visibility.type = 'checkbox';
+      visibility.checked = preview ? !demoHiddenSettings.has(setting.id) :
+        deviceHiddenSettings === null || (deviceHiddenSettings[setting.id] ?? false) === false;
+      visibility.disabled = !preview && (!supported || deviceHiddenSettings === null);
+      visibility.title = 'Show this setting on the device';
+      visibility.addEventListener('change', () => {
+        if (preview) {
+          if (visibility.checked) demoHiddenSettings.delete(setting.id);
+          else demoHiddenSettings.add(setting.id);
+          return;
+        }
+        writeSetting(0x80 + setting.id, visibility.checked ? 0 : 1, visibility);
+      });
+      const visibilityText = document.createElement('span');
+      visibilityText.textContent = 'Show';
+      visibilityLabel.append(visibility, visibilityText);
+      controls.append(visibilityLabel);
+    }
     if (standaloneActionButton) row.append(standaloneActionButton);
     else row.append(label);
     row.append(controls);
@@ -1607,6 +1613,14 @@ async function loadSettings() {
         (payload[offset + 2] << 16) | (payload[offset + 3] << 24)) >>> 0;
       deviceHiddenSettings = Array.from({ length: count }, (_, id) =>
         (mask & (1 << id)) !== 0);
+      if (deviceHiddenSettings[18] &&
+          (protocolCapabilities & CAP_SET_SETTING) !== 0) {
+        const result = await serial.request(OP_SET_SETTING,
+          Uint8Array.of(0x80 + 18, 0));
+        if (result.length === 1 && result[0] === 0) {
+          deviceHiddenSettings[18] = false;
+        }
+      }
     }
     renderSettings();
     if (logInfo && logRecords.length) renderLogSummary();
@@ -1708,7 +1722,7 @@ function rateRowText(mode, unit, cpm, rateUsvh, ratePrefix) {
     if (mode === 3) return `${(cpm / 60).toFixed(2)} CPS`;
   } else {
     if (mode === 2) return '';
-    if (mode === 0) return `${cpm.toLocaleString('en-US')} CPM`;
+    if (mode === 0) return `${formatGroupedNumber(cpm)} CPM`;
     if (mode === 1) return `${(cpm / 60).toFixed(2)} CPS`;
     if (mode === 3) {
       const symbol = unit === 0 ? 'R' : 'Sv';
@@ -1738,7 +1752,7 @@ function doseRowChoice(unit, period, mode) {
 }
 
 function doseValueText(unit, pulses, dosePrefix) {
-  if (unit === 1) return `${pulses.toLocaleString('en-US')} CNT`;
+  if (unit === 1) return `${formatGroupedNumber(pulses)} CNT`;
   const doseUsv = pulses * (400 / 3600) / 1000;
   const symbol = unit === 2 ? 'R' : 'Sv';
   const formatted = formatRadiation(doseUsv * (unit === 2 ? 100 : 1), dosePrefix, symbol, false, 6);
@@ -1749,7 +1763,7 @@ function doseRowText(unit, period, mode, cpm, uptime, uptimePulses, dayPulses, t
   const choice = doseRowChoice(unit, period, mode);
   if (choice === 'OFF') return '';
   if (choice.kind === 'time') return formatDoseUptime(uptime);
-  if (choice === 'CPM') return `${cpm.toLocaleString('en-US')} CPM`;
+  if (choice === 'CPM') return `${formatGroupedNumber(cpm)} CPM`;
   if (choice.kind === 'unit') {
     const pulses = period === 0 ? uptimePulses : period === 1 ? dayPulses : totalPulses;
     return doseValueText(choice.value, pulses, dosePrefix);
@@ -1814,9 +1828,9 @@ function handleStatus(payload) {
 
   if (unit === 1) {
     elements.rateLabel.textContent = 'RATE';
-    elements.rateDose.textContent = cpm.toLocaleString('en-US');
+    elements.rateDose.textContent = formatGroupedNumber(cpm);
     elements.rateUnit.textContent = 'CPM';
-    elements.dose.textContent = dosePulseCount.toLocaleString('en-US');
+    elements.dose.textContent = formatGroupedNumber(dosePulseCount);
     elements.doseUnit.textContent = 'CNT';
   } else {
     const symbol = unit === 2 ? 'R' : 'Sv';
@@ -1837,7 +1851,7 @@ function handleStatus(payload) {
     uptimePulses, dayPulses, lifetimePulses, dosePrefix);
   elements.doseFoot.textContent = doseRow;
   elements.doseFoot.hidden = doseRow.length === 0;
-  elements.debugCount.textContent = countTotal.toLocaleString('en-US');
+  elements.debugCount.textContent = formatGroupedNumber(countTotal);
   elements.uptime.textContent = `${uptime.days}D ${uptime.clock}`;
   updateDeviceDateTime(`${uptime.days}D ${uptime.clock}`);
   rateHistory.push(unit === 1 ? cpm : rateUsvh);
@@ -1853,13 +1867,13 @@ function handleStatus(payload) {
   const batteryPercent = percentFromAdc(batteryRaw, 1300, 2000);
   elements.batteryPercent.textContent = `${batteryPercent}%`;
   elements.debugBatteryPercent.textContent = `${batteryPercent}%`;
-  elements.debugBatteryRaw.textContent = batteryRaw.toLocaleString('en-US');
+  elements.debugBatteryRaw.textContent = formatGroupedNumber(batteryRaw);
   elements.debugBatteryStartPercent.textContent = batteryStartRaw === null ? '—' :
     `${percentFromAdc(batteryStartRaw, 1300, 2000)}%`;
   elements.debugBatteryStartRaw.textContent = batteryStartRaw === null ? '—' :
-    batteryStartRaw.toLocaleString('en-US');
+    formatGroupedNumber(batteryStartRaw);
   elements.debugSolarPercent.textContent = `${solarPercent}%`;
-  elements.debugSolarRaw.textContent = solarRaw.toLocaleString('en-US');
+  elements.debugSolarRaw.textContent = formatGroupedNumber(solarRaw);
   for (const [seconds, percentElement, timeElement] of [
     [usbSeconds, elements.debugChargePercent, elements.debugChargeTime],
     [screenSeconds, elements.debugScreenPercent, elements.debugScreenTime],

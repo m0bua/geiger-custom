@@ -2064,11 +2064,10 @@ static const char *const log_memory_values[] = { "EEPROM", "SPI", "OFF" };
 static const char *const on_off_values[] = { "ON", "OFF" };
 static const char *const empty_values[] = { "" };
 static const char *const dose_alarm_values[] = {
-    "5USV", "7USV", "10USV", "30USV", "50USV", "100USV", "500USV", "1000USV"
+    "5", "7", "10", "30", "50", "100", "500", "1000"
 };
 static const char *const rate_custom_values[] = {
-    "0.3USV/H", "0.4USV/H", "0.5USV/H", "0.7USV/H", "0.9USV/H",
-    "1USV/H", "2USV/H", "5USV/H", "10USV/H"
+    "0.3", "0.4", "0.5", "0.7", "0.9", "1", "2", "5", "10"
 };
 static const char *const stop_values[] = { "CLEAR", "BUTTON" };
 static const char *const tone_values[] = { "STOCK", "CLASSIC", "MODERN" };
