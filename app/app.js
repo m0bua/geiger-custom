@@ -531,11 +531,10 @@ let logHistorical = false;
 let logSelectedDate = "";
 let clockSyncBusy = false;
 const rateHistory = [];
-const rateStatsHistory = [];
 const demoSettings = Array.from({ length: 29 }, () => 0);
 const demoHiddenSettings = new Set([13, 15, 16, 21, 27]);
 Object.assign(demoSettings, {
-  0: 2, 5: 0, 6: 0, 7: 2, 9: 0, 10: 1, 11: 1, 12: 0,
+  0: 2, 5: 0, 6: 0, 7: 2, 9: 0, 10: 1, 11: 1, 12: 0, 22: 1,
   15: 0, 16: 4, 21: 3, 23: 1,
 });
 
@@ -1259,25 +1258,42 @@ function settingsOptions(setting, currentSettings = deviceSettings) {
     return ['CPM', 'CPS'];
   }
   if (setting.id === 12) {
-    const stats = ['MIN_M', 'AVG_M', 'MAX_M', 'MIN_H', 'AVG_H', 'MAX_H'];
-    return currentSettings?.[9] === 1 ? ['SV', 'R', 'OFF', ...stats] :
-      ['CPM', 'CPS', 'OFF', ...stats];
+    const unit = currentSettings?.[9] ?? 0;
+    return [
+      {label: 'CPM', value: unit === 1 ? 'duplicate-cpm' : 0, disabled: unit === 1},
+      {label: 'CPS', value: unit === 1 ? 3 : 1, disabled: false},
+      {label: 'OFF', value: 2, disabled: false},
+      {label: 'SV', value: unit === 1 ? 0 : (unit === 0 ? 'duplicate-sv' : 3), disabled: unit === 0},
+      {label: 'R', value: unit === 1 ? 1 : (unit === 2 ? 'duplicate-r' : 3), disabled: unit === 2},
+    ];
   }
   if (setting.id === 22) {
     const unit = currentSettings?.[9] ?? 0;
     const period = currentSettings?.[23] ?? 1;
-    const values = ['OFF'];
-    ['SV', 'CNT', 'R'].forEach((name, index) => {
-      if (index !== unit) values.push(name);
-    });
+    let mode = 1;
+    const units = ['SV', 'CNT', 'R'].map((label, value) =>
+      value === unit ? {label, value: `duplicate-unit-${value}`, disabled: true} :
+        {label, value: mode++, disabled: false});
+    let time, uptime, day, total;
     if (period === 0) {
-      values.push('TIME', 'DAY', 'TOTAL');
+      time = mode++;
+      uptime = 'duplicate-period-0';
+      day = mode++;
+      total = mode++;
     } else {
-      ['UPTIME', 'DAY', 'TOTAL'].forEach((name, index) => {
-        if (index !== period) values.push(name);
-      });
+      uptime = mode++;
+      day = period === 1 ? 'duplicate-period-1' : mode++;
+      total = period === 2 ? 'duplicate-period-2' : mode++;
+      time = mode++;
     }
-    return values;
+    return [
+      {label: 'OFF', value: 0, disabled: false}, ...units,
+      {label: 'CPM', value: 6, disabled: false},
+      {label: 'TIME', value: time, disabled: false},
+      {label: 'UPTIME', value: uptime, disabled: period === 0},
+      {label: 'DAY', value: day, disabled: period === 1},
+      {label: 'TOTAL', value: total, disabled: period === 2},
+    ];
   }
   return setting.options;
 }
@@ -1381,6 +1397,7 @@ function renderSettings() {
             document.querySelector('#debug-log-store').textContent =
               ['EEPROM', 'SPI', 'OFF'][nextValue] || 'EEPROM';
           }
+          if (setting.id === 23) demoSettings[22] = nextValue === 0 ? 3 : 1;
           if (setting.id === 9 || setting.id === 23) {
             renderSettings();
             document.querySelector(`#setting-${setting.id}`)?.focus();
@@ -1679,7 +1696,7 @@ function formatDoseUptime(seconds) {
   return [elapsedHours, minutes, secs].map((part) => String(part).padStart(2, '0')).join(':');
 }
 
-function rateRowText(mode, unit, cpm, rateUsvh) {
+function rateRowText(mode, unit, cpm, rateUsvh, ratePrefix) {
   if (unit === 1) {
     if (mode === 2) return '';
     if (mode === 0 || mode === 1) {
@@ -1688,23 +1705,19 @@ function rateRowText(mode, unit, cpm, rateUsvh) {
       const formatted = formatRadiation(value, 1, symbol, true);
       return `${formatted.value} ${formatted.unit}`;
     }
+    if (mode === 3) return `${(cpm / 60).toFixed(2)} CPS`;
   } else {
     if (mode === 2) return '';
     if (mode === 0) return `${cpm.toLocaleString('en-US')} CPM`;
     if (mode === 1) return `${(cpm / 60).toFixed(2)} CPS`;
+    if (mode === 3) {
+      const symbol = unit === 0 ? 'R' : 'Sv';
+      const value = unit === 0 ? rateUsvh * 100 : rateUsvh;
+      const formatted = formatRadiation(value, ratePrefix, symbol, true);
+      return `${formatted.value} ${formatted.unit}`;
+    }
   }
-
-  if (mode < 3 || mode > 8) return '';
-  const windowSeconds = mode < 6 ? 60 : 3600;
-  const samples = rateStatsHistory.slice(-windowSeconds);
-  const values = samples.length ? samples : [cpm];
-  const minimum = Math.min(...values);
-  const maximum = Math.max(...values);
-  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const statistic = (mode - 3) % 3;
-  const value = statistic === 0 ? minimum : statistic === 1 ? average : maximum;
-  const tag = ['MIN_M', 'AVG_M', 'MAX_M', 'MIN_H', 'AVG_H', 'MAX_H'][mode - 3];
-  return `${tag} ${Math.round(value).toLocaleString('en-US')} CPM`;
+  return '';
 }
 
 function doseRowChoice(unit, period, mode) {
@@ -1718,7 +1731,9 @@ function doseRowChoice(unit, period, mode) {
     [0, 1, 2].forEach((value) => {
       if (value !== period) choices.push({ kind: 'period', value });
     });
+    choices.push({ kind: 'time' });
   }
+  choices.push('CPM');
   return choices[mode] || 'OFF';
 }
 
@@ -1730,10 +1745,11 @@ function doseValueText(unit, pulses, dosePrefix) {
   return `${formatted.value} ${formatted.unit}`;
 }
 
-function doseRowText(unit, period, mode, uptime, uptimePulses, dayPulses, totalPulses, dosePrefix) {
+function doseRowText(unit, period, mode, cpm, uptime, uptimePulses, dayPulses, totalPulses, dosePrefix) {
   const choice = doseRowChoice(unit, period, mode);
   if (choice === 'OFF') return '';
   if (choice.kind === 'time') return formatDoseUptime(uptime);
+  if (choice === 'CPM') return `${cpm.toLocaleString('en-US')} CPM`;
   if (choice.kind === 'unit') {
     const pulses = period === 0 ? uptimePulses : period === 1 ? dayPulses : totalPulses;
     return doseValueText(choice.value, pulses, dosePrefix);
@@ -1812,13 +1828,12 @@ function handleStatus(payload) {
     elements.dose.textContent = dose.value;
     elements.doseUnit.textContent = dose.unit;
   }
-  rateStatsHistory.push(cpm);
-  if (rateStatsHistory.length > 3600) rateStatsHistory.shift();
   const rateRowMode = deviceSettings?.[12] ?? 0;
-  const rateRow = rateRowText(rateRowMode, unit, cpm, rateUsvh);
+  const rateRow = rateRowText(rateRowMode, unit, cpm, rateUsvh,
+    deviceSettings?.[10] ?? 1);
   elements.rateFoot.textContent = rateRow;
   elements.rateFoot.hidden = rateRow.length === 0;
-  let doseRow = doseRowText(unit, dosePeriod, doseRowMode, uptimeSeconds,
+  let doseRow = doseRowText(unit, dosePeriod, doseRowMode, cpm, uptimeSeconds,
     uptimePulses, dayPulses, lifetimePulses, dosePrefix);
   elements.doseFoot.textContent = doseRow;
   elements.doseFoot.hidden = doseRow.length === 0;
@@ -2631,7 +2646,6 @@ async function connectDevice(portOverride = null) {
   deviceSettings = null;
   deviceHiddenSettings = null;
   rateHistory.length = 0;
-  rateStatsHistory.length = 0;
   logInfo = null;
   logRecords = [];
   logViewCache.clear(); logHistorical = false; logSelectedDate = ""; logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
@@ -2711,7 +2725,6 @@ async function disconnectDevice() {
   elements.rebootFirmware.disabled = false;
   elements.rebootBootloader.disabled = false;
   polling = false;
-  rateStatsHistory.length = 0;
   deviceSettings = null;
   deviceHiddenSettings = null;
   logInfo = null;

@@ -183,6 +183,7 @@ static uint8_t lcd_indication_mode = 1u;
 #define LCD_CPM_TEXT_LENGTH 11u
 #define LCD_DOSE_ROW_OFF 0xFFu
 #define LCD_DOSE_ROW_TIME 0xFEu
+#define LCD_DOSE_ROW_CPM 0xFDu
 #define LCD_DOSE_ROW_PERIOD_BASE 3u
 #define LCD_WARMUP_TEXT_LENGTH 6u
 #define LCD_WARMUP_BOX_WIDTH 64u
@@ -358,7 +359,7 @@ static uint8_t lcd_settings_value_index[SETTING_COUNT] = {
     [SETTING_LED] = 2u, [SETTING_SCREEN_TIMER] = 2u,
     [SETTING_RATE_PREFIX] = 1u, [SETTING_DOSE_PREFIX] = 1u,
     [SETTING_LONG_PRESS] = 3u, [SETTING_RATE_ROW_2] = 0u,
-    [SETTING_DOSE_ROW_2] = 0u, [SETTING_DOSE_PERIOD] = 1u,
+    [SETTING_DOSE_ROW_2] = 1u, [SETTING_DOSE_PERIOD] = 1u,
     [SETTING_RATE_CUSTOM] = 4u
 };
 static bool click_sound_active;
@@ -439,7 +440,6 @@ static uint32_t lcd_dose_value_thousandths;
 static uint32_t lcd_dose_fraction;
 static uint32_t lcd_dose_measurement_seconds;
 static bool lcd_dose_row_hidden;
-static uint32_t lcd_rate_stats[6];
 /* Keep lossless RGB565 colours in a small per-glyph palette. DMA expands
  * one display-width chunk at a time, rather than holding a full RGB565 row. */
 static uint8_t lcd_text_glyph[LCD_TEXT_GLYPH_PIXELS] __attribute__((aligned(4)));
@@ -1071,15 +1071,13 @@ static void lcd_format_dose_display(uint32_t dose_thousandths,
 static void lcd_format_cpm(uint32_t cpm)
 {
     const uint8_t row_mode = lcd_settings_value_index[SETTING_RATE_ROW_2];
-    static const char *const statistic_tags[] = {
-        "MIN_M", "AVG_M", "MAX_M", "MIN_H", "AVG_H", "MAX_H"
-    };
+    const uint8_t selected_unit = lcd_settings_value_index[SETTING_UNIT];
 
     for (uint8_t i = 0u; i < LCD_CPM_TEXT_LENGTH; ++i) {
         lcd_cpm_text[i] = ' ';
     }
-    if ((row_mode == 0u || row_mode == 1u) &&
-        lcd_settings_value_index[SETTING_UNIT] == 1u) {
+    if ((row_mode < 2u && selected_unit == 1u) ||
+        (row_mode == 3u && selected_unit != 1u)) {
         char saved_glyphs[sizeof(lcd_rate_glyphs)];
         char saved_label[LCD_RATE_LABEL_LENGTH];
         const uint8_t saved_count = lcd_rate_glyph_count;
@@ -1089,8 +1087,9 @@ static void lcd_format_cpm(uint32_t cpm)
         const char saved_display_prefix = lcd_display_unit_prefix;
         for (uint8_t i = 0u; i < sizeof(saved_glyphs); ++i) saved_glyphs[i] = lcd_rate_glyphs[i];
         for (uint8_t i = 0u; i < LCD_RATE_LABEL_LENGTH; ++i) saved_label[i] = lcd_rate_label[i];
-        lcd_settings_value_index[SETTING_UNIT] = row_mode == 0u ? 0u : 2u;
-        lcd_settings_value_index[SETTING_RATE_PREFIX] = 1u;
+        lcd_settings_value_index[SETTING_UNIT] = selected_unit == 1u ?
+            (row_mode == 0u ? 0u : 2u) : (selected_unit == 0u ? 2u : 0u);
+        if (selected_unit == 1u) lcd_settings_value_index[SETTING_RATE_PREFIX] = 1u;
         lcd_format_rate(saved_rate);
         uint8_t position = 0u;
         while (position < LCD_CPM_TEXT_LENGTH && position < lcd_rate_glyph_count) {
@@ -1108,8 +1107,8 @@ static void lcd_format_cpm(uint32_t cpm)
         lcd_settings_value_index[SETTING_RATE_PREFIX] = saved_prefix;
         lcd_rate_value_thousandths = saved_rate;
         lcd_display_unit_prefix = saved_display_prefix;
-    } else if (row_mode == 0u || row_mode == 1u) {
-        if (row_mode == 1u) {
+    } else if (row_mode < 2u || (row_mode == 3u && selected_unit == 1u)) {
+        if (row_mode == 1u || row_mode == 3u) {
             uint32_t cps_thousandths = (uint32_t)(
                 ((uint64_t)cpm * 1000u + 30u) / 60u);
             uint32_t whole = cps_thousandths / 1000u;
@@ -1147,23 +1146,6 @@ static void lcd_format_cpm(uint32_t cpm)
             lcd_cpm_text[5] = 'C';
             lcd_cpm_text[6] = 'P';
             lcd_cpm_text[7] = 'M';
-        }
-    } else if (row_mode >= 3u && row_mode <= 8u) {
-        const char *tag = statistic_tags[row_mode - 3u];
-        uint32_t value = lcd_rate_stats[row_mode - 3u];
-        uint8_t digits = 0u;
-        char reversed[4];
-        while (value != 0u && digits < 4u) {
-            reversed[digits++] = (char)('0' + value % 10u);
-            value /= 10u;
-        }
-        if (digits == 0u) reversed[digits++] = '0';
-        uint8_t position = 0u;
-        for (uint8_t i = 0u; i < 5u; ++i) lcd_cpm_text[position++] = tag[i];
-        lcd_cpm_text[position++] = ' ';
-        for (uint8_t i = 0u; i < 4u; ++i) {
-            lcd_cpm_text[position++] = i < 4u - digits ? ' ' :
-                reversed[digits - (uint8_t)(i - (4u - digits)) - 1u];
         }
     }
     lcd_cpm_text[LCD_CPM_TEXT_LENGTH] = '\0';
@@ -1208,25 +1190,30 @@ static void lcd_format_dose_row(void)
     for (uint8_t i = 0u; i < sizeof(saved_glyphs); ++i) saved_glyphs[i] = lcd_rate_glyphs[i];
     for (uint8_t i = 0u; i < LCD_RATE_LABEL_LENGTH; ++i) saved_label[i] = lcd_rate_label[i];
 
-    uint8_t row_unit = saved_unit;
-    uint8_t row_period = saved_period;
-    if (choice < 3u) {
-        row_unit = choice;
+    if (choice == LCD_DOSE_ROW_CPM) {
+        lcd_format_count_value(lcd_current_cpm, "CPM  ");
     } else {
-        row_period = (uint8_t)(choice - LCD_DOSE_ROW_PERIOD_BASE);
-    }
-    lcd_daily_pulse_count = lcd_dose_period_pulses[row_period];
-    if (row_unit == 1u) {
-        lcd_format_count_value(lcd_daily_pulse_count, "CNT  ");
-    } else {
-        const uint64_t scaled =
-            (uint64_t)lcd_daily_pulse_count * 400u;
-        const uint32_t dose_thousandths = (uint32_t)(scaled / 3600u);
-        const uint32_t dose_fraction = (uint32_t)(scaled % 3600u);
-        lcd_settings_value_index[SETTING_UNIT] = row_unit;
-        lcd_format_dose(dose_thousandths, dose_fraction);
-        lcd_rate_label[3] = ' ';
-        lcd_rate_label[4] = ' ';
+        uint8_t row_unit = saved_unit;
+        uint8_t row_period = saved_period;
+        if (choice < 3u) {
+            row_unit = choice;
+        } else {
+            row_period = (uint8_t)(choice - LCD_DOSE_ROW_PERIOD_BASE);
+        }
+        lcd_daily_pulse_count = lcd_dose_period_pulses[row_period];
+        if (row_unit == 1u) {
+            lcd_format_count_value(lcd_daily_pulse_count, "CNT  ");
+        } else {
+            const uint64_t scaled =
+                (uint64_t)lcd_daily_pulse_count * 400u;
+            const uint32_t dose_thousandths = (uint32_t)(scaled / 3600u);
+            const uint32_t dose_fraction = (uint32_t)(scaled % 3600u);
+            lcd_settings_value_index[SETTING_UNIT] = row_unit;
+            lcd_format_dose(dose_thousandths, dose_fraction);
+            lcd_rate_label[2] = ' ';
+            lcd_rate_label[3] = ' ';
+            lcd_rate_label[4] = ' ';
+        }
     }
 
     uint8_t position = 0u;
@@ -1234,6 +1221,7 @@ static void lcd_format_dose_row(void)
         lcd_cpm_text[position] = lcd_rate_glyphs[position];
         ++position;
     }
+    if (position < LCD_CPM_TEXT_LENGTH) lcd_cpm_text[position++] = ' ';
     for (uint8_t i = 0u; i < LCD_RATE_LABEL_LENGTH &&
          position < LCD_CPM_TEXT_LENGTH; ++i) {
         if (lcd_rate_label[i] != ' ') lcd_cpm_text[position++] = lcd_rate_label[i];
@@ -2069,7 +2057,7 @@ static const char *const zero_values[] = { "SHOW", "HIDE" };
 static const char *const unit_values[] = { "SV", "CNT", "R" };
 static const char *const prefix_values[] = { "m", "\xB5", "n", "AUTO", "CPM", "CPS" };
 static const char *const rate_row_values[] = {
-    "CPM", "CPS", "OFF", "MIN_M", "AVG_M", "MAX_M", "MIN_H", "AVG_H", "MAX_H"
+    "CPM", "CPS", "OFF"
 };
 static const char *const dose_period_values[] = { "UPTIME", "DAY", "TOTAL" };
 static const char *const log_memory_values[] = { "EEPROM", "SPI", "OFF" };
@@ -2115,14 +2103,16 @@ static uint8_t lcd_dose_row_option(uint8_t option_index)
             if (option_index == 0u) return (uint8_t)(LCD_DOSE_ROW_PERIOD_BASE + period);
             --option_index;
         }
+        if (option_index == 0u) return LCD_DOSE_ROW_TIME;
+        --option_index;
     }
+    if (option_index == 0u) return LCD_DOSE_ROW_CPM;
     return LCD_DOSE_ROW_OFF;
 }
 
 static uint8_t lcd_dose_row_option_count(void)
 {
-    return (uint8_t)(3u +
-        (lcd_settings_value_index[SETTING_DOSE_PERIOD] == 0u ? 3u : 2u));
+    return 7u;
 }
 
 static const char *const *const lcd_settings_values[LCD_SETTINGS_COUNT] = {
@@ -2136,14 +2126,17 @@ static const char *const *const lcd_settings_values[LCD_SETTINGS_COUNT] = {
 };
 
 static const uint8_t lcd_settings_value_counts[LCD_SETTINGS_COUNT] = {
-    6u, 6u, 4u, 4u, 4u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 9u, 3u, 1u, 2u,
-    9u, 2u, 1u, 1u, 3u, 6u, 4u, 3u, 4u, 4u, 4u, 8u, 1u
+    6u, 6u, 4u, 4u, 4u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 3u, 3u, 1u, 2u,
+    9u, 2u, 1u, 1u, 3u, 6u, 7u, 3u, 4u, 4u, 4u, 8u, 1u
 };
 
 static __attribute__((noinline)) uint8_t lcd_settings_value_count(uint8_t item)
 {
     if (item == 10u || item == 11u) {
         return lcd_settings_value_index[SETTING_UNIT] == 1u ? 2u : 4u;
+    }
+    if (item == SETTING_RATE_ROW_2) {
+        return 4u;
     }
     if (item == SETTING_DOSE_ROW_2) return lcd_dose_row_option_count();
     return lcd_settings_value_counts[item];
@@ -2159,14 +2152,23 @@ static const char *lcd_settings_value_text(uint8_t item)
         lcd_settings_value_index[SETTING_UNIT] == 1u) {
         return lcd_settings_values[item][value_index + 4u];
     }
-    if (item == SETTING_RATE_ROW_2 &&
-        lcd_settings_value_index[SETTING_UNIT] == 1u && value_index < 2u) {
-        return unit_values[value_index == 0u ? 0u : 2u];
+    if (item == SETTING_RATE_ROW_2) {
+        if (lcd_settings_value_index[SETTING_UNIT] == 1u) {
+            if (value_index == 0u) return unit_values[0u];
+            if (value_index == 1u) return unit_values[2u];
+            if (value_index == 3u) return "CPS";
+        } else if (value_index == 3u) {
+            return lcd_settings_value_index[SETTING_UNIT] == 0u ?
+                unit_values[2u] : unit_values[0u];
+        }
+        if (value_index < 3u) return rate_row_values[value_index];
+        return "OFF";
     }
     if (item == SETTING_DOSE_ROW_2) {
         const uint8_t option = lcd_dose_row_option(value_index);
         if (option == LCD_DOSE_ROW_OFF) return "OFF";
         if (option == LCD_DOSE_ROW_TIME) return "TIME";
+        if (option == LCD_DOSE_ROW_CPM) return "CPM";
         if (option < 3u) return unit_values[option];
         if (option < 6u) return dose_period_values[option - LCD_DOSE_ROW_PERIOD_BASE];
         return "OFF";
@@ -3782,7 +3784,8 @@ static void board_display_settings_redraw(void);
 #define SETTINGS_DOSE_ALARM_EEPROM_SLOT_SIZE 4u
 #define SETTINGS_ROW_EEPROM_BASE 50u
 #define SETTINGS_ROW_EEPROM_SLOT_SIZE 6u
-#define SETTINGS_ROW_EEPROM_MAGIC 0xBDu
+#define SETTINGS_ROW_EEPROM_MAGIC 0xC8u
+#define SETTINGS_ROW_EEPROM_LEGACY_MAGIC 0xBDu
 #define SETTINGS_EEPROM_MAGIC 0xA7u
 #define SETTINGS_EEPROM_V2_MAGIC 0xA8u
 #define SETTINGS_EEPROM_V3_MAGIC 0xA9u
@@ -3840,7 +3843,7 @@ static uint8_t settings_row_crc(uint8_t sequence, uint8_t rate_row,
 
 static bool settings_row_record_read(uint8_t slot, uint8_t *sequence,
                                      uint8_t *rate_row, uint8_t *dose_row,
-                                     uint8_t *dose_period)
+                                     uint8_t *dose_period, bool *legacy)
 {
     const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
         DATA_EEPROM_BASE + SETTINGS_ROW_EEPROM_BASE +
@@ -3849,32 +3852,47 @@ static bool settings_row_record_read(uint8_t slot, uint8_t *sequence,
     *rate_row = record[2];
     *dose_row = record[3];
     *dose_period = record[4];
-    return record[0] == SETTINGS_ROW_EEPROM_MAGIC && *rate_row < 9u &&
-        *dose_row < 4u && *dose_period < 3u &&
-        record[5] == settings_row_crc(*sequence, *rate_row, *dose_row,
-            *dose_period);
+    const bool old_format = record[0] == SETTINGS_ROW_EEPROM_LEGACY_MAGIC;
+    if (legacy != NULL) *legacy = old_format;
+    return (record[0] == SETTINGS_ROW_EEPROM_MAGIC && *rate_row < 4u &&
+            *dose_row < 7u && *dose_period < 3u &&
+            record[5] == settings_row_crc(*sequence, *rate_row, *dose_row,
+                *dose_period)) ||
+        (old_format && *rate_row < 9u && *dose_row < 4u &&
+            *dose_period < 3u && record[5] == settings_row_crc(*sequence,
+                *rate_row, *dose_row, *dose_period));
 }
 
 static bool settings_eeprom_write_byte(uint16_t offset, uint8_t value);
+static bool settings_row_save(void);
 
 static void settings_row_load(void)
 {
     uint8_t seq0, rate0, dose0, period0;
     uint8_t seq1, rate1, dose1, period1;
+    bool legacy0, legacy1;
     const bool valid0 = settings_row_record_read(0u, &seq0, &rate0,
-        &dose0, &period0);
+        &dose0, &period0, &legacy0);
     const bool valid1 = settings_row_record_read(1u, &seq1, &rate1,
-        &dose1, &period1);
+        &dose1, &period1, &legacy1);
     if (!valid0 && !valid1) return;
     const bool use1 = valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0);
     lcd_row_settings_sequence = use1 ? seq1 : seq0;
+    const bool legacy = use1 ? legacy1 : legacy0;
     lcd_settings_value_index[SETTING_RATE_ROW_2] = use1 ? rate1 : rate0;
     lcd_settings_value_index[SETTING_DOSE_ROW_2] = use1 ? dose1 : dose0;
     lcd_settings_value_index[SETTING_DOSE_PERIOD] = use1 ? period1 : period0;
+    if (legacy && lcd_settings_value_index[SETTING_RATE_ROW_2] >= 3u)
+        lcd_settings_value_index[SETTING_RATE_ROW_2] = 0u;
+    if (lcd_settings_value_index[SETTING_RATE_ROW_2] >=
+            lcd_settings_value_count(SETTING_RATE_ROW_2)) {
+        lcd_settings_value_index[SETTING_RATE_ROW_2] = 0u;
+    }
     if (lcd_settings_value_index[SETTING_DOSE_ROW_2] >=
             lcd_settings_value_count(SETTING_DOSE_ROW_2)) {
         lcd_settings_value_index[SETTING_DOSE_ROW_2] = 0u;
     }
+    if (legacy) (void)settings_row_save();
 }
 
 static bool settings_row_save(void)
@@ -3882,9 +3900,9 @@ static bool settings_row_save(void)
     uint8_t seq0, rate0, dose0, period0;
     uint8_t seq1, rate1, dose1, period1;
     const bool valid0 = settings_row_record_read(0u, &seq0, &rate0,
-        &dose0, &period0);
+        &dose0, &period0, NULL);
     const bool valid1 = settings_row_record_read(1u, &seq1, &rate1,
-        &dose1, &period1);
+        &dose1, &period1, NULL);
     const uint8_t current = valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0) ?
         1u : 0u;
     const uint8_t target = (valid0 || valid1) ? (uint8_t)(current ^ 1u) : 0u;
@@ -4671,6 +4689,10 @@ static void lcd_settings_apply_current(void)
                 lcd_settings_value_count(SETTING_DOSE_ROW_2)) {
             lcd_settings_value_index[SETTING_DOSE_ROW_2] = 0u;
         }
+        if (lcd_settings_value_index[SETTING_RATE_ROW_2] >=
+                lcd_settings_value_count(SETTING_RATE_ROW_2)) {
+            lcd_settings_value_index[SETTING_RATE_ROW_2] = 0u;
+        }
         lcd_dose_row_hidden = false;
         lcd_format_cpm(lcd_current_cpm);
         lcd_format_dose_row();
@@ -4694,6 +4716,10 @@ static void lcd_settings_apply_current(void)
     }
     if (lcd_settings_selected == SETTING_DOSE_ROW_2 ||
         lcd_settings_selected == SETTING_DOSE_PERIOD) {
+        if (lcd_settings_selected == SETTING_DOSE_PERIOD) {
+            lcd_settings_value_index[SETTING_DOSE_ROW_2] =
+                lcd_settings_value_index[SETTING_DOSE_PERIOD] == 0u ? 3u : 1u;
+        }
         if (lcd_settings_value_index[SETTING_DOSE_ROW_2] >=
                 lcd_dose_row_option_count()) {
             lcd_settings_value_index[SETTING_DOSE_ROW_2] = 0u;
@@ -5375,29 +5401,6 @@ void board_display_set_dose(uint32_t dose_thousandths,
         /* Refresh only row two; repainting the main value makes its black
          * glyph backgrounds visibly flash while elapsed values update. */
         lcd_dose_row_redraw_pending = true;
-    }
-}
-
-void board_display_set_rate_stats(uint32_t minimum_minute,
-                                  uint32_t average_minute,
-                                  uint32_t maximum_minute,
-                                  uint32_t minimum_hour,
-                                  uint32_t average_hour,
-                                  uint32_t maximum_hour)
-{
-    const uint32_t values[6] = {minimum_minute, average_minute,
-        maximum_minute, minimum_hour, average_hour, maximum_hour};
-    bool changed = false;
-    for (uint8_t i = 0u; i < 6u; ++i) {
-        if (lcd_rate_stats[i] != values[i]) {
-            lcd_rate_stats[i] = values[i];
-            changed = true;
-        }
-    }
-    if (changed && lcd_screen_page == 0u &&
-        lcd_settings_value_index[SETTING_RATE_ROW_2] >= 3u) {
-        lcd_format_cpm(lcd_current_cpm);
-        lcd_cpm_redraw_pending = true;
     }
 }
 

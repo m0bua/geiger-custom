@@ -81,11 +81,6 @@ int main(void)
     uint32_t pulses_since_start = 0u;
     uint32_t session_pulses_total = 0u;
     uint32_t session_elapsed_seconds = 0u;
-    uint32_t hour_min_cpm = UINT32_MAX;
-    uint32_t hour_max_cpm = 0u;
-    uint64_t hour_sum_cpm = 0u;
-    uint32_t hour_sample_count = 0u;
-    uint32_t hour_bucket = UINT32_MAX;
     uint32_t dose_thousandths = 0u;
     uint32_t dose_fraction = 0u;
     uint32_t dose_measurement_seconds = 0u;
@@ -575,42 +570,6 @@ int main(void)
                                        dose_measurement_seconds);
                 } else {
                     latest_cpm = second_log_add(0u);
-                }
-                {
-                    uint32_t minute_min = UINT32_MAX;
-                    uint32_t minute_max = 0u;
-                    uint64_t minute_sum = 0u;
-                    uint32_t minute_samples = cpm_history_count();
-                    if (minute_samples > 120u) minute_samples = 120u;
-                    for (uint32_t age = 0u; age < minute_samples; ++age) {
-                        uint32_t sample;
-                        if (cpm_history_get((uint8_t)age, &sample)) {
-                            if (sample < minute_min) minute_min = sample;
-                            if (sample > minute_max) minute_max = sample;
-                            minute_sum += sample;
-                        }
-                    }
-                    if (minute_samples == 0u) minute_min = 0u;
-                    const uint32_t minute_average = minute_samples == 0u ? 0u :
-                        (uint32_t)(minute_sum / minute_samples);
-                    const uint32_t current_hour_bucket =
-                        board_uptime_seconds_get() / 3600u;
-                    if (current_hour_bucket != hour_bucket) {
-                        hour_bucket = current_hour_bucket;
-                        hour_min_cpm = UINT32_MAX;
-                        hour_max_cpm = 0u;
-                        hour_sum_cpm = 0u;
-                        hour_sample_count = 0u;
-                    }
-                    if (latest_cpm < hour_min_cpm) hour_min_cpm = latest_cpm;
-                    if (latest_cpm > hour_max_cpm) hour_max_cpm = latest_cpm;
-                    hour_sum_cpm += latest_cpm;
-                    if (hour_sample_count < UINT32_MAX) ++hour_sample_count;
-                    board_display_set_rate_stats(minute_min, minute_average,
-                        minute_max, hour_min_cpm == UINT32_MAX ? 0u : hour_min_cpm,
-                        hour_sample_count == 0u ? 0u :
-                            (uint32_t)(hour_sum_cpm / hour_sample_count),
-                        hour_max_cpm);
                 }
                 next_minute_tick += 1000u;
             }

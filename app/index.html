@@ -218,7 +218,7 @@
 
         <details class="manual-chapter">
         <summary>1 · Level screen</summary>
-        <p>The large value is the current dose rate. The top row shows device time, solar input, and battery status. The smaller second row can show CPM/CPS, a rolling rate statistic, or a CNT warm-up progress bar, depending on Settings. The letter at the top indicates the selected indication mode; a flashlight marker appears when its manual light is on. The counter color and LEDs can change with the configured thresholds.</p>
+        <p>The large value is the current dose rate. The top row shows device time, solar input, and battery status. The smaller second row can show CPM/CPS or the equivalent rate in R/Sv, depending on Settings. During CNT warm-up it shows a progress bar. The letter at the top indicates the selected indication mode; a flashlight marker appears when its manual light is on. The counter color and LEDs can change with the configured thresholds.</p>
         <p><strong>Short Left</strong> cycles the indication modes. <strong>Short Right</strong> opens Dose. <strong>Long Left</strong> toggles the flashlight. <strong>Long Right</strong> opens the extra screens.</p>
         <div class="manual-screen-grid">
           <figure><figcaption>1.0.1 · Blue rate display with CNT progress</figcaption><img src="../docs/renders/screens/1.0.1-rate-blue-cnt.svg" alt="Rate screen with blue counter and CNT progress bar" loading="lazy"></figure>
@@ -242,7 +242,7 @@
 
         <details class="manual-chapter">
         <summary>2 · Dose</summary>
-        <p>Shows accumulated dose for the period selected by DOSE PERIOD in Settings: uptime, current day, or total. The unit and optional second row are configurable. The second row can show a count, rate-like value, another period total, or be turned off in Settings. Short Left cycles the indication modes; short Right returns to Level; long Right opens the graph pages.</p>
+        <p>Shows accumulated dose for the period selected by DOSE PERIOD in Settings: uptime, current day, or total. The unit and second row are configurable. The second row can show another unit or period, elapsed time, current CPM, or be turned off. By default it shows time for UPTIME and CNT for DAY/TOTAL. Short Left cycles the indication modes; short Right returns to Level; long Right opens the graph pages.</p>
         <figure class="manual-screen-single"><figcaption>2 · Accumulated dose</figcaption><img src="../docs/renders/screens/2-dose.svg" alt="Dose screen showing accumulated dose and a secondary row" loading="lazy"></figure>
         </details>
 
