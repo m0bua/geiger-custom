@@ -56,35 +56,54 @@
       </section>
       <section class="chart-panel" aria-label="Recent rate history">
         <canvas id="rate-chart" aria-label="Rate over the latest 3 minutes"></canvas>
+        <output id="rate-chart-tooltip" class="chart-tooltip" role="tooltip" hidden></output>
       </section>
     </section>
 
     <section id="debug-page" class="page" hidden>
       <section class="details-panel">
-        <div class="panel-heading"><h2>DEBUG</h2></div>
-        <table class="debug-usage-table">
-          <thead><tr><th scope="col">FIELD</th><th scope="col">VALUE</th><th scope="col" aria-label="Raw reading or duration"></th></tr></thead>
+        <div class="panel-heading"><h2 id="debug-view-title">DEBUG</h2><span id="debug-mode-badge">DEMO DATA</span></div>
+        <nav class="debug-subtabs" aria-label="Debug pages">
+          <button class="log-tab active" type="button" data-debug-page="system" aria-selected="true">DEBUG</button>
+          <button class="log-tab" type="button" data-debug-page="voltage" aria-selected="false">VOLT</button>
+          <button class="log-tab" type="button" data-debug-page="logs" aria-selected="false">LOGS</button>
+          <button class="log-tab" type="button" data-debug-page="memory" aria-selected="false">MEM</button>
+        </nav>
+        <table class="debug-usage-table" data-debug-view="system">
+          <thead><tr><th scope="col">FIELD</th><th scope="col">VALUE</th><th scope="col"></th></tr></thead>
           <tbody>
-            <tr class="debug-section"><th scope="colgroup" colspan="3">SYSTEM</th></tr>
+            <tr><th scope="row">DATE</th><td id="debug-date">—</td><td id="debug-time">—</td></tr>
             <tr><th scope="row">UPTIME</th><td id="uptime">—</td><td></td></tr>
             <tr><th scope="row">CNT</th><td id="debug-count">—</td><td></td></tr>
             <tr><th scope="row">RTC</th><td id="debug-rtc">—</td><td></td></tr>
             <tr><th scope="row">CLOCK</th><td id="debug-clock">—</td><td></td></tr>
-            <tr class="debug-section"><th scope="colgroup" colspan="3">POWER</th></tr>
+          </tbody>
+        </table>
+        <table class="debug-usage-table" data-debug-view="voltage" hidden>
+          <thead><tr><th scope="col">FIELD</th><th scope="col">LEVEL / TIME</th><th scope="col">RAW</th></tr></thead>
+          <tbody>
             <tr><th scope="row">BATT</th><td id="debug-battery-percent">—</td><td id="debug-battery-raw">—</td></tr>
             <tr><th scope="row">BATT START</th><td id="debug-battery-start-percent">—</td><td id="debug-battery-start-raw">—</td></tr>
             <tr><th scope="row">SOL</th><td id="debug-solar-percent">—</td><td id="debug-solar-raw">—</td></tr>
             <tr><th scope="row">CHARGE</th><td id="debug-charge-percent">—</td><td id="debug-charge-time">—</td></tr>
             <tr><th scope="row">SCREEN</th><td id="debug-screen-percent">—</td><td id="debug-screen-time">—</td></tr>
             <tr><th scope="row">SLEEP</th><td id="debug-sleep-percent">—</td><td id="debug-sleep-time">—</td></tr>
-            <tr class="debug-section"><th scope="colgroup" colspan="3">LOGS</th></tr>
+          </tbody>
+        </table>
+        <table class="debug-usage-table" data-debug-view="logs" hidden>
+          <thead><tr><th scope="col">FIELD</th><th scope="col">VALUE</th><th scope="col"></th></tr></thead>
+          <tbody>
             <tr><th scope="row">MIN</th><td id="debug-minutes">—</td><td></td></tr>
             <tr><th scope="row">HOUR</th><td id="debug-hours">—</td><td></td></tr>
             <tr><th scope="row">DAY</th><td id="debug-days">—</td><td></td></tr>
             <tr><th scope="row">ALERT</th><td id="debug-alerts">—</td><td></td></tr>
             <tr><th scope="row">SEC</th><td id="debug-seconds">—</td><td></td></tr>
             <tr><th scope="row">STORE</th><td id="debug-log-store">—</td><td></td></tr>
-            <tr class="debug-section"><th scope="colgroup" colspan="3">MEMORY</th></tr>
+          </tbody>
+        </table>
+        <table class="debug-usage-table" data-debug-view="memory" hidden>
+          <thead><tr><th scope="col">FIELD</th><th scope="col">VALUE</th><th scope="col"></th></tr></thead>
+          <tbody>
             <tr><th scope="row">FLASH</th><td id="memory-flash">64 KB</td><td></td></tr>
             <tr><th scope="row">RAM</th><td id="memory-ram">8 KB</td><td></td></tr>
             <tr><th scope="row">EEPROM</th><td id="memory-eeprom">2 KB</td><td></td></tr>
@@ -196,7 +215,7 @@
           <li><strong>Overview:</strong> current rate, dose today, solar and battery readings, device clock, and recent rate chart.</li>
           <li><strong>Logs:</strong> browse day, minute, hour, and alert records when available. Load older pages as needed.</li>
           <li><strong>Settings:</strong> read and change settings supported by the connected firmware.</li>
-          <li><strong>Debug:</strong> inspect uptime, counters, clock, memory, log counts, and battery, solar, charging, screen, and sleep readings in one sectioned table. Battery at startup appears when supported by the firmware.</li>
+          <li><strong>Debug:</strong> inspect the same four pages as the device: DEBUG, VOLT, LOGS, and MEM, in that order. The selected page shows uptime and clock state; voltage readings; physical log counts and store state; or memory sizes and SPI identification.</li>
         </ul>
       </details>
       <details class="information-card device-manual">
@@ -211,7 +230,7 @@
           <li><strong>Left button:</strong> usually moves backward, changes a value, or cancels.</li>
           <li><strong>Right button:</strong> usually moves forward, changes a value, or confirms.</li>
         </ul>
-        <p>On the two main screens, short Right switches between Level and Dose. Long Right opens the extra-screen group. While held there, it advances through Time, Settings, and Debug; release when the desired page appears. Long Left exits a menu or returns to the main screen. On the Level screen, long Left toggles the flashlight.</p>
+        <p>On the two main screens, short Right switches between Level and Dose. Long Right opens the extra-screen group. While held there, it advances through Settings and Debug; release when the desired page appears. Long Left exits a menu or returns to the main screen. On the Level screen, long Left toggles the flashlight.</p>
         </details>
 
         <details class="manual-chapter">
@@ -225,23 +244,17 @@
         </details>
 
         <details class="manual-chapter">
-        <summary>1.1 · Time</summary>
-        <p>Shows the device clock, calendar date, and uptime. Long Right opens the editable fields. Short Left/Right moves between year, month, day, hour, minute, and SAVE. Long Right starts editing a field; short Left/Right changes its value; long Right accepts it. On SAVE, long Right writes the calendar. Long Left cancels the current field edit; if no field is being edited, it closes the field list. Long Left again returns to the main screen.</p>
-        <figure class="manual-screen-single"><figcaption>1.1 · Time and uptime</figcaption><img src="../docs/renders/screens/1.1-time.svg" alt="Time screen showing clock, date, and uptime" loading="lazy"></figure>
-        </details>
-
-        <details class="manual-chapter">
-        <summary>1.2 · Settings</summary>
-        <p>Long Right opens the settings list. Short Left/Right moves the highlight. Long Right activates the highlighted item. Simple options with up to three choices change immediately. For options with more choices, long Right enters value editing; short Left/Right cycles through values, long Right saves, and long Left cancels. The list includes display and LED behavior, click sounds, brightness and screen timeout, units and prefixes, secondary rows, dose period and alarms, log memory (EEPROM, SPI, or off), long-press timing, reset/cleanup actions, Power Off, and Reboot. Some items depend on the selected units or hardware.</p>
+        <summary>1.1 - Settings</summary>
+        <p>Long Right opens the settings list. Short Left/Right moves the highlight. Long Right activates the highlighted item. Simple options with up to three choices change immediately. For options with more choices, long Right enters value editing; short Left/Right cycles through values, long Right saves, and long Left cancels. The list includes display and LED behavior, click sounds, brightness and screen timeout, units and prefixes, secondary rows, dose period and alarms, log memory (EEPROM, SPI, or off), long-press timing, reset/cleanup actions, Power Off, and Reboot. Some items depend on the selected units or hardware. The device clock is set from the app's Settings page.</p>
         <div class="manual-screen-grid">
-          <figure><figcaption>1.2.1 · Settings with a simple option selected</figcaption><img src="../docs/renders/screens/1.2.1-settings-simple.svg" alt="Settings screen with a simple option highlighted" loading="lazy"></figure>
-          <figure><figcaption>1.2.2 · Settings with a multi-value option selected</figcaption><img src="../docs/renders/screens/1.2.2-settings-many-options.svg" alt="Settings screen editing LED brightness with multiple choices" loading="lazy"></figure>
+          <figure><figcaption>1.1.1 - Settings with a simple option selected</figcaption><img src="../docs/renders/screens/1.2.1-settings-simple.svg" alt="Settings screen with a simple option highlighted" loading="lazy"></figure>
+          <figure><figcaption>1.1.2 - Settings with a multi-value option selected</figcaption><img src="../docs/renders/screens/1.2.2-settings-many-options.svg" alt="Settings screen editing LED brightness with multiple choices" loading="lazy"></figure>
         </div>
         </details>
 
         <details class="manual-chapter">
-        <summary>1.3 · Debug</summary>
-        <p>Shows diagnostic information across four views: DEBUG (uptime, pulse count, RTC and clock), DEBUG MEM (memory and SPI status), DEBUG LOGS (minute, hour, day, alert and second counts, plus store state), and DEBUG VOLT (battery and solar readings plus charge, screen, and sleep time). Long Right cycles through the diagnostic views. Short Left/Right moves between Time, Settings, and Debug.</p>
+        <summary>1.2 - Debug</summary>
+        <p>Shows four pages in this order: DEBUG (date, time, uptime, pulse count, RTC and clock), VOLT (battery and solar readings plus charge, screen, and sleep time), LOGS (minute, hour, day, alert and second counts, plus store state), and MEM (memory sizes and SPI identification). Long Right cycles through the pages. Short Left/Right moves between Settings and Debug.</p>
         </details>
 
         <details class="manual-chapter">

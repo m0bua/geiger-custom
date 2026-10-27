@@ -185,6 +185,7 @@ const elements = {
   connectionLabel: document.querySelector('#connection-label'),
   notice: document.querySelector('#notice'),
   rateChart: document.querySelector('#rate-chart'),
+  rateTooltip: document.querySelector('#rate-chart-tooltip'),
   deviceDate: document.querySelector('#device-date'),
   deviceTime: document.querySelector('#device-time'),
   settingsDeviceDate: document.querySelector('#settings-device-date'),
@@ -263,6 +264,10 @@ const elements = {
   debugRtc: document.querySelector('#debug-rtc'),
   debugClock: document.querySelector('#debug-clock'),
   debugSeconds: document.querySelector('#debug-seconds'),
+  debugDate: document.querySelector('#debug-date'),
+  debugTime: document.querySelector('#debug-time'),
+  debugViewTitle: document.querySelector('#debug-view-title'),
+  debugModeBadge: document.querySelector('#debug-mode-badge'),
   memorySpi: document.querySelector('#memory-spi'),
   memoryJedec: document.querySelector('#memory-jedec'),
 };
@@ -492,6 +497,9 @@ class SerialProtocol {
 }
 
 let serial = null;
+let offlinePreview = true;
+let rateHoverIndex = null;
+let debugSubpage = 'system';
 let selectedSerialPort = null;
 let bootloaderPortOpen = false;
 let portMayBeOpen = false;
@@ -530,7 +538,7 @@ const demoSettings = Array.from({ length: 29 }, () => 0);
 const demoHiddenSettings = new Set([13, 15, 16, 21, 27]);
 Object.assign(demoSettings, {
   0: 2, 5: 0, 6: 0, 7: 2, 9: 0, 10: 1, 11: 1, 12: 0,
-  15: 0, 21: 1, 23: 1,
+  15: 0, 16: 4, 21: 3, 23: 1,
 });
 
 const remoteSettings = [
@@ -617,8 +625,8 @@ function drawRateChart() {
   context.fillStyle = '#819096';
   context.font = '10px "DM Mono", Consolas, monospace';
   context.fillText(rateHistoryUnit, 4, 12);
-  const values = serial ? rateHistory : Array.from({ length: 24 }, (_, index) => index);
-  if (!serial) {
+  const values = offlinePreview ? Array.from({ length: 24 }, (_, index) => index) : rateHistory;
+  if (offlinePreview) {
     context.textAlign = 'right';
     context.fillStyle = '#9b83da';
     context.fillText('DEMO · ILLUSTRATIVE', w - 4, 12);
@@ -631,10 +639,10 @@ function drawRateChart() {
   };
   const levelColor = levelColors[rateLevel];
 
-  const peak = serial ? Math.max(...values, 0.01) * 1.12 : values.length - 1;
+  const peak = offlinePreview ? values.length - 1 : Math.max(...values, 0.01) * 1.12;
   const points = values.map((value, index) => ({
     x: (index / (values.length - 1)) * w,
-    y: serial ? h - (value / peak) * h : h - (index / (values.length - 1)) * h,
+    y: offlinePreview ? h - (index / (values.length - 1)) * h : h - (value / peak) * h,
   }));
   context.strokeStyle = 'rgba(160,186,194,.10)';
   context.lineWidth = 1;
@@ -658,6 +666,56 @@ function drawRateChart() {
   context.lineJoin = 'round';
   context.lineCap = 'round';
   context.stroke();
+  if (!offlinePreview && rateHoverIndex !== null && points[rateHoverIndex]) {
+    const point = points[rateHoverIndex];
+    context.beginPath();
+    context.arc(point.x, point.y, 4, 0, Math.PI * 2);
+    context.fillStyle = levelColor;
+    context.fill();
+    context.lineWidth = 2;
+    context.strokeStyle = '#e6edf0';
+    context.stroke();
+  }
+}
+
+function hideRateChartTooltip() {
+  rateHoverIndex = null;
+  elements.rateTooltip.hidden = true;
+}
+
+function showRateChartTooltip(event) {
+  if (offlinePreview || !serial || rateHistory.length === 0) {
+    hideRateChartTooltip();
+    return;
+  }
+  const canvasRect = elements.rateChart.getBoundingClientRect();
+  const panel = elements.rateChart.parentElement;
+  const panelRect = panel.getBoundingClientRect();
+  let pointerRatio = Math.max(0, Math.min(1,
+    (event.clientX - canvasRect.left) / canvasRect.width));
+  rateHoverIndex = Math.round(pointerRatio * (rateHistory.length - 1));
+  pointerRatio = rateHistory.length > 1 ?
+    rateHoverIndex / (rateHistory.length - 1) : 0;
+  const value = rateHistory[rateHoverIndex];
+  const unit = deviceSettings?.[9] ?? 0;
+  const display = unit === 1 ?
+    { value: Math.round(value).toLocaleString('en-US'), unit: 'CPM' } :
+    formatRadiation(value, deviceSettings?.[10] ?? 1,
+      unit === 2 ? 'R' : 'Sv', true);
+  elements.rateTooltip.textContent = `${display.value} ${display.unit}`;
+  elements.rateTooltip.hidden = false;
+  drawRateChart();
+
+  const pointX = pointerRatio * canvasRect.width;
+  const peak = Math.max(...rateHistory, 0.01) * 1.12;
+  const pointY = canvasRect.height - (value / peak) * canvasRect.height;
+  const left = canvasRect.left - panelRect.left + pointX + 10;
+  const top = canvasRect.top - panelRect.top + pointY -
+    elements.rateTooltip.offsetHeight - 8;
+  elements.rateTooltip.style.left = `${Math.max(8, Math.min(
+    panel.clientWidth - elements.rateTooltip.offsetWidth - 8, left))}px`;
+  elements.rateTooltip.style.top = `${Math.max(8, Math.min(
+    panel.clientHeight - elements.rateTooltip.offsetHeight - 8, top))}px`;
 }
 
 function showNotice(message, kind = '') {
@@ -680,8 +738,8 @@ function selectPage(page, updateUrl = true) {
   }
   if (page === 'overview') drawRateChart();
   if (page === 'settings' && serial && deviceSettings === null) loadSettings();
-  if (page === 'settings' && serial && logInfo === null) loadLogInfo();
-  if (page === 'logs' && serial && logInfo === null) loadLogInfo();
+  if (page === 'settings' && serial && protocolCapabilities && logInfo === null) loadLogInfo();
+  if (page === 'logs' && serial && protocolCapabilities && logInfo === null) loadLogInfo();
   else if (page === 'logs' && serial && logInfo) {
     if (logRecords.length === 0) loadLogPage(true);
     else refreshLatestLogRecord();
@@ -1009,6 +1067,12 @@ function setConnection(state, label) {
     (state === 'connecting' ? 'Connecting…' : 'Connect');
   elements.connect.classList.toggle('button-primary', !canDisconnect);
   elements.connect.classList.toggle('button-quiet', canDisconnect);
+  const liveData = state === 'connected' && !offlinePreview;
+  elements.debugModeBadge.textContent = liveData ? 'DEVICE DATA' :
+    (state === 'disconnected' || state === 'disconnect-pending' ?
+      'DEMO DATA' : 'CONNECTING');
+  elements.debugModeBadge.dataset.mode = liveData ? 'device' : 'demo';
+  if (state !== 'connected') hideRateChartTooltip();
   updateRtcControls();
 }
 
@@ -1121,6 +1185,8 @@ function updateDeviceDateTime(uptimeText = null) {
   if (!logInfo?.calendarValid) {
     elements.deviceDate.textContent = '—';
     elements.deviceTime.textContent = '—';
+    elements.debugDate.textContent = '---- -- --';
+    elements.debugTime.textContent = '--:--:--';
     elements.logsDeviceTime.textContent = '—';
   } else {
     const date = new Date(Date.UTC(2000, 0, 1) + logInfo.calendarSeconds * 1000);
@@ -1128,6 +1194,8 @@ function updateDeviceDateTime(uptimeText = null) {
       String(date.getUTCMonth() + 1).padStart(2, '0'),
       String(date.getUTCDate()).padStart(2, '0')].join('-');
     elements.deviceTime.textContent = `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
+    elements.debugDate.textContent = elements.deviceDate.textContent;
+    elements.debugTime.textContent = `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}:${String(date.getUTCSeconds()).padStart(2, '0')}`;
     elements.logsDeviceTime.textContent = `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}:${String(date.getUTCSeconds()).padStart(2, '0')}`;
   }
   renderSettingsClock();
@@ -1156,73 +1224,52 @@ function updateSpiDumpAvailability() {
 }
 
 function settingsOptions(setting, currentSettings = deviceSettings) {
-  if (currentSettings?.length !== 28) {
-    if (setting.id >= 24) return setting.options;
-    if (setting.id === 0 || setting.id === 1) {
-      return ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED'];
-    }
-    if (setting.id >= 2 && setting.id <= 4) return ['OFF', 'YELLOW', 'RED'];
-    if (setting.id === 16) {
-      return ['OFF', 'AUTO-Y', 'AUTO-R', '5 µSv', '7 µSv', '10 µSv',
-        '30 µSv', '50 µSv', '100 µSv', '500 µSv', '1000 µSv'];
-    }
-  }
   if ((setting.id === 10 || setting.id === 11) && currentSettings?.[9] === 1) {
     return ['CPM', 'CPS'];
   }
   if (setting.id === 12) {
     const stats = ['MIN_M', 'AVG_M', 'MAX_M', 'MIN_H', 'AVG_H', 'MAX_H'];
-    return currentSettings?.[9] === 1 ? ['µSv', 'R', 'OFF', ...stats] :
+    return currentSettings?.[9] === 1 ? ['SV', 'R', 'OFF', ...stats] :
       ['CPM', 'CPS', 'OFF', ...stats];
   }
-  if (setting.id === 16) return setting.options;
   if (setting.id === 22) {
     const unit = currentSettings?.[9] ?? 0;
     const period = currentSettings?.[23] ?? 1;
-    const activeUnits = ['Sv', 'CNT', 'R'].filter((_, index) => index !== unit);
-    const activePeriods = period === 0 ? ['TIME', 'DAY', 'TOTAL'] :
-      ['UPTIME', 'DAY', 'TOTAL'].filter((_, index) => index !== period);
-    const activeValues = ['OFF', ...activeUnits, ...activePeriods];
-    const activeIndex = (label) => activeValues.indexOf(label);
-    const unitLabels = ['Sv', 'CNT', 'R'];
-    const periodLabels = ['TIME', 'UPTIME', 'DAY', 'TOTAL'];
-    return ['OFF', ...unitLabels, ...periodLabels].map((label, index) => {
-      const isUnit = index >= 1 && index <= 3;
-      const isPeriod = index >= 4;
-      const inactive = (isUnit && unitLabels.indexOf(label) === unit) ||
-        (isPeriod && ((period === 0 && label === 'UPTIME') ||
-          (period !== 0 && (label === 'TIME' ||
-            ['UPTIME', 'DAY', 'TOTAL'].indexOf(label) === period))));
-      return {
-        label,
-        value: inactive ? `inactive-${index}` : activeIndex(label),
-        disabled: inactive,
-      };
+    const values = ['OFF'];
+    ['SV', 'CNT', 'R'].forEach((name, index) => {
+      if (index !== unit) values.push(name);
     });
+    if (period === 0) {
+      values.push('TIME', 'DAY', 'TOTAL');
+    } else {
+      ['UPTIME', 'DAY', 'TOTAL'].forEach((name, index) => {
+        if (index !== period) values.push(name);
+      });
+    }
+    return values;
   }
   return setting.options;
 }
 
 function settingLabel(setting) {
-  if (deviceSettings?.length >= 28) return setting.label;
-  if (setting.id === 2) return 'SCREEN ALARM';
-  if (setting.id === 3) return 'LIGHT ALARM';
-  if (setting.id === 4) return 'SOUND ALARM';
-  if (setting.id === 16) return 'DOSE ALARM';
   return setting.label;
 }
 
 function renderSettings() {
   elements.settingsList.replaceChildren();
-  const preview = !serial;
-  const currentSettings = deviceSettings || (preview ? demoSettings : null);
+  const preview = deviceSettings === null;
+  const currentSettings = preview ? demoSettings : deviceSettings;
   const rows = [];
   for (const setting of remoteSettings) {
-    const hasSetting = currentSettings !== null && setting.id < currentSettings.length;
-    const actionSupported = ![14, 18, 19].includes(setting.id) ||
+    const supportSettings = deviceSettings ?? demoSettings;
+    const hasSetting = supportSettings !== null &&
+      setting.id < supportSettings.length;
+    const actionSupported = !serial ||
+      ![14, 18, 19].includes(setting.id) ||
       (protocolCapabilities & CAP_DEVICE_ACTION) !== 0;
-    const supported = preview || (hasSetting && actionSupported);
-    const optionSettings = supported ? currentSettings : demoSettings;
+    const supported = hasSetting && actionSupported;
+    const optionSettings = preview ? demoSettings :
+      (supported ? currentSettings : demoSettings);
     const options = settingsOptions(setting, optionSettings).map((option, index) =>
       typeof option === 'string' ?
         { label: option, value: index, disabled: false } : option);
@@ -1264,8 +1311,8 @@ function renderSettings() {
         select.append(option);
       });
       select.value = String(selectedResetAction);
-      select.disabled = preview || !supported ||
-        (protocolCapabilities & CAP_DEVICE_ACTION) === 0;
+      select.disabled = !preview && (!supported ||
+        (protocolCapabilities & CAP_DEVICE_ACTION) === 0);
       select.addEventListener('change', () => {
         selectedResetAction = Number(select.value);
       });
@@ -1289,10 +1336,27 @@ function renderSettings() {
       const selectedValue = optionSettings[setting.id] ?? 0;
       select.value = String(selectedValue);
       const inactiveSetting = setting.id === 11 && optionSettings[9] === 1;
-      select.disabled = preview || !supported || inactiveSetting;
-      if (!preview && supported && !inactiveSetting) {
-        select.addEventListener('change', () => {
-          const nextValue = Number(select.value);
+      select.disabled = (!preview && !supported) || inactiveSetting;
+      select.addEventListener('change', () => {
+        const nextValue = Number(select.value);
+        if (preview) {
+          demoSettings[setting.id] = nextValue;
+          if (setting.id === 9) {
+            const prefixDefault = nextValue === 1 ? 0 : 1;
+            demoSettings[10] = prefixDefault;
+            demoSettings[11] = prefixDefault;
+          }
+          if (setting.id === 13) {
+            document.querySelector('#debug-log-store').textContent =
+              ['EEPROM', 'SPI', 'OFF'][nextValue] || 'EEPROM';
+          }
+          if (setting.id === 9 || setting.id === 23) {
+            renderSettings();
+            document.querySelector(`#setting-${setting.id}`)?.focus();
+          }
+          return;
+        }
+        if (supported && !inactiveSetting) {
           if (setting.id === 13 && nextValue === 1 &&
               deviceSettings[13] !== 1 && !window.confirm(
                 'Enabling SPI will erase all assets stored on the SPI chip. After that, returning to stock firmware will not be possible. Continue?')) {
@@ -1300,8 +1364,8 @@ function renderSettings() {
             return;
           }
           writeSetting(setting.id, nextValue, select);
-        });
-      }
+        }
+      });
       controls.append(select);
     }
 
@@ -1311,10 +1375,16 @@ function renderSettings() {
     visibility.type = 'checkbox';
     visibility.checked = preview ? !demoHiddenSettings.has(setting.id) :
       deviceHiddenSettings === null || (deviceHiddenSettings[setting.id] ?? false) === false;
-    visibility.disabled = preview || !supported || deviceHiddenSettings === null;
+    visibility.disabled = !preview && (!supported || deviceHiddenSettings === null);
     visibility.title = 'Show this setting on the device';
-    visibility.addEventListener('change', () =>
-      writeSetting(0x80 + setting.id, visibility.checked ? 0 : 1, visibility));
+    visibility.addEventListener('change', () => {
+      if (preview) {
+        if (visibility.checked) demoHiddenSettings.delete(setting.id);
+        else demoHiddenSettings.add(setting.id);
+        return;
+      }
+      writeSetting(0x80 + setting.id, visibility.checked ? 0 : 1, visibility);
+    });
     const visibilityText = document.createElement('span');
     visibilityText.textContent = 'Show';
     visibilityLabel.append(visibility, visibilityText);
@@ -1330,7 +1400,11 @@ function renderSettings() {
   pair.append(...rows);
   elements.settingsList.append(pair);
   if (preview) {
-    elements.settingsStatus.textContent = 'Demo preview · read-only';
+    elements.settingsStatus.textContent = serial ?
+      (protocolCapabilities ?
+        'Settings unavailable in this firmware; showing factory defaults.' :
+        'Waiting for device settings; showing factory defaults.') :
+      'Offline preview · temporary changes; reload to restore factory defaults.';
   } else if (deviceSettings) {
     const unsupportedCount = remoteSettings.filter(({ id }) =>
       id >= deviceSettings.length || ([14, 18, 19].includes(id) &&
@@ -1338,10 +1412,30 @@ function renderSettings() {
     elements.settingsStatus.textContent = unsupportedCount ?
       `Loaded from device · ${unsupportedCount} unsupported items disabled` : 'Loaded from device';
   }
+  document.querySelector('.settings-note').textContent = preview ?
+    'Demo controls are temporary. Reload the page to restore factory defaults; device actions remain disabled.' :
+    'Use Show to control which settings appear in the device menu. Visibility requires firmware protocol support.';
+}
+
+const debugPageTitles = {
+  system: 'DEBUG', voltage: 'VOLT', logs: 'LOGS', memory: 'MEM',
+};
+
+function setDebugSubpage(page) {
+  if (!Object.hasOwn(debugPageTitles, page)) return;
+  debugSubpage = page;
+  document.querySelectorAll('[data-debug-view]').forEach((view) => {
+    view.hidden = view.dataset.debugView !== page;
+  });
+  document.querySelectorAll('[data-debug-page]').forEach((button) => {
+    const active = button.dataset.debugPage === page;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  elements.debugViewTitle.textContent = debugPageTitles[page];
 }
 
 function renderOfflinePreview() {
-  if (serial) return;
   elements.solarPercent.textContent = '0%';
   elements.solarPercent.classList.remove('solar-warn', 'solar-good');
   elements.batteryPercent.textContent = '0%';
@@ -1361,10 +1455,12 @@ function renderOfflinePreview() {
   elements.dose.textContent = '0';
   elements.doseUnit.textContent = 'µSv';
   elements.doseFoot.hidden = true;
-  elements.uptime.textContent = '0D 00:00';
+  elements.uptime.textContent = '0D 00:00:00';
+  elements.debugDate.textContent = '---- -- --';
+  elements.debugTime.textContent = '--:--:--';
   elements.debugCount.textContent = '0';
-  elements.debugRtc.textContent = 'Not set';
-  elements.debugClock.textContent = 'Demo data';
+  elements.debugRtc.textContent = 'NOT SET';
+  elements.debugClock.textContent = 'LSI';
   elements.debugBatteryPercent.textContent = '0%';
   elements.debugBatteryRaw.textContent = '0';
   elements.debugBatteryStartPercent.textContent = '0%';
@@ -1380,12 +1476,17 @@ function renderOfflinePreview() {
     percentElement.textContent = usage.percent;
     timeElement.textContent = usage.time;
   }
-  elements.debugSeconds.textContent = '0';
-  elements.memorySpi.textContent = '—';
+  for (const type of logTypes) {
+    const cell = document.querySelector(`#debug-${type.id}`);
+    if (cell) cell.textContent = '0';
+  }
+  document.querySelector('#debug-log-store').textContent = 'EEPROM';
+  elements.memorySpi.textContent = '1 MB';
   elements.memoryJedec.textContent = '—';
+  elements.debugSeconds.textContent = '0';
   elements.rateChart.setAttribute('aria-label', 'Illustrative demo graph, not device data');
   elements.logsStatus.textContent = 'Demo preview · no device logs loaded';
-  const demoLogTypes = [['seconds', 'SECONDS']];
+  const demoLogTypes = logTypes.map(({ id, label }) => [id, label]);
   elements.logTabs.replaceChildren();
   elements.logContent.replaceChildren();
   const renderDemoLog = (type) => {
@@ -1423,7 +1524,7 @@ function renderOfflinePreview() {
     tab.addEventListener('click', () => renderDemoLog(id));
     elements.logTabs.append(tab);
   });
-  renderDemoLog('days');
+  renderDemoLog(selectedLogType);
   elements.settingsDeviceTime.textContent = '--:--:--';
   elements.settingsDeviceDate.textContent = '---- -- --';
   elements.settingsClockDifference.textContent = '—';
@@ -1433,8 +1534,8 @@ function renderOfflinePreview() {
   elements.settingsClockStatus.dataset.level = '';
   elements.syncClock.disabled = true;
   renderSettings();
+  setDebugSubpage(debugSubpage);
   drawRateChart();
-  showNotice('DEMO MODE · Illustrative values only. Connect a device to view live data.', 'demo');
 }
 
 function makeDeviceActionButton(label, action, valueProvider = () => 0) {
@@ -1707,7 +1808,7 @@ function handleStatus(payload) {
   elements.doseFoot.textContent = doseRow;
   elements.doseFoot.hidden = doseRow.length === 0;
   elements.debugCount.textContent = countTotal.toLocaleString('en-US');
-  elements.uptime.textContent = `${uptime.days}D ${uptime.clock.slice(0, 5)}`;
+  elements.uptime.textContent = `${uptime.days}D ${uptime.clock}`;
   updateDeviceDateTime(`${uptime.days}D ${uptime.clock}`);
   rateHistory.push(unit === 1 ? cpm : rateUsvh);
   rateHistoryUnit = unit === 1 ? 'CPM' :
@@ -2521,9 +2622,6 @@ async function connectDevice(portOverride = null) {
   logViewCache.clear(); logHistorical = false; logSelectedDate = ""; logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
   logStartOffset = 0;
   logPageTotal = 0;
-  elements.settingsList.replaceChildren();
-  elements.logTabs.replaceChildren();
-  elements.logContent.textContent = '';
   updateSpiDumpAvailability();
   setConnection('connecting', 'Connecting…');
   showNotice('Select the device port. The app will wait if opening it restarts the device.', '');
@@ -2545,6 +2643,7 @@ async function connectDevice(portOverride = null) {
       updateSpiDumpAvailability();
       elements.settingsStatus.textContent = 'Connect to read settings.';
       setConnection('disconnected', 'Connection lost');
+      offlinePreview = true;
       renderOfflinePreview();
       showNotice(error.message, 'error');
     });
@@ -2555,6 +2654,10 @@ async function connectDevice(portOverride = null) {
     showNotice('Waiting 1 second before HELLO…', '');
     const hello = await requestHelloAfterBoot(serial);
     handleHello(hello);
+    offlinePreview = false;
+    elements.debugModeBadge.textContent = 'DEVICE DATA';
+    elements.debugModeBadge.dataset.mode = 'device';
+    drawRateChart();
     showNotice('Device connected. Readings update once per second.', 'success');
     await loadSettings();
     await loadLogInfo();
@@ -2580,6 +2683,7 @@ async function connectDevice(portOverride = null) {
     updateSpiDumpAvailability();
     elements.settingsStatus.textContent = 'Connect to read settings.';
     setConnection(portMayBeOpen ? 'disconnect-pending' : 'disconnected', portMayBeOpen ? 'Disconnect required' : 'Disconnected');
+    offlinePreview = true;
     renderOfflinePreview();
     showNotice(error.message || 'Could not connect to the device.', 'error');
   }
@@ -2604,6 +2708,7 @@ async function disconnectDevice() {
   elements.logContent.textContent = '';
   updateSpiDumpAvailability();
   elements.settingsStatus.textContent = 'Connect to read settings.';
+  offlinePreview = true;
   renderOfflinePreview();
   if (!closed) showNotice('Port is still open. Press Disconnect to retry closing it.', 'error');
 }
@@ -2806,7 +2911,17 @@ elements.connect.addEventListener('click', () => {
   else connectDevice();
 });
 
+document.querySelectorAll('[data-debug-page]').forEach((button) => {
+  button.addEventListener('click', () => setDebugSubpage(button.dataset.debugPage));
+});
+elements.rateChart.addEventListener('pointermove', showRateChartTooltip);
+elements.rateChart.addEventListener('pointerleave', () => {
+  hideRateChartTooltip();
+  drawRateChart();
+});
 renderOfflinePreview();
+renderSettingsClock();
+window.setInterval(renderSettingsClock, 1000);
 if (!('serial' in navigator)) {
   elements.connect.disabled = true;
   showNotice('Web Serial is not supported. Use a supported browser on localhost or HTTPS.', 'error');

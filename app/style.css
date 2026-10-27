@@ -64,8 +64,9 @@ button { font: inherit; }
 .rate-warmup span { display: block; width: 0; height: 100%; border-radius: inherit; background: #287bff; transition: width .2s ease; }
 .metric-uptime { font-size: 25px; }
 .metric-foot { margin: 10px 0 0; color: #9aa9ae; font: 14px "DM Mono", Consolas, monospace; }
-.chart-panel { height: 360px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(17,26,31,.8); }
+.chart-panel { position: relative; height: 360px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(17,26,31,.8); }
 .chart-panel canvas { display: block; width: 100%; height: 100%; }
+.chart-tooltip { position: absolute; z-index: 1; padding: 6px 8px; border: 1px solid rgba(0,229,139,.45); border-radius: 6px; color: #e6edf0; background: rgba(7,18,14,.94); box-shadow: 0 3px 12px rgba(0,0,0,.28); font: 11px "DM Mono", Consolas, monospace; white-space: nowrap; pointer-events: none; }
 .details-panel { padding: 18px; }
 .placeholder-page { min-height: 180px; padding: 28px 20px; border: 1px solid var(--line); border-radius: 11px; background: rgba(17,26,31,.8); }
 .placeholder-page h2 { margin: 0 0 8px; font-size: 16px; }
@@ -170,6 +171,7 @@ button { font: inherit; }
 .settings-clock > p[data-level="error"] { color: #ff7474; }
 .logs-panel { padding: 18px; border: 1px solid var(--line); border-radius: 11px; background: rgba(17,26,31,.8); }
 .log-tabs { display: flex; gap: 5px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.debug-subtabs { display: flex; gap: 5px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .log-tab { padding: 7px 11px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; cursor: pointer; }
 .log-tab.active { color: var(--green); background: rgba(0,229,139,.09); }
 .log-content { min-height: 100px; padding: 14px 0; color: var(--muted); font: 11px "DM Mono", Consolas, monospace; }
@@ -261,6 +263,7 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .settings-pair { grid-template-columns: 1fr; grid-template-rows: none; grid-auto-flow: row; }
   .settings-clock-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .log-tabs { overflow-x: auto; }
+  .debug-subtabs { overflow-x: auto; }
   .log-tab { padding-inline: 8px; }
   .log-date-tools { justify-content: flex-start; flex-wrap: wrap; }
   .firmware-controls { grid-template-columns: minmax(0, 1fr) auto auto; }
