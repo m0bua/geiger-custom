@@ -57,6 +57,18 @@ static bool aggregate_hour(log_query_read_fn read_record, void *context,
     log_accumulator_t minutes = {0u, 0u, 0u, true, false};
     bool all_minutes = true;
 
+    /* Closed hour records are already aggregates of the minute ring. Prefer
+     * them directly; rescanning all 60 minute slots on every history query
+     * made device graph browsing needlessly expensive. */
+    {
+        log_accumulator_t hour = {0u, 0u, 0u, true, false};
+        if (add_record(read_record, context, LOG_RECORD_HOUR, epoch, start,
+                3600u, &hour)) {
+            *result = hour;
+            return true;
+        }
+    }
+
     for (uint8_t minute = 0u; minute < 60u; ++minute) {
         const uint32_t minute_start = start + (uint32_t)minute * 60u;
         if (!add_record(read_record, context, LOG_RECORD_MINUTE, epoch,
@@ -89,6 +101,16 @@ static bool aggregate_day(log_query_read_fn read_record, void *context,
 {
     log_accumulator_t hours = {0u, 0u, 0u, true, false};
     bool all_hours = true;
+
+    /* A persisted day is likewise a checked aggregate of its hourly ring. */
+    {
+        log_accumulator_t day = {0u, 0u, 0u, true, false};
+        if (add_record(read_record, context, LOG_RECORD_DAY, epoch, start,
+                86400u, &day)) {
+            *result = day;
+            return true;
+        }
+    }
 
     for (uint8_t hour_index = 0u; hour_index < 24u; ++hour_index) {
         log_accumulator_t hour = {0u, 0u, 0u, true, false};
