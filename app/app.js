@@ -527,10 +527,10 @@ let clockSyncBusy = false;
 const rateHistory = [];
 const rateStatsHistory = [];
 const demoSettings = Array.from({ length: 29 }, () => 0);
-const demoHiddenSettings = new Set([13, 15, 16, 21, 27, 28]);
+const demoHiddenSettings = new Set([13, 15, 16, 21, 27]);
 Object.assign(demoSettings, {
   0: 2, 5: 0, 6: 0, 7: 2, 9: 0, 10: 1, 11: 1, 12: 0,
-  15: 0, 21: 1, 23: 1, 28: 0,
+  15: 0, 21: 1, 23: 1,
 });
 
 const remoteSettings = [
@@ -557,7 +557,6 @@ const remoteSettings = [
   { id: 22, label: 'DOSE ROW 2', options: [] },
   { id: 23, label: 'DOSE PERIOD', options: ['UPTIME', 'DAY', 'TOTAL'] },
   { id: 21, label: 'LONG PRESS', options: ['300 ms', '500 ms', '700 ms', '900 ms', '1100 ms', '1300 ms'] },
-  { id: 28, label: 'START SCREEN', options: ['TIME', 'SETTINGS', 'DEBUG'] },
   { id: 15, label: 'HV', options: ['ON', 'OFF'] },
   { id: 13, label: 'LOG MEMORY', options: ['EEPROM', 'SPI', 'OFF'] },
   { id: 14, label: 'RESET', options: ['SETTINGS', 'MIN-LOG', 'HOUR-LOG', 'DAY-LOG', 'ERROR-LOG', 'LOGS', 'EEPROM-LOGS', 'EEPROM', 'SPI', 'ALL'] },
