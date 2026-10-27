@@ -149,7 +149,7 @@ static uint32_t lcd_search_mode_started;
 #define LCD_SMALL_TEXT_GAP 1u
 #define LCD_EXTRA_SCREEN_COUNT 2u
 #define LCD_GRAPH_PAGE 5u
-#define LCD_DEBUG_SUBPAGE_COUNT 4u
+#define LCD_DEBUG_SUBPAGE_COUNT 3u
 #define LCD_GRAPH_RANGE_COUNT 4u
 #define LCD_GRAPH_BAR_GAP 1u
 #define LCD_GRAPH_BAR_STEP (FONT_SMALL_CELL_WIDTH + LCD_GRAPH_BAR_GAP)
@@ -1897,12 +1897,44 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
                 value[value_length] = status[value_length];
                 ++value_length;
             }
-        } else if (row == 5u) {
-            label = "CLOCK";
-            const char *status = ((RCC_CSR >> 16u) & 3u) == 1u ? "LSE" :
+            const char *clock_source = ((RCC_CSR >> 16u) & 3u) == 1u ? "LSE" :
                 "LSI";
-            value[0] = status[0]; value[1] = status[1];
-            value[2] = status[2]; value_length = 3u;
+            value[value_length++] = ' ';
+            value[value_length++] = clock_source[0];
+            value[value_length++] = clock_source[1];
+            value[value_length++] = clock_source[2];
+        } else if (row == 5u) {
+            label = "SPI";
+            const uint32_t bytes = spi_nor_size_bytes();
+            if (bytes == 0u) {
+                value[0] = 'E'; value[1] = 'R'; value[2] = 'R';
+                value_length = 3u;
+            } else if (bytes >= 1024u * 1024u) {
+                value_length = lcd_debug_u32_digits(value,
+                    bytes / (1024u * 1024u));
+                value[value_length++] = ' ';
+                value[value_length++] = 'M'; value[value_length++] = 'B';
+            } else {
+                value_length = lcd_debug_u32_digits(value, bytes / 1024u);
+                value[value_length++] = ' ';
+                value[value_length++] = 'K'; value[value_length++] = 'B';
+            }
+        } else if (row == 6u) {
+            static const char hex[] = "0123456789ABCDEF";
+            const spi_nor_jedec_id_t id = spi_nor_jedec_id();
+            const uint8_t bytes[3] = {
+                id.manufacturer, id.memory_type, id.capacity
+            };
+            label = "JEDEC";
+            if (bytes[0] == 0u && bytes[1] == 0u && bytes[2] == 0u) {
+                value[value_length++] = '-';
+            } else {
+                for (uint8_t i = 0u; i < 3u; ++i) {
+                    value[value_length++] = hex[bytes[i] >> 4u];
+                    value[value_length++] = hex[bytes[i] & 0x0Fu];
+                    if (i != 2u) value[value_length++] = ' ';
+                }
+            }
         } else {
             label = "";
         }
@@ -1910,43 +1942,6 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
             line[i] = label[i];
         }
         lcd_debug_put_right(line, 20u, value, value_length);
-    } else if (subpage == 3u) {
-        uint32_t amount = 0u;
-        switch (row) {
-        case 1u: label = "FLASH"; amount = 64u; break;
-        case 2u: label = "RAM"; amount = 8u; break;
-        case 3u: label = "EEPROM"; amount = 2u; break;
-        case 4u:
-            label = "SPI";
-            amount = spi_nor_size_bytes() / (1024u * 1024u);
-            break;
-        case 5u: {
-            static const char hex[] = "0123456789ABCDEF";
-            const spi_nor_jedec_id_t id = spi_nor_jedec_id();
-            label = "JEDEC";
-            const uint8_t bytes[3] = {
-                id.manufacturer, id.memory_type, id.capacity
-            };
-            for (uint8_t i = 0u; i < 3u; ++i) {
-                value[value_length++] = hex[bytes[i] >> 4u];
-                value[value_length++] = hex[bytes[i] & 0x0Fu];
-                if (i != 2u) value[value_length++] = ' ';
-            }
-            break;
-        }
-        default: label = ""; amount = 0u; break;
-        }
-        if (row <= 4u && row >= 1u) {
-            if (row == 4u && settings_spi_enabled &&
-                !spi_nor_is_ready()) {
-                value[0] = 'E'; value[1] = 'R'; value[2] = 'R';
-                value_length = 3u;
-            } else {
-                value_length = lcd_debug_u32_digits(value, amount);
-                value[value_length++] = row == 4u ? 'M' : 'K';
-                value[value_length++] = 'B';
-            }
-        }
     } else if (subpage == 2u) {
         static const char *const labels[] = {"MIN", "HOUR", "DAY", "ALERT", "SEC", "STORE"};
         if (row >= 1u && row <= 6u) {
@@ -3105,7 +3100,7 @@ static bool lcd_text_prepare_glyph(void)
                 (uint8_t)(LCD_Y_OFFSET + y_start + FONT_SMALL_CELL_HEIGHT - 1u)
             };
 
-            const bool spi_error = lcd_debug_subpage == 3u &&
+            const bool spi_error = lcd_debug_subpage == 0u &&
                 lcd_text_glyph_index == 4u && text[17] == 'E' &&
                 text[18] == 'R' && text[19] == 'R';
             lcd_render_small_line(text, row_width, LCD_TEXT_FOREGROUND,
@@ -3702,6 +3697,8 @@ void board_flashlight_alarm_set(bool active, bool on)
     }
 }
 
+static void lcd_debug_probe_spi(void);
+
 void board_display_extra_enter(void)
 {
     if (lcd_screen_page >= 2u) {
@@ -3709,6 +3706,7 @@ void board_display_extra_enter(void)
     }
     lcd_main_return_page = lcd_screen_page;
     lcd_screen_page = lcd_last_extra_page;
+    if (lcd_screen_page == 3u) lcd_debug_probe_spi();
     lcd_settings_selected = lcd_settings_menu_selected;
     lcd_settings_list_active = false;
     lcd_settings_editing = false;
@@ -3741,6 +3739,7 @@ void board_display_extra_step(bool forward)
              LCD_EXTRA_SCREEN_COUNT));
     }
     lcd_last_extra_page = lcd_screen_page;
+    if (lcd_screen_page == 3u) lcd_debug_probe_spi();
     if (lcd_screen_page == 2u) {
         lcd_settings_selected = lcd_settings_menu_selected;
     }
@@ -3785,6 +3784,15 @@ void board_display_extra_exit(void)
 }
 
 static void board_display_settings_redraw(void);
+
+static void lcd_debug_probe_spi(void)
+{
+    if (spi_nor_is_ready() || spi_nor_size_bytes() != 0u) return;
+    (void)spi_nor_init();
+    if (board_display_log_memory() != BOARD_LOG_MEMORY_SPI) {
+        spi_nor_deinit();
+    }
+}
 
 #define SETTINGS_EEPROM_LEGACY_SLOT_SIZE 5u
 #define SETTINGS_EEPROM_V2_BASE 16u

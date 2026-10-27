@@ -46,6 +46,7 @@ static uint8_t encoded_frame[MAX_ENCODED_SIZE];
 static uint8_t tx_frame[MAX_WIRE_SIZE];
 static uint8_t encoded_length;
 static bool discard_until_delimiter;
+static bool log_info_spi_probe_attempted;
 static protocol_v1_status_t current_status;
 
 static uint16_t read_u16(const uint8_t *p)
@@ -247,6 +248,15 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         if (!deferred_action) response[0] = PROTOCOL_STATUS_INVALID_VALUE;
     } else if (opcode == PROTOCOL_V1_OP_GET_LOG_INFO &&
                payload_length == 0u) {
+        const bool spi_was_ready = spi_nor_is_ready();
+        const bool probe_spi = !spi_was_ready &&
+            !log_info_spi_probe_attempted &&
+            (spi_nor_size_bytes() == 0u ||
+             board_display_log_memory() == BOARD_LOG_MEMORY_SPI);
+        if (probe_spi) {
+            log_info_spi_probe_attempted = true;
+            (void)spi_nor_init();
+        }
         response[1] = board_display_log_memory();
         for (uint8_t type = 0u; type < 4u; ++type) {
             uint32_t count = log_history_count(type);
@@ -273,6 +283,10 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         response[27] = board_display_log_source();
         response[28] = log_writer_fault() ? 1u : 0u;
         response[29] = second_log_count();
+        if (probe_spi &&
+            board_display_log_memory() != BOARD_LOG_MEMORY_SPI) {
+            spi_nor_deinit();
+        }
         response_length = 30u;
     } else if (opcode == PROTOCOL_V1_OP_GET_LOG_PAGE && payload_length == 18u) {
         const uint8_t *request = &frame[8];
@@ -353,6 +367,7 @@ void protocol_v1_transport_init(void)
     rx_tail = 0u;
     encoded_length = 0u;
     discard_until_delimiter = false;
+    log_info_spi_probe_attempted = false;
     USART_CR1 = (1u << 5u) | (1u << 3u) | (1u << 2u) | 1u;
     NVIC_ISER0 = 1u << 27u; /* USART1_IRQn */
 }

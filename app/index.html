@@ -70,8 +70,9 @@
             <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">DATE</th><td id="debug-date">&#8212;</td><td id="debug-time">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">UPTIME</th><td></td><td id="uptime">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">CNT</th><td></td><td id="debug-count">&#8212;</td></tr>
-            <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">RTC</th><td></td><td id="debug-rtc">&#8212;</td></tr>
-            <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">CLOCK</th><td></td><td id="debug-clock">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">RTC</th><td></td><td id="debug-rtc-clock">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">SPI</th><td></td><td id="debug-spi">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">JEDEC</th><td></td><td id="debug-jedec">&#8212;</td></tr>
             <tr class="debug-section"><th colspan="3"><button type="button" class="debug-section-toggle" aria-expanded="true" aria-controls="debug-power-rows">POWER</button></th></tr>
             <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">BATT</th><td id="debug-battery-percent">&#8212;</td><td id="debug-battery-raw">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">BATT START</th><td id="debug-battery-start-percent">&#8212;</td><td id="debug-battery-start-raw">&#8212;</td></tr>
@@ -86,12 +87,6 @@
             <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">ALERT</th><td></td><td id="debug-alerts">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">SEC</th><td></td><td id="debug-seconds">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">STORE</th><td></td><td id="debug-log-store">&#8212;</td></tr>
-            <tr class="debug-section"><th colspan="3"><button type="button" class="debug-section-toggle" aria-expanded="true" aria-controls="debug-memory-rows">MEMORY</button></th></tr>
-            <tr class="debug-data" data-debug-group="debug-memory-rows"><th scope="row">FLASH</th><td></td><td id="memory-flash">64 KB</td></tr>
-            <tr class="debug-data" data-debug-group="debug-memory-rows"><th scope="row">RAM</th><td></td><td id="memory-ram">8 KB</td></tr>
-            <tr class="debug-data" data-debug-group="debug-memory-rows"><th scope="row">EEPROM</th><td></td><td id="memory-eeprom">2 KB</td></tr>
-            <tr class="debug-data" data-debug-group="debug-memory-rows"><th scope="row">SPI</th><td></td><td id="memory-spi">&#8212;</td></tr>
-            <tr class="debug-data" data-debug-group="debug-memory-rows"><th scope="row">JEDEC</th><td></td><td id="memory-jedec">&#8212;</td></tr>
           </tbody>
         </table>
       </section>
@@ -273,7 +268,7 @@
 
         <section class="manual-chapter">
         <h3>1.2 - Debug</h3>
-        <p>The extra-screen group contains Settings and Debug. Short Left/Right switches between them. Debug pages appear in this order: time/date, uptime, total pulse count and RTC status; voltage and power readings; physical log counts and store status; memory sizes and SPI identification. Long Right advances to the next Debug page. The app presents these diagnostics together in one table.</p>
+        <p>The extra-screen group contains Settings and Debug. Short Left/Right switches between them. Debug has three pages: time/date, uptime, total pulse count, RTC status and clock source, plus detected SPI capacity and JEDEC ID; voltage and power readings; physical log counts and store status. Long Right advances through Debug pages. SPI is probed when Debug opens. The app presents these diagnostics together in one table.</p>
         </section>
 
         <section class="manual-chapter">
