@@ -7,7 +7,8 @@
 
 /* The segment id is a reference into the bounded year/epoch table. It keeps
  * year data out of each minute record while distinguishing repeated times. */
-#define LOG_RECORD_DATA_BYTES 8u
+#define LOG_RECORD_LEGACY_DATA_BYTES 8u
+#define LOG_RECORD_DATA_BYTES 9u
 #define LOG_ALERT_DATA_BYTES 11u
 #define LOG_RECORD_CPM_CEILING 262144u
 #define LOG_SEGMENT_ID_COUNT 64u
@@ -27,6 +28,7 @@ typedef struct {
     uint32_t maximum_cpm;
     uint16_t duration_seconds;
     uint8_t segment_id;
+    uint32_t covered_seconds;
 } log_record_t;
 
 uint16_t log_crc16(const uint8_t *data, uint16_t length, uint16_t initial);

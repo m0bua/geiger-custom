@@ -171,7 +171,6 @@ button { font: inherit; }
 .settings-clock > p[data-level="error"] { color: #ff7474; }
 .logs-panel { padding: 18px; border: 1px solid var(--line); border-radius: 11px; background: rgba(17,26,31,.8); }
 .log-tabs { display: flex; gap: 5px; padding: 12px 0; border-bottom: 1px solid var(--line); }
-.debug-subtabs { display: flex; gap: 5px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .log-tab { padding: 7px 11px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; cursor: pointer; }
 .log-tab.active { color: var(--green); background: rgba(0,229,139,.09); }
 .log-content { min-height: 100px; padding: 14px 0; color: var(--muted); font: 11px "DM Mono", Consolas, monospace; }
@@ -217,14 +216,18 @@ button { font: inherit; }
 #last-update { color: var(--muted); font: 10px "DM Mono", Consolas, monospace; }
 .detail-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
 .debug-usage-table { width: 100%; border-collapse: collapse; table-layout: fixed; font: 12px "DM Mono", Consolas, monospace; }
-.debug-usage-table th, .debug-usage-table td { padding: 10px 12px; border-bottom: 1px solid rgba(160,186,194,.12); text-align: right; }
+.debug-usage-table th, .debug-usage-table td { padding: 7px 10px; border-bottom: 1px solid rgba(160,186,194,.12); text-align: right; }
 .debug-usage-table thead th { color: var(--muted); font-size: 10px; font-weight: 500; }
 .debug-usage-table th:first-child { width: 34%; text-align: left; }
 .debug-usage-table th:nth-child(2) { width: 27%; }
 .debug-usage-table tbody th { color: #aebbc0; font-weight: 500; }
 .debug-usage-table tbody td { color: #d8e2e4; font-variant-numeric: tabular-nums; }
-.debug-usage-table .debug-section th { padding-top: 16px; padding-bottom: 9px; border-bottom-color: var(--line); color: #8fc9bd; font: 600 13px "DM Mono", Consolas, monospace; letter-spacing: .14em; text-align: left; }
-.debug-usage-table .debug-section:first-child th { padding-top: 10px; }
+.debug-usage-table .debug-section th { padding: 0; border-bottom-color: var(--line); text-align: left; }
+.debug-section-toggle { width: 100%; padding: 9px 10px 6px; border: 0; color: #8fc9bd; background: transparent; font: 600 12px "DM Mono", Consolas, monospace; letter-spacing: .12em; text-align: left; cursor: pointer; }
+.debug-section-toggle::before { content: "−"; display: inline-block; width: 18px; color: var(--muted); }
+.debug-section-toggle[aria-expanded="false"]::before { content: "+"; }
+.debug-usage-table .debug-section:first-child .debug-section-toggle { padding-top: 6px; }
+.debug-usage-table tbody tr[hidden] { display: none; }
 .detail { min-height: 66px; display: flex; flex-direction: column; justify-content: center; gap: 7px; padding: 10px 12px 8px 0; border-bottom: 1px solid rgba(160,186,194,.08); }
 .detail:nth-last-child(-n+3) { border-bottom: 0; }
 .detail span { color: #819096; font-size: 11px; }
@@ -263,7 +266,6 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .settings-pair { grid-template-columns: 1fr; grid-template-rows: none; grid-auto-flow: row; }
   .settings-clock-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .log-tabs { overflow-x: auto; }
-  .debug-subtabs { overflow-x: auto; }
   .log-tab { padding-inline: 8px; }
   .log-date-tools { justify-content: flex-start; flex-wrap: wrap; }
   .firmware-controls { grid-template-columns: minmax(0, 1fr) auto auto; }

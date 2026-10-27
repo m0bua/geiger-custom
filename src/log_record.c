@@ -8,6 +8,7 @@ typedef struct {
     uint8_t maximum_bits;
     uint8_t duration_bits;
     uint8_t segment_bits;
+    uint8_t coverage_bits;
     uint32_t max_period_index;
 } log_record_layout_t;
 
@@ -18,16 +19,16 @@ static bool layout_for_kind(log_record_kind_t kind,
 
     switch (kind) {
     case LOG_RECORD_MINUTE:
-        *layout = (log_record_layout_t){20u, 19u, 19u, 0u, 6u, 527039u};
+        *layout = (log_record_layout_t){20u, 19u, 19u, 0u, 6u, 8u, 527039u};
         return true;
     case LOG_RECORD_HOUR:
-        *layout = (log_record_layout_t){14u, 24u, 19u, 0u, 6u, 8783u};
+        *layout = (log_record_layout_t){14u, 24u, 19u, 0u, 6u, 8u, 8783u};
         return true;
     case LOG_RECORD_DAY:
-        *layout = (log_record_layout_t){9u, 29u, 19u, 0u, 6u, 365u};
+        *layout = (log_record_layout_t){9u, 29u, 19u, 0u, 6u, 8u, 365u};
         return true;
     case LOG_RECORD_ALERT:
-        *layout = (log_record_layout_t){20u, 25u, 19u, 12u, 6u, 527039u};
+        *layout = (log_record_layout_t){20u, 25u, 19u, 12u, 6u, 0u, 527039u};
         return true;
     default:
         return false;
@@ -74,6 +75,26 @@ size_t log_record_data_size(log_record_kind_t kind)
     }
 }
 
+static uint8_t missing_coverage_code(log_record_kind_t kind,
+                                     uint32_t covered_seconds)
+{
+    const uint32_t period = log_record_period_seconds(kind);
+    if (period == 0u || covered_seconds >= period) return 0u;
+    if (covered_seconds == 0u) covered_seconds = 1u;
+    const uint64_t missing = (uint64_t)(period - covered_seconds) * 256u;
+    uint32_t code = (uint32_t)((missing + period - 1u) / period);
+    return code > 255u ? 255u : (uint8_t)code;
+}
+
+static uint32_t coverage_from_missing_code(log_record_kind_t kind,
+                                           uint8_t code)
+{
+    const uint32_t period = log_record_period_seconds(kind);
+    if (code == 0u) return period;
+    uint32_t covered = (uint32_t)(((uint64_t)period * (256u - code) + 128u) / 256u);
+    return covered == 0u ? 1u : covered;
+}
+
 uint32_t log_record_period_seconds(log_record_kind_t kind)
 {
     switch (kind) {
@@ -109,7 +130,9 @@ bool log_record_encode(log_record_kind_t kind, const log_record_t *record,
         capacity < required || !layout_for_kind(kind, &layout) ||
         record->period_index > layout.max_period_index || count_max == 0u ||
         record->maximum_cpm > LOG_RECORD_CPM_CEILING ||
-        record->segment_id >= LOG_SEGMENT_ID_COUNT) return false;
+        record->segment_id >= LOG_SEGMENT_ID_COUNT ||
+        (layout.coverage_bits != 0u && record->covered_seconds >
+            log_record_period_seconds(kind))) return false;
 
     if (kind == LOG_RECORD_ALERT) {
         if (record->duration_seconds == 0u ||
@@ -129,6 +152,11 @@ bool log_record_encode(log_record_kind_t kind, const log_record_t *record,
         put_bits(data, &bit_offset, duration_code, layout.duration_bits);
     }
     put_bits(data, &bit_offset, record->segment_id, layout.segment_bits);
+    if (layout.coverage_bits != 0u) {
+        put_bits(data, &bit_offset,
+            missing_coverage_code(kind, record->covered_seconds),
+            layout.coverage_bits);
+    }
     return bit_offset <= (uint16_t)(required * 8u);
 }
 
@@ -140,7 +168,9 @@ bool log_record_decode(log_record_kind_t kind, const uint8_t *data,
     uint16_t bit_offset = 0u;
 
     if (data == NULL || record == NULL || required == 0u ||
-        length != required || !layout_for_kind(kind, &layout)) return false;
+        !layout_for_kind(kind, &layout) ||
+        (kind == LOG_RECORD_ALERT ? length != required :
+            (length != required && length != LOG_RECORD_LEGACY_DATA_BYTES))) return false;
 
     record->period_index = get_bits(data, &bit_offset, layout.time_bits);
     record->count = get_bits(data, &bit_offset, layout.count_bits);
@@ -149,6 +179,13 @@ bool log_record_decode(log_record_kind_t kind, const uint8_t *data,
         (uint16_t)(get_bits(data, &bit_offset, layout.duration_bits) + 1u);
     record->segment_id = (uint8_t)get_bits(data, &bit_offset,
         layout.segment_bits);
+    if (layout.coverage_bits != 0u) {
+        record->covered_seconds = length == LOG_RECORD_LEGACY_DATA_BYTES ?
+            log_record_period_seconds(kind) : coverage_from_missing_code(kind,
+                (uint8_t)get_bits(data, &bit_offset, layout.coverage_bits));
+    } else {
+        record->covered_seconds = 0u;
+    }
     if (bit_offset > (uint16_t)(required * 8u) ||
         record->period_index > layout.max_period_index ||
         log_record_count_ceiling(kind) == 0u ||

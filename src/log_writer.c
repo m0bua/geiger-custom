@@ -104,9 +104,13 @@ static bool append_record(log_record_kind_t kind, uint16_t epoch,
                     !log_record_time(kind, first.period_index, oldest.year_descriptor, reference, &time)) continue;
                 if (spi_log_query_read(&context, LOG_RECORD_HOUR, oldest.epoch, time, &hour, &live)) continue;
                 if (!log_query_aggregate(spi_log_query_read, &context, oldest.epoch, time, 3600u, &aggregate) ||
-                    !aggregate.available || aggregate.partial || aggregate.live) continue;
+                    !aggregate.available || aggregate.covered_seconds == 0u || aggregate.live) continue;
                 if (!log_record_location(LOG_RECORD_HOUR, time, context.calendar_valid, &period_index, &descriptor)) return false;
-                hour = (log_record_t){period_index, aggregate.count, aggregate.maximum_cpm, 0u, first.segment_id};
+                hour = (log_record_t){.period_index = period_index,
+                    .count = aggregate.count,
+                    .maximum_cpm = aggregate.maximum_cpm,
+                    .segment_id = first.segment_id,
+                    .covered_seconds = aggregate.covered_seconds};
                 if (!append_record(LOG_RECORD_HOUR, oldest.epoch, descriptor, &hour)) return false;
             }
         }
@@ -115,11 +119,6 @@ static bool append_record(log_record_kind_t kind, uint16_t epoch,
     }
     return prepared == SPI_LOG_READY &&
         spi_log_append(kind, epoch, record);
-}
-
-static uint32_t free_records(log_record_kind_t kind)
-{
-    return (uint32_t)log_eeprom_capacity(kind) - log_eeprom_count(kind);
 }
 
 static void close_period(log_record_kind_t kind,
@@ -131,19 +130,9 @@ static void close_period(log_record_kind_t kind,
     log_query_time_context_t time_context;
     log_query_read_fn read_record;
     const uint32_t period_seconds = log_record_period_seconds(kind);
-    uint32_t lower_free;
-    uint32_t lower_required;
     bool live = false;
-    if (!accumulator->active || active_log_memory == BOARD_LOG_MEMORY_SPI) return;
-    if (kind == LOG_RECORD_HOUR) {
-        lower_free = free_records(LOG_RECORD_MINUTE);
-        lower_required = 60u;
-    } else {
-        if (active_log_memory != BOARD_LOG_MEMORY_EEPROM) return;
-        lower_free = free_records(LOG_RECORD_HOUR);
-        lower_required = 24u;
-    }
-    if (lower_free >= lower_required) return;
+    if (!accumulator->active) return;
+    if (kind == LOG_RECORD_DAY && active_log_memory != BOARD_LOG_MEMORY_EEPROM) return;
     time_context.calendar_valid =
         (accumulator->year_descriptor & SPI_LOG_YEAR_VALID) != 0u;
     read_record = active_log_memory == BOARD_LOG_MEMORY_EEPROM ?
@@ -152,13 +141,14 @@ static void close_period(log_record_kind_t kind,
             accumulator->period_start, &existing, &live)) return;
     if (!log_query_aggregate(read_record, &time_context,
             accumulator->epoch, accumulator->period_start, period_seconds,
-            &aggregate) || !aggregate.available || aggregate.partial ||
-        aggregate.live || aggregate.covered_seconds != period_seconds) return;
+            &aggregate) || !aggregate.available || aggregate.live ||
+        aggregate.covered_seconds == 0u) return;
     record.period_index = accumulator->period_index;
     record.count = aggregate.count;
     record.maximum_cpm = aggregate.maximum_cpm;
     record.duration_seconds = 0u;
     record.segment_id = accumulator->segment_id;
+    record.covered_seconds = aggregate.covered_seconds;
     if (!append_record(kind, accumulator->epoch,
         accumulator->year_descriptor, &record)) writer_fault = true;
 }
@@ -196,7 +186,7 @@ static void update_period_tracker(log_record_kind_t kind,
 static void close_minute(void)
 {
     log_record_t record;
-    if (!minute_accumulator.active || minute_accumulator.samples != 60u) {
+    if (!minute_accumulator.active || minute_accumulator.samples == 0u) {
         return;
     }
     record.period_index = minute_accumulator.period_index;
@@ -204,6 +194,7 @@ static void close_minute(void)
     record.maximum_cpm = minute_accumulator.maximum_cpm;
     record.duration_seconds = 0u;
     record.segment_id = minute_accumulator.segment_id;
+    record.covered_seconds = minute_accumulator.samples;
     if (!append_record(LOG_RECORD_MINUTE, minute_accumulator.epoch,
         minute_accumulator.year_descriptor, &record)) writer_fault = true;
 }
@@ -247,8 +238,10 @@ static void start_minute(uint32_t time_seconds, bool calendar_valid)
     if (reader(&context, LOG_RECORD_MINUTE, current_epoch, key * 60u, &existing, &live)) {
         minute_accumulator.count = existing.count;
         minute_accumulator.maximum_cpm = existing.maximum_cpm;
-        minute_accumulator.samples = 60u;
-        minute_accumulator.seconds_mask = (UINT64_C(1) << 60u) - 1u;
+        minute_accumulator.samples = (uint16_t)(existing.covered_seconds > 60u ?
+            60u : existing.covered_seconds);
+        minute_accumulator.seconds_mask = minute_accumulator.samples == 60u ?
+            (UINT64_C(1) << 60u) - 1u : 0u;
     }
     minute_accumulator.active = true;
 }
@@ -442,7 +435,8 @@ bool log_writer_live(log_record_kind_t kind, log_stored_t *item)
     if (kind == LOG_RECORD_MINUTE && minute_accumulator.active) {
         *item = (log_stored_t){
             .record = {minute_accumulator.period_index, minute_accumulator.count,
-                minute_accumulator.maximum_cpm, minute_accumulator.samples, minute_accumulator.segment_id},
+                minute_accumulator.maximum_cpm, minute_accumulator.samples,
+                minute_accumulator.segment_id, minute_accumulator.samples},
             .time = minute_accumulator.minute_key * 60u,
             .epoch = minute_accumulator.epoch,
             .year = minute_accumulator.year_descriptor, .id = UINT16_MAX
@@ -476,7 +470,7 @@ static bool copy_to_eeprom(uint8_t type, uint8_t capacity)
     while (count < capacity) {
         log_cursor_t before = cursor;
         if (!log_history_next_from(BOARD_LOG_MEMORY_SPI, type, period, &cursor, 0u, false, &point)) break;
-        if (!point.available || point.partial || point.live) continue;
+        if (!point.available || point.live) continue;
         saved[count++] = before;
     }
     while (count != 0u) {
@@ -494,6 +488,7 @@ static bool copy_to_eeprom(uint8_t type, uint8_t capacity)
         record.maximum_cpm = point.maximum_cpm;
         record.duration_seconds = type == LOG_RECORD_ALERT ? (uint16_t)point.covered_seconds : 0u;
         record.segment_id = (uint8_t)(point.epoch % LOG_SEGMENT_ID_COUNT);
+        record.covered_seconds = type == LOG_RECORD_ALERT ? 0u : point.covered_seconds;
         if (!log_eeprom_append((log_record_kind_t)type, point.epoch, &record, year)) return false;
     }
     return true;

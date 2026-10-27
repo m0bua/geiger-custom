@@ -8,7 +8,8 @@
 #include <string.h>
 
 #define EEPROM_STATE_MAGIC 0x4Cu
-#define EEPROM_STATE_VERSION 2u
+#define EEPROM_STATE_VERSION 3u
+#define EEPROM_LEGACY_STATE_VERSION 2u
 #define EEPROM_TX_MARKER 0xA5u
 #define EEPROM_COMMIT 0xA5u
 #define EEPROM_STATE_A 0u
@@ -137,6 +138,17 @@ static bool decode_state(uint8_t copy, eeprom_state_t *decoded)
     return true;
 }
 
+static bool legacy_state_present(uint8_t copy)
+{
+    uint8_t bytes[LOG_EEPROM_STATE_COPY_SIZE];
+    const uint16_t address = copy == EEPROM_STATE_A ?
+        LOG_EEPROM_STATE_A_BASE : LOG_EEPROM_STATE_B_BASE;
+    return read_bytes(address, bytes, sizeof(bytes)) &&
+        bytes[0] == EEPROM_STATE_MAGIC &&
+        bytes[1] == EEPROM_LEGACY_STATE_VERSION &&
+        bytes[14] == EEPROM_COMMIT && crc8(bytes, 13u) == bytes[13];
+}
+
 static bool save_state(void)
 {
     uint8_t bytes[LOG_EEPROM_STATE_COPY_SIZE] = {0u};
@@ -225,6 +237,27 @@ bool log_eeprom_init(void)
     eeprom_state_t second = {0};
     if (!decode_state(EEPROM_STATE_A, &first)) first.valid = false;
     if (!decode_state(EEPROM_STATE_B, &second)) second.valid = false;
+    if (!first.valid && !second.valid &&
+        (legacy_state_present(EEPROM_STATE_A) ||
+         legacy_state_present(EEPROM_STATE_B))) {
+        /* The v3 record layout changes ring offsets and carries coverage.
+         * Keep settings/checkpoints intact; discard only legacy log indexes. */
+        if (!board_eeprom_write(LOG_EEPROM_TRANSACTION_BASE, 0u)) return false;
+        for (uint8_t i = 0u; i < LOG_SEGMENT_ID_COUNT; ++i) {
+            segment_years[i] = 0xFFu;
+            if (!board_eeprom_write((uint16_t)(LOG_EEPROM_SEGMENT_TABLE_BASE + i),
+                    0xFFu)) return false;
+        }
+        uint16_t table_crc = crc16(segment_years, LOG_SEGMENT_ID_COUNT);
+        if (!board_eeprom_write(LOG_EEPROM_TABLE_CRC_BASE,
+                (uint8_t)table_crc) ||
+            !board_eeprom_write(LOG_EEPROM_TABLE_CRC_BASE + 1u,
+                (uint8_t)(table_crc >> 8u))) return false;
+        state = (eeprom_state_t){0};
+        state.active_year = 0xFFu;
+        state.valid = false;
+        return save_state() && save_state();
+    }
     if (first.valid && second.valid) {
         state = (int8_t)(second.generation - first.generation) > 0 ?
             second : first;

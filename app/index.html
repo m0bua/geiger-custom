@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1115">
   <title>Device Monitor</title>
-  <link rel="stylesheet" href="style.css?v=20261026-6">
+  <link rel="stylesheet" href="style.css?v=20261027-2">
 </head>
 <body>
   <main class="shell">
@@ -62,53 +62,36 @@
 
     <section id="debug-page" class="page" hidden>
       <section class="details-panel">
-        <div class="panel-heading"><h2 id="debug-view-title">DEBUG</h2><span id="debug-mode-badge">DEMO DATA</span></div>
-        <nav class="debug-subtabs" aria-label="Debug pages">
-          <button class="log-tab active" type="button" data-debug-page="system" aria-selected="true">DEBUG</button>
-          <button class="log-tab" type="button" data-debug-page="voltage" aria-selected="false">VOLT</button>
-          <button class="log-tab" type="button" data-debug-page="logs" aria-selected="false">LOGS</button>
-          <button class="log-tab" type="button" data-debug-page="memory" aria-selected="false">MEM</button>
-        </nav>
-        <table class="debug-usage-table" data-debug-view="system">
-          <thead><tr><th scope="col">FIELD</th><th scope="col">VALUE</th><th scope="col"></th></tr></thead>
+        <div class="panel-heading"><h2>DEBUG</h2><span id="debug-mode-badge">DEMO DATA</span></div>
+        <table class="debug-usage-table">
+          <thead><tr><th scope="col">FIELD</th><th scope="col">VALUE</th><th scope="col">DETAIL</th></tr></thead>
           <tbody>
-            <tr><th scope="row">DATE</th><td id="debug-date">—</td><td id="debug-time">—</td></tr>
-            <tr><th scope="row">UPTIME</th><td id="uptime">—</td><td></td></tr>
-            <tr><th scope="row">CNT</th><td id="debug-count">—</td><td></td></tr>
-            <tr><th scope="row">RTC</th><td id="debug-rtc">—</td><td></td></tr>
-            <tr><th scope="row">CLOCK</th><td id="debug-clock">—</td><td></td></tr>
-          </tbody>
-        </table>
-        <table class="debug-usage-table" data-debug-view="voltage" hidden>
-          <thead><tr><th scope="col">FIELD</th><th scope="col">LEVEL / TIME</th><th scope="col">RAW</th></tr></thead>
-          <tbody>
-            <tr><th scope="row">BATT</th><td id="debug-battery-percent">—</td><td id="debug-battery-raw">—</td></tr>
-            <tr><th scope="row">BATT START</th><td id="debug-battery-start-percent">—</td><td id="debug-battery-start-raw">—</td></tr>
-            <tr><th scope="row">SOL</th><td id="debug-solar-percent">—</td><td id="debug-solar-raw">—</td></tr>
-            <tr><th scope="row">CHARGE</th><td id="debug-charge-percent">—</td><td id="debug-charge-time">—</td></tr>
-            <tr><th scope="row">SCREEN</th><td id="debug-screen-percent">—</td><td id="debug-screen-time">—</td></tr>
-            <tr><th scope="row">SLEEP</th><td id="debug-sleep-percent">—</td><td id="debug-sleep-time">—</td></tr>
-          </tbody>
-        </table>
-        <table class="debug-usage-table" data-debug-view="logs" hidden>
-          <thead><tr><th scope="col">FIELD</th><th scope="col">VALUE</th><th scope="col"></th></tr></thead>
-          <tbody>
-            <tr><th scope="row">MIN</th><td id="debug-minutes">—</td><td></td></tr>
-            <tr><th scope="row">HOUR</th><td id="debug-hours">—</td><td></td></tr>
-            <tr><th scope="row">DAY</th><td id="debug-days">—</td><td></td></tr>
-            <tr><th scope="row">ALERT</th><td id="debug-alerts">—</td><td></td></tr>
-            <tr><th scope="row">SEC</th><td id="debug-seconds">—</td><td></td></tr>
-            <tr><th scope="row">STORE</th><td id="debug-log-store">—</td><td></td></tr>
-          </tbody>
-        </table>
-        <table class="debug-usage-table" data-debug-view="memory" hidden>
-          <thead><tr><th scope="col">FIELD</th><th scope="col">VALUE</th><th scope="col"></th></tr></thead>
-          <tbody>
-            <tr><th scope="row">FLASH</th><td id="memory-flash">64 KB</td><td></td></tr>
-            <tr><th scope="row">RAM</th><td id="memory-ram">8 KB</td><td></td></tr>
-            <tr><th scope="row">EEPROM</th><td id="memory-eeprom">2 KB</td><td></td></tr>
-            <tr><th scope="row">SPI</th><td id="memory-spi">—</td><td></td></tr>
-            <tr><th scope="row">JEDEC</th><td id="memory-jedec">—</td><td></td></tr>
+            <tr class="debug-section"><th colspan="3"><button type="button" class="debug-section-toggle" aria-expanded="true" aria-controls="debug-clock-rows">TIME</button></th></tr>
+            <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">DATE</th><td id="debug-date">&#8212;</td><td id="debug-time">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">UPTIME</th><td></td><td id="uptime">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">CNT</th><td></td><td id="debug-count">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">RTC</th><td></td><td id="debug-rtc">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">CLOCK</th><td></td><td id="debug-clock">&#8212;</td></tr>
+            <tr class="debug-section"><th colspan="3"><button type="button" class="debug-section-toggle" aria-expanded="true" aria-controls="debug-power-rows">POWER</button></th></tr>
+            <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">BATT</th><td id="debug-battery-percent">&#8212;</td><td id="debug-battery-raw">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">BATT START</th><td id="debug-battery-start-percent">&#8212;</td><td id="debug-battery-start-raw">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">SOL</th><td id="debug-solar-percent">&#8212;</td><td id="debug-solar-raw">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">CHARGE</th><td id="debug-charge-percent">&#8212;</td><td id="debug-charge-time">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">SCREEN</th><td id="debug-screen-percent">&#8212;</td><td id="debug-screen-time">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">SLEEP</th><td id="debug-sleep-percent">&#8212;</td><td id="debug-sleep-time">&#8212;</td></tr>
+            <tr class="debug-section"><th colspan="3"><button type="button" class="debug-section-toggle" aria-expanded="true" aria-controls="debug-log-rows">LOGS</button></th></tr>
+            <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">MIN</th><td></td><td id="debug-minutes">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">HOUR</th><td></td><td id="debug-hours">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">DAY</th><td></td><td id="debug-days">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">ALERT</th><td></td><td id="debug-alerts">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">SEC</th><td></td><td id="debug-seconds">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">STORE</th><td></td><td id="debug-log-store">&#8212;</td></tr>
+            <tr class="debug-section"><th colspan="3"><button type="button" class="debug-section-toggle" aria-expanded="true" aria-controls="debug-memory-rows">MEMORY</button></th></tr>
+            <tr class="debug-data" data-debug-group="debug-memory-rows"><th scope="row">FLASH</th><td></td><td id="memory-flash">64 KB</td></tr>
+            <tr class="debug-data" data-debug-group="debug-memory-rows"><th scope="row">RAM</th><td></td><td id="memory-ram">8 KB</td></tr>
+            <tr class="debug-data" data-debug-group="debug-memory-rows"><th scope="row">EEPROM</th><td></td><td id="memory-eeprom">2 KB</td></tr>
+            <tr class="debug-data" data-debug-group="debug-memory-rows"><th scope="row">SPI</th><td></td><td id="memory-spi">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-memory-rows"><th scope="row">JEDEC</th><td></td><td id="memory-jedec">&#8212;</td></tr>
           </tbody>
         </table>
       </section>
@@ -215,7 +198,7 @@
           <li><strong>Overview:</strong> current rate, dose today, solar and battery readings, device clock, and recent rate chart.</li>
           <li><strong>Logs:</strong> browse day, minute, hour, and alert records when available. Load older pages as needed.</li>
           <li><strong>Settings:</strong> read and change settings supported by the connected firmware.</li>
-          <li><strong>Debug:</strong> inspect the same four pages as the device: DEBUG, VOLT, LOGS, and MEM, in that order. The selected page shows uptime and clock state; voltage readings; physical log counts and store state; or memory sizes and SPI identification.</li>
+          <li><strong>Debug:</strong> inspect time and clock state, power readings, physical log counts and store state, and memory sizes with SPI identification in one table. Expand or collapse each section independently.</li>
         </ul>
       </details>
       <details class="information-card device-manual">
@@ -254,7 +237,7 @@
 
         <details class="manual-chapter">
         <summary>1.2 - Debug</summary>
-        <p>Shows four pages in this order: DEBUG (date, time, uptime, pulse count, RTC and clock), VOLT (battery and solar readings plus charge, screen, and sleep time), LOGS (minute, hour, day, alert and second counts, plus store state), and MEM (memory sizes and SPI identification). Long Right cycles through the pages. Short Left/Right moves between Settings and Debug.</p>
+        <p>Shows date, time, uptime, pulse count, RTC and clock, power readings, log counts and store state, and memory sizes with SPI identification in one table. TIME, POWER, LOGS, and MEMORY sections start expanded and can be collapsed independently. Short Left/Right moves between Settings and Debug.</p>
         </details>
 
         <details class="manual-chapter">
@@ -302,6 +285,6 @@
 
     <footer>Protocol V1</footer>
   </main>
-  <script defer src="app.js?v=20261026-6"></script>
+  <script defer src="app.js?v=20261027-1"></script>
 </body>
 </html>

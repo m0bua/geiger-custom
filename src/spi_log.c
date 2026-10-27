@@ -11,7 +11,8 @@
 #define SPI_LOG_HEADER_COMMIT 0xA5u
 #define SPI_LOG_HEADER_RETIRED 0x00u
 #define SPI_LOG_RECORD_COMMIT 0xA5u
-#define SPI_LOG_VERSION 1u
+#define SPI_LOG_LEGACY_VERSION 1u
+#define SPI_LOG_VERSION 2u
 #define SPI_LOG_MAGIC_0 0x4Cu
 #define SPI_LOG_MAGIC_1 0x47u
 #define SPI_LOG_MAGIC_2 0x32u
@@ -28,6 +29,7 @@ typedef struct {
     uint16_t next_slot;
     uint8_t active_segment_id;
     uint8_t active_year_descriptor;
+    uint8_t active_version;
     bool has_generation;
     bool has_active;
     bool appendable;
@@ -35,6 +37,7 @@ typedef struct {
 
 typedef struct {
     log_record_kind_t kind;
+    uint8_t version;
     uint8_t segment_id;
     uint8_t year_descriptor;
     uint32_t generation;
@@ -100,15 +103,17 @@ static uint8_t stream_kind(uint8_t index)
     return index < 3u ? kinds[index] : 0xFFu;
 }
 
-static uint16_t slot_size(log_record_kind_t kind)
+static uint16_t slot_size(log_record_kind_t kind, uint8_t version)
 {
-    const size_t data_size = log_record_data_size(kind);
+    const size_t data_size = version == SPI_LOG_LEGACY_VERSION &&
+        kind != LOG_RECORD_ALERT ? LOG_RECORD_LEGACY_DATA_BYTES :
+        log_record_data_size(kind);
     return data_size == 0u ? 0u : (uint16_t)(data_size + 3u);
 }
 
-static uint16_t slot_capacity(log_record_kind_t kind)
+static uint16_t slot_capacity(log_record_kind_t kind, uint8_t version)
 {
-    const uint16_t size = slot_size(kind);
+    const uint16_t size = slot_size(kind, version);
     return size == 0u ? 0u :
         (uint16_t)((SPI_LOG_SECTOR_SIZE - SPI_LOG_HEADER_SIZE) / size);
 }
@@ -137,11 +142,13 @@ static int8_t read_header(uint32_t address, spi_log_header_t *header)
 
     if (bytes[0] != SPI_LOG_MAGIC_0 || bytes[1] != SPI_LOG_MAGIC_1 ||
         bytes[2] != SPI_LOG_MAGIC_2 || bytes[3] != SPI_LOG_MAGIC_3 ||
-        bytes[4] != SPI_LOG_VERSION ||
+        (bytes[4] != SPI_LOG_VERSION &&
+         bytes[4] != SPI_LOG_LEGACY_VERSION) ||
         bytes[SPI_LOG_HEADER_COMMIT_OFFSET] != SPI_LOG_HEADER_COMMIT ||
         read_u16_le(&bytes[14]) != crc16(bytes, 14u)) return -1;
 
     header->kind = (log_record_kind_t)bytes[5];
+    header->version = bytes[4];
     header->segment_id = bytes[6];
     header->year_descriptor = bytes[7];
     header->generation = read_u32_le(&bytes[8]);
@@ -193,10 +200,13 @@ static int8_t read_slot(log_record_kind_t kind,
                         log_record_t *record)
 {
     uint8_t bytes[LOG_ALERT_DATA_BYTES + 3u];
-    const size_t data_size = log_record_data_size(kind);
-    const uint16_t size = slot_size(kind);
+    const size_t data_size = header != NULL &&
+        header->version == SPI_LOG_LEGACY_VERSION && kind != LOG_RECORD_ALERT ?
+        LOG_RECORD_LEGACY_DATA_BYTES : log_record_data_size(kind);
+    const uint16_t size = header == NULL ? 0u :
+        slot_size(kind, header->version);
     if (header == NULL || record == NULL || data_size == 0u || size == 0u ||
-        index >= slot_capacity(kind)) return -1;
+        index >= slot_capacity(kind, header->version)) return -1;
     const uint32_t address = sector + SPI_LOG_HEADER_SIZE +
         (uint32_t)index * size;
     if (!spi_nor_read(address, bytes, size)) return -1;
@@ -222,7 +232,7 @@ static uint16_t count_sector_records(log_record_kind_t kind,
                                      uint32_t address)
 {
     uint16_t low = 0u;
-    uint16_t high = slot_capacity(kind);
+    uint16_t high = slot_capacity(kind, header->version);
     log_record_t record;
     while (low < high) {
         uint16_t mid = (uint16_t)(low + (high - low) / 2u);
@@ -257,7 +267,8 @@ static bool write_header(uint32_t address, log_record_kind_t kind,
     if (!spi_nor_program_page(address, bytes, 16u) ||
         !spi_nor_program_page(address + SPI_LOG_HEADER_COMMIT_OFFSET,
             &marker, 1u) || read_header(address, &verify) != 1) return false;
-    return verify.kind == kind && verify.epoch == epoch &&
+    return verify.kind == kind && verify.version == SPI_LOG_VERSION &&
+        verify.epoch == epoch &&
         verify.segment_id == (uint8_t)(epoch % LOG_SEGMENT_ID_COUNT) &&
         verify.year_descriptor == year_descriptor &&
         verify.generation == generation;
@@ -303,10 +314,11 @@ static bool spi_log_scan(bool recover)
         stream->newest_generation = 0u;
         stream->active_epoch = 0u;
         stream->slot_capacity = slot_capacity(
-            (log_record_kind_t)stream_kind(index));
+            (log_record_kind_t)stream_kind(index), SPI_LOG_VERSION);
         stream->next_slot = 0u;
         stream->active_segment_id = 0u;
         stream->active_year_descriptor = 0u;
+        stream->active_version = SPI_LOG_VERSION;
         stream->has_generation = false;
         stream->has_active = false;
         stream->appendable = false;
@@ -339,6 +351,7 @@ static bool spi_log_scan(bool recover)
                 stream->active_epoch = header.epoch;
                 stream->active_segment_id = header.segment_id;
                 stream->active_year_descriptor = header.year_descriptor;
+                stream->active_version = header.version;
             }
         }
         base += (uint32_t)stream->sector_count * SPI_LOG_SECTOR_SIZE;
@@ -349,6 +362,8 @@ static bool spi_log_scan(bool recover)
             if (read_header(stream->active_address, &active_header) != 1) {
                 return false;
             }
+            stream->slot_capacity = slot_capacity(active_header.kind,
+                active_header.version);
             stream->next_slot = 0u;
             stream->appendable = true;
             while (stream->next_slot < stream->slot_capacity) {
@@ -366,6 +381,11 @@ static bool spi_log_scan(bool recover)
             }
             if (stream->next_slot == stream->slot_capacity) {
                 stream->appendable = false;
+            }
+            if (active_header.version != SPI_LOG_VERSION) {
+                stream->appendable = false;
+                stream->slot_capacity = slot_capacity(active_header.kind,
+                    SPI_LOG_VERSION);
             }
         }
     }
@@ -479,6 +499,7 @@ spi_log_prepare_result_t spi_log_prepare(log_record_kind_t kind,
         (year_descriptor & 0xC0u) != 0u) return SPI_LOG_ERROR;
     stream = &streams[index];
     if (stream->has_active && stream->appendable &&
+        stream->active_version == SPI_LOG_VERSION &&
         stream->active_epoch == epoch &&
         stream->active_segment_id == segment_id &&
         stream->active_year_descriptor == year_descriptor) {
@@ -503,6 +524,7 @@ spi_log_prepare_result_t spi_log_prepare(log_record_kind_t kind,
     stream->newest_generation = generation;
     stream->active_segment_id = segment_id;
     stream->active_year_descriptor = year_descriptor;
+    stream->active_version = SPI_LOG_VERSION;
     stream->next_slot = 0u;
     stream->has_active = true;
     stream->has_generation = true;
@@ -522,7 +544,7 @@ bool spi_log_append(log_record_kind_t kind, uint16_t epoch,
     uint8_t verify_bytes[LOG_ALERT_DATA_BYTES + 3u];
     log_record_t decoded;
     const size_t data_size = log_record_data_size(kind);
-    const uint16_t size = slot_size(kind);
+    const uint16_t size = slot_size(kind, SPI_LOG_VERSION);
     uint32_t address;
     uint16_t crc;
 
@@ -555,7 +577,8 @@ bool spi_log_append(log_record_kind_t kind, uint16_t epoch,
         decoded.period_index != record->period_index ||
         decoded.count != record->count ||
         decoded.maximum_cpm != record->maximum_cpm ||
-        decoded.duration_seconds != record->duration_seconds) {
+        decoded.duration_seconds != record->duration_seconds ||
+        decoded.covered_seconds != record->covered_seconds) {
         stream->appendable = false;
         return false;
     }

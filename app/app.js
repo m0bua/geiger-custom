@@ -266,7 +266,6 @@ const elements = {
   debugSeconds: document.querySelector('#debug-seconds'),
   debugDate: document.querySelector('#debug-date'),
   debugTime: document.querySelector('#debug-time'),
-  debugViewTitle: document.querySelector('#debug-view-title'),
   debugModeBadge: document.querySelector('#debug-mode-badge'),
   memorySpi: document.querySelector('#memory-spi'),
   memoryJedec: document.querySelector('#memory-jedec'),
@@ -499,7 +498,6 @@ class SerialProtocol {
 let serial = null;
 let offlinePreview = true;
 let rateHoverIndex = null;
-let debugSubpage = 'system';
 let selectedSerialPort = null;
 let bootloaderPortOpen = false;
 let portMayBeOpen = false;
@@ -1417,24 +1415,6 @@ function renderSettings() {
     'Use Show to control which settings appear in the device menu. Visibility requires firmware protocol support.';
 }
 
-const debugPageTitles = {
-  system: 'DEBUG', voltage: 'VOLT', logs: 'LOGS', memory: 'MEM',
-};
-
-function setDebugSubpage(page) {
-  if (!Object.hasOwn(debugPageTitles, page)) return;
-  debugSubpage = page;
-  document.querySelectorAll('[data-debug-view]').forEach((view) => {
-    view.hidden = view.dataset.debugView !== page;
-  });
-  document.querySelectorAll('[data-debug-page]').forEach((button) => {
-    const active = button.dataset.debugPage === page;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-selected', String(active));
-  });
-  elements.debugViewTitle.textContent = debugPageTitles[page];
-}
-
 function renderOfflinePreview() {
   elements.solarPercent.textContent = '0%';
   elements.solarPercent.classList.remove('solar-warn', 'solar-good');
@@ -1534,7 +1514,6 @@ function renderOfflinePreview() {
   elements.settingsClockStatus.dataset.level = '';
   elements.syncClock.disabled = true;
   renderSettings();
-  setDebugSubpage(debugSubpage);
   drawRateChart();
 }
 
@@ -2911,8 +2890,13 @@ elements.connect.addEventListener('click', () => {
   else connectDevice();
 });
 
-document.querySelectorAll('[data-debug-page]').forEach((button) => {
-  button.addEventListener('click', () => setDebugSubpage(button.dataset.debugPage));
+document.querySelectorAll('.debug-section-toggle').forEach((button) => {
+  button.addEventListener('click', () => {
+    const expanded = button.getAttribute('aria-expanded') === 'true';
+    button.setAttribute('aria-expanded', String(!expanded));
+    document.querySelectorAll(`[data-debug-group="${button.getAttribute('aria-controls')}"]`)
+      .forEach((row) => { row.hidden = expanded; });
+  });
 });
 elements.rateChart.addEventListener('pointermove', showRateChartTooltip);
 elements.rateChart.addEventListener('pointerleave', () => {

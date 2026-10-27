@@ -3,17 +3,17 @@
 
 #include <stdint.h>
 
-/* EEPROM user settings end at byte 156. Keep the existing 191-byte reserve
- * untouched and place the complete logger area in bytes 348..2047. */
+/* EEPROM user settings and dose checkpoints occupy bytes 0..347. The logger
+ * owns bytes 348..2047. */
 #define LOG_EEPROM_REGION_BASE 348u
 #define LOG_EEPROM_REGION_SIZE 1700u
 
 #define LOG_EEPROM_MINUTE_COUNT 62u
 #define LOG_EEPROM_HOUR_COUNT 25u
-#define LOG_EEPROM_DAY_COUNT 70u
+#define LOG_EEPROM_DAY_COUNT 50u
 #define LOG_EEPROM_ALERT_COUNT 30u
 
-#define LOG_EEPROM_RECORD_SIZE 8u
+#define LOG_EEPROM_RECORD_SIZE 9u
 #define LOG_EEPROM_ALERT_SIZE 11u
 
 #define LOG_EEPROM_MINUTE_BASE LOG_EEPROM_REGION_BASE
@@ -32,7 +32,7 @@
 #define LOG_EEPROM_ALERT_SIZE_BYTES \
     (LOG_EEPROM_ALERT_COUNT * LOG_EEPROM_ALERT_SIZE)
 #define LOG_EEPROM_SERVICE_BASE \
-    (LOG_EEPROM_ALERT_BASE + LOG_EEPROM_ALERT_SIZE_BYTES)
+    (LOG_EEPROM_REGION_BASE + LOG_EEPROM_REGION_SIZE - 114u)
 #define LOG_EEPROM_SERVICE_SIZE \
     (LOG_EEPROM_REGION_BASE + LOG_EEPROM_REGION_SIZE - \
         LOG_EEPROM_SERVICE_BASE)
@@ -53,6 +53,9 @@
 #define LOG_EEPROM_METADATA_END \
     (LOG_EEPROM_TABLE_CRC_BASE + LOG_EEPROM_TABLE_CRC_SIZE)
 
+_Static_assert(LOG_EEPROM_SERVICE_BASE >=
+        LOG_EEPROM_ALERT_BASE + LOG_EEPROM_ALERT_SIZE_BYTES,
+    "EEPROM logger records overlap the metadata area");
 _Static_assert(LOG_EEPROM_SERVICE_SIZE == 114u,
     "EEPROM logger service area must remain 114 bytes");
 _Static_assert(LOG_EEPROM_METADATA_END + 2u == 2048u,

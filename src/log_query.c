@@ -29,14 +29,16 @@ static bool add_record(log_query_read_fn read_record, void *context,
         return false;
     }
 
-    if (live && record.duration_seconds == 0u) {
+    if (live && record.duration_seconds == 0u &&
+        record.covered_seconds == 0u) {
         accumulator->complete = false;
         accumulator->live = true;
         return true;
     }
 
-    coverage = live && record.duration_seconds != 0u ?
-        record.duration_seconds : period_seconds;
+    coverage = record.covered_seconds != 0u ? record.covered_seconds :
+        (live && record.duration_seconds != 0u ?
+            record.duration_seconds : period_seconds);
     if (coverage > period_seconds) coverage = period_seconds;
     accumulator->count += record.count;
     if (record.maximum_cpm > accumulator->maximum_cpm) {
