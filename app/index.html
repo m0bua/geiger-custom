@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1115">
   <title>Device Monitor</title>
-  <link rel="stylesheet" href="style.css?v=20261027-2">
+  <link rel="stylesheet" href="style.css?v=20261027-7">
 </head>
 <body>
   <main class="shell">
@@ -112,11 +112,23 @@
     <section id="logs-page" class="page logs-panel" hidden>
       <div class="panel-heading"><h2>Logs</h2><span id="logs-status">Connect to read logs.</span></div>
       <nav id="log-tabs" class="log-tabs" aria-label="Log types"></nav>
-      <div class="log-date-tools">
+      <div class="logs-tools">
         <span class="logs-device-clock">DEVICE TIME <strong id="logs-device-time">—</strong></span>
-        <label for="log-date">Load near date</label>
-        <input id="log-date" type="date" disabled>
-        <button id="load-log-date" class="button button-quiet" type="button" disabled>Load date</button>
+        <div class="log-date-tools">
+          <span id="log-range-extra"></span>
+          <label for="log-range-mode">Range
+            <select id="log-range-mode" disabled>
+              <option value="latest" selected>Latest</option>
+              <option value="all">All</option>
+              <option value="5">5</option>
+              <option value="10">10</option>
+              <option value="50">50</option>
+              <option value="custom">Custom</option>
+            </select>
+          </label>
+          <button id="load-log-selection" class="button button-quiet" type="button" disabled>Load</button>
+          <button id="export-logs-csv" class="button button-quiet" type="button" disabled>Export</button>
+        </div>
       </div>
       <div id="log-content" class="log-content"></div>
       <div class="log-actions"><button id="load-more-logs" class="button button-quiet" type="button" hidden>Load more</button></div>
@@ -187,7 +199,7 @@
         <summary>Readings and data</summary>
         <ul>
           <li><strong>Overview:</strong> shows the current rate, accumulated dose for today, device date/time and uptime, solar level, and battery level. The rate and dose units follow the device's UNIT and prefix settings. Hover over the rate chart to read a plotted value; it keeps the latest three minutes.</li>
-          <li><strong>Logs:</strong> browse minute, hour, day, and alert records when the device has them. Each row shows its date/time, dose or duration, rate statistics, and coverage where available. Coverage distinguishes complete from partial intervals. Use <strong>Load date</strong> to go to records near a chosen date and <strong>Load more</strong> to fetch older records.</li>
+          <li><strong>Logs:</strong> browse minute, hour, day, and alert records. The range selector offers Latest, All, 5, 10, 50, and Custom; Latest is the default and loads the latest hour of minutes, day of hours, or month of days. Custom shows newer-to-older date/time bounds; minute bounds have minute precision and hour bounds have hour precision. Load fetches the selection in batches of five. Export saves the records already loaded in the table as CSV.</li>
           <li><strong>Settings:</strong> read and change options supported by the connected firmware. Values that depend on another setting may be disabled. The Show checkboxes control which options appear in the device menu; setting and visibility changes are applied immediately. The device clock can be synchronized to the computer's current local time. POWER OFF is always shown and has no visibility checkbox.</li>
           <li><strong>Debug:</strong> inspect device time and clock source, uptime, pulse count, power readings, physical log counts, storage state, memory sizes, and SPI identification. Sections are in one table and can be collapsed independently.</li>
           <li><strong>Without a connection:</strong> Overview, Logs, and Debug show clearly marked illustrative zero data. Settings use factory defaults and can be changed for preview, but preview changes are not saved and reset after reloading the page. Options unsupported by the connected firmware remain visible but disabled.</li>
@@ -357,6 +369,6 @@
     </dialog>
 
   </main>
-  <script defer src="app.js?v=20261027-1"></script>
+  <script defer src="app.js?v=20261027-5"></script>
 </body>
 </html>

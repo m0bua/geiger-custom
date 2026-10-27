@@ -211,9 +211,11 @@ const elements = {
   logsPage: document.querySelector('#logs-page'),
   logTabs: document.querySelector('#log-tabs'),
   logContent: document.querySelector('#log-content'),
-  logDate: document.querySelector('#log-date'),
+  logRangeMode: document.querySelector('#log-range-mode'),
+  logRangeExtra: document.querySelector('#log-range-extra'),
+  exportLogsCsv: document.querySelector('#export-logs-csv'),
   logsDeviceTime: document.querySelector('#logs-device-time'),
-  loadLogDate: document.querySelector('#load-log-date'),
+  loadLogSelection: document.querySelector('#load-log-selection'),
   logsStatus: document.querySelector('#logs-status'),
   loadMoreLogs: document.querySelector('#load-more-logs'),
   firmwarePage: document.querySelector('#firmware-page'),
@@ -554,8 +556,14 @@ let logCountsRefreshBusy = false;
 const logViewCache = new Map();
 let logCursor = { time: 0xffffffff, epoch: 0xffff, skip: 0 };
 let logHasMore = true;
-let logHistorical = false;
 let logSelectedDate = "";
+let logRangeActive = false;
+let logRangeAll = false;
+let logCountLimit = 0;
+let logRangeStart = 0;
+let logRangeEnd = 0;
+let logCsvBusy = false;
+const logRangeDefaults = new Set();
 let clockSyncBusy = false;
 const rateHistory = [];
 const demoSettings = Array.from({ length: 29 }, () => 0);
@@ -769,7 +777,7 @@ function selectPage(page, updateUrl = true) {
   if (page === 'settings' && serial && protocolCapabilities && logInfo === null) loadLogInfo();
   if (page === 'logs' && serial && protocolCapabilities && logInfo === null) loadLogInfo();
   else if (page === 'logs' && serial && logInfo) {
-    if (logRecords.length === 0) loadLogPage(true);
+    if (logRecords.length === 0) loadLogSelection();
     else refreshLatestLogRecord();
   }
 }
@@ -802,7 +810,7 @@ function applyLogInfo(payload) {
     rtcStatus: ({1: 'OSC ERR', 2: 'INIT ERR', 3: 'SYNC ERR', 4: 'DBP ERR', 5: 'SET', 6: 'NOT SET', 7: 'NOT READY'}[payload[20]] || 'UNKNOWN'),
     clockSource: payload[21] === 1 ? 'LSE' : 'LSI', error: !!payload[28],
   };
-  if (!logHistorical && logInfo.calendarValid) elements.logDate.value = deviceLogDate();
+  if (!logRangeActive && logInfo.calendarValid) updateLogRangeControls();
   renderDebugLogInfo();
   for (const type of logTypes) {
     const cell = document.querySelector(`#debug-${type.id}`);
@@ -835,10 +843,11 @@ const logTypes = [
   { id: 'alerts', protocolId: 3, label: 'ALERTS', countKey: 'alerts', period: 60 },
 ];
 
-function deviceLogDate() {
-  return new Date(Date.UTC(2000, 0, 1) + logInfo.calendarSeconds * 1000).toISOString().slice(0, 10);
+function logViewKey() {
+  const view = logRangeActive ? logSelectedDate :
+    logCountLimit ? `last:${logCountLimit}` : 'latest';
+  return `${selectedLogType}:${view}`;
 }
-function logViewKey() { return `${selectedLogType}:${logHistorical ? logSelectedDate : 'latest'}`; }
 function saveLogView() {
   logViewCache.set(logViewKey(), {records: logRecords.slice(), cursor: {...logCursor}, more: logHasMore});
 }
@@ -852,12 +861,150 @@ function clearLogView() {
   logRecords = []; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0}; logHasMore = true;
   logStartOffset = 0; logPageTotal = 0;
 }
-function hasCurrentLogDate() { return !logHistorical; }
+function hasCurrentLogDate() { return !logRangeActive && !logCountLimit; }
 function logDateLimit() {
-  if (!logHistorical || !logSelectedDate) return 0;
-  const end = Date.parse(`${logSelectedDate}T00:00:00Z`) + 86400000 - 1000;
-  return Math.max(0, Math.floor((end - Date.UTC(2000, 0, 1)) / 1000));
+  return logRangeActive && !logRangeAll ? logRangeEnd : 0;
 }
+function logRecordInRange(record) {
+  return !logRangeActive || logRangeAll || (record.calendar &&
+    record.timestamp >= logRangeStart && record.timestamp <= logRangeEnd);
+}
+
+function calendarSecondsFromInputs(date, time = '00:00') {
+  const [year, month, day] = date.split('-').map(Number);
+  const [hour, minute] = time.split(':').map(Number);
+  return Math.floor(Date.UTC(year, month - 1, day, hour, minute) / 1000) -
+    Date.UTC(2000, 0, 1) / 1000;
+}
+
+function updateLogRangeControls() {
+  const type = logTypes.find((item) => item.id === selectedLogType);
+  if (!type) return;
+  if (elements.logRangeExtra.dataset.type !== type.id) {
+    elements.logRangeExtra.replaceChildren();
+    if (type.id === 'minutes') {
+      for (const [id, labelText] of [['log-newer-minute', 'Newer'],
+        ['log-older-minute', 'Older']]) {
+        const label = document.createElement('label');
+        label.htmlFor = id;
+        label.textContent = labelText;
+        const input = document.createElement('input');
+        input.id = id;
+        input.type = 'datetime-local';
+        input.step = '60';
+        elements.logRangeExtra.append(label, input);
+      }
+    } else {
+      for (const side of ['newer', 'older']) {
+        const label = document.createElement('label');
+        const date = document.createElement('input');
+        date.id = `log-${side}-date`;
+        date.type = 'date';
+        label.htmlFor = date.id;
+        label.textContent = side === 'newer' ? 'Newer' : 'Older';
+        label.append(date);
+        elements.logRangeExtra.append(label);
+        if (type.id === 'hours') {
+          const hour = document.createElement('select');
+          hour.id = `log-${side}-hour`;
+          for (let value = 0; value < 24; ++value) {
+            const option = document.createElement('option');
+            option.value = String(value).padStart(2, '0');
+            option.textContent = option.value;
+            hour.append(option);
+          }
+          elements.logRangeExtra.append(hour);
+        }
+      }
+    }
+    elements.logRangeExtra.dataset.type = type.id;
+  }
+  if (logInfo?.calendarValid && !logRangeDefaults.has(type.id)) {
+    if (elements.logRangeMode.value === 'latest') setDefaultLogRange(type);
+    logRangeDefaults.add(type.id);
+  }
+  const custom = elements.logRangeMode.value === 'custom';
+  elements.logRangeExtra.hidden = !custom;
+  if (logRangeActive && !logRangeAll && custom) populateRangeInputs(type);
+  const enabled = !!logInfo?.calendarValid && custom;
+  elements.logRangeMode.disabled = !logInfo || logCsvBusy || logPageLoading;
+  elements.logRangeExtra.querySelectorAll('input,select').forEach((control) => {
+    control.disabled = !enabled || logCsvBusy || logPageLoading;
+  });
+  elements.loadLogSelection.disabled = !logInfo || logCsvBusy || logPageLoading ||
+    (custom && !logInfo?.calendarValid);
+  elements.exportLogsCsv.disabled = !logInfo || logCsvBusy || logPageLoading;
+}
+
+function setDefaultLogRange(type, force = false) {
+  if (!logInfo?.calendarValid || (!force && logRangeDefaults.has(type.id))) return;
+  const now = new Date(Date.UTC(2000, 0, 1) + logInfo.calendarSeconds * 1000);
+  let older = new Date(now.getTime());
+  if (type.id === 'minutes') {
+    now.setUTCSeconds(0, 0);
+    older = new Date(now.getTime() - 59 * 60 * 1000);
+  } else if (type.id === 'hours') {
+    now.setUTCMinutes(0, 0, 0);
+    older = new Date(now.getTime() - 23 * 3600 * 1000);
+  } else {
+    const month = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const lastDay = new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() + 1, 0)).getUTCDate();
+    older = new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth(),
+      Math.min(now.getUTCDate(), lastDay)));
+  }
+  if (type.id === 'minutes') {
+    document.querySelector('#log-newer-minute').value = `${formatDeviceDate(now)}T${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
+    document.querySelector('#log-older-minute').value = `${formatDeviceDate(older)}T${String(older.getUTCHours()).padStart(2, '0')}:${String(older.getUTCMinutes()).padStart(2, '0')}`;
+  } else {
+    for (const [side, date] of [['newer', now], ['older', older]]) {
+      document.querySelector(`#log-${side}-date`).value = formatDeviceDate(date);
+      if (type.id === 'hours') {
+        document.querySelector(`#log-${side}-hour`).value = String(date.getUTCHours()).padStart(2, '0');
+      }
+    }
+  }
+}
+
+function populateRangeInputs(type) {
+  const older = new Date(Date.UTC(2000, 0, 1) + logRangeStart * 1000);
+  const newer = new Date(Date.UTC(2000, 0, 1) + logRangeEnd * 1000);
+  if (type.id === 'minutes') {
+    document.querySelector('#log-newer-minute').value = `${formatDeviceDate(newer)}T${String(newer.getUTCHours()).padStart(2, '0')}:${String(newer.getUTCMinutes()).padStart(2, '0')}`;
+    document.querySelector('#log-older-minute').value = `${formatDeviceDate(older)}T${String(older.getUTCHours()).padStart(2, '0')}:${String(older.getUTCMinutes()).padStart(2, '0')}`;
+  } else {
+    for (const [side, date] of [['newer', newer], ['older', older]]) {
+      document.querySelector(`#log-${side}-date`).value = formatDeviceDate(date);
+      if (type.id === 'hours') {
+        document.querySelector(`#log-${side}-hour`).value = String(date.getUTCHours()).padStart(2, '0');
+      }
+    }
+  }
+}
+
+function readCustomLogRange(type) {
+  if (type.id === 'minutes') {
+    const newer = document.querySelector('#log-newer-minute').value;
+    const older = document.querySelector('#log-older-minute').value;
+    if (!newer || !older) return null;
+    const [newerDate, newerTime] = newer.split('T');
+    const [olderDate, olderTime] = older.split('T');
+    return {
+      start: calendarSecondsFromInputs(olderDate, olderTime),
+      end: calendarSecondsFromInputs(newerDate, newerTime) + 59,
+    };
+  }
+  const newerDate = document.querySelector('#log-newer-date').value;
+  const olderDate = document.querySelector('#log-older-date').value;
+  if (!newerDate || !olderDate) return null;
+  const newerHour = type.id === 'hours' ? document.querySelector('#log-newer-hour').value : '23';
+  const olderHour = type.id === 'hours' ? document.querySelector('#log-older-hour').value : '00';
+  return {
+    start: calendarSecondsFromInputs(olderDate, `${olderHour}:00`),
+    end: calendarSecondsFromInputs(newerDate, `${newerHour}:00`) +
+      (type.id === 'hours' ? 3599 : 86399),
+  };
+}
+
 function logRecordKey(record) {
   return `${record.epoch}:${record.timestamp}:${selectedLogType === 'alerts' ? record.id : 0}`;
 }
@@ -875,11 +1022,10 @@ function renderLogTabs() {
       if (selectedLogType === type.id) return;
       saveLogView(); ++logPageGeneration;
       selectedLogType = type.id;
-      if (!restoreLogView()) clearLogView();
+      clearLogView();
+      updateLogRangeControls();
       renderLogTabs();
-      if (logPageLoading) { logPageReloadPending = true; return; }
-      if (!logRecords.length) loadLogPage(false);
-      else if (hasCurrentLogDate()) loadNewerLogRecords();
+      loadLogSelection();
     });
     elements.logTabs.append(button);
   }
@@ -935,13 +1081,12 @@ function logDoseClass(record) {
 }
 function renderLogSummary() {
   elements.logContent.replaceChildren();
-  elements.logDate.disabled = !logInfo?.calendarValid || selectedLogType === 'alerts';
-  elements.loadLogDate.disabled = elements.logDate.disabled;
+  updateLogRangeControls();
   elements.loadMoreLogs.hidden = !logInfo || !logHasMore;
   elements.loadMoreLogs.disabled = logPageLoading;
   if (!logInfo) return;
   const type = logTypes.find((item) => item.id === selectedLogType);
-  elements.logsStatus.textContent = `${formatGroupedNumber(logRecords.length)} records loaded · ${formatGroupedNumber(logInfo[type.countKey])} stored entries${logInfo.memory === 2 ? ' · recording off' : ''}${logInfo.error ? ' · storage error' : ''}`;
+  elements.logsStatus.textContent = `${formatGroupedNumber(logRecords.length)} records loaded | ${formatGroupedNumber(logInfo[type.countKey])} stored entries${logPageLoading ? (logRangeAll ? ' | loading all logs...' : logRangeActive ? ' | loading range...' : logCountLimit ? ` | loading last ${logCountLimit}...` : '') : ''}${logInfo.memory === 2 ? ' | recording off' : ''}${logInfo.error ? ' | storage error' : ''}`;
   if (!logRecords.length) { elements.logContent.textContent = logPageLoading ? 'Loading records…' : 'No records available.'; return; }
   const header = document.createElement('div'); header.className = 'log-grid log-grid-header';
   header.innerHTML = selectedLogType === 'alerts' ?
@@ -992,15 +1137,132 @@ async function queryLogPage(type, cursor, limit, count = 2) {
   return {records, more: !!payload[3], cursor: {time: data.getUint32(4, true), epoch: data.getUint16(8, true), skip: data.getUint16(10, true)}};
 }
 
-async function loadLogNearDate() {
-  if (!serial || !logInfo?.calendarValid || !elements.logDate.value) return;
+async function applyCalendarRange(range, mode) {
+  if (!range || !Number.isFinite(range.start) || !Number.isFinite(range.end) ||
+      range.start > range.end) {
+    elements.logsStatus.textContent = 'Newer bound must be later than older bound.';
+    return;
+  }
   saveLogView(); ++logPageGeneration;
-  logHistorical = elements.logDate.value !== deviceLogDate();
-  logSelectedDate = logHistorical ? elements.logDate.value : "";
-  if (!restoreLogView()) clearLogView();
+  logRangeActive = true;
+  logRangeAll = false;
+  logCountLimit = 0;
+  logRangeStart = range.start;
+  logRangeEnd = range.end;
+  logSelectedDate = `${mode}:${range.start}:${range.end}`;
+  clearLogView();
   renderLogSummary();
-  if (!logRecords.length) await loadLogPage(false);
-  else if (hasCurrentLogDate()) await loadNewerLogRecords();
+  await loadLogPage(false);
+}
+
+async function loadLogSelection() {
+  if (!serial || !logInfo) return;
+  const mode = elements.logRangeMode.value;
+  if (mode === 'all') return selectAllLogs();
+  if (['5', '10', '50'].includes(mode)) return loadRecentLogs(Number(mode));
+  const type = logTypes.find((item) => item.id === selectedLogType);
+  if (mode === 'latest') {
+    if (!logInfo.calendarValid) return loadRecentLogs(LOG_INITIAL_TARGETS[type.id]);
+    setDefaultLogRange(type, true);
+  }
+  if (mode !== 'latest' && mode !== 'custom') return;
+  if (!logInfo.calendarValid) return;
+  await applyCalendarRange(readCustomLogRange(type), mode);
+}
+
+async function selectAllLogs() {
+  if (!serial || !logInfo) return;
+  saveLogView();
+  ++logPageGeneration;
+  logRangeActive = true;
+  logRangeAll = true;
+  logCountLimit = 0;
+  logRangeStart = 0;
+  logRangeEnd = 0xffffffff;
+  logSelectedDate = `${selectedLogType}:all`;
+  clearLogView();
+  renderLogSummary();
+  await loadLogPage(false);
+}
+
+async function loadRecentLogs(count) {
+  if (!serial || !logInfo || !Number.isInteger(count) || count < 1) return;
+  saveLogView();
+  ++logPageGeneration;
+  logRangeActive = false;
+  logRangeAll = false;
+  logCountLimit = count;
+  logSelectedDate = '';
+  clearLogView();
+  renderLogSummary();
+  await loadLogPage(false);
+}
+
+async function loadMoreLogRecords() {
+  if (logCountLimit) logCountLimit += LOG_BATCH_SIZE;
+  await loadLogPage(false);
+}
+
+function csvCell(value) {
+  const text = String(value ?? '');
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function logCsvRow(record, type) {
+  const cnt = (deviceSettings?.[9] ?? 0) === 1;
+  const isR = (deviceSettings?.[9] ?? 0) === 2;
+  const dose = cnt ? record.dose : record.dose * 0.000111 * (isR ? 100 : 1);
+  const average = cnt ? record.average : record.average * 0.00666 * (isR ? 100 : 1);
+  const maximum = cnt ? record.maximum : record.maximum * 0.00666 * (isR ? 100 : 1);
+  const doseUnit = cnt ? 'CNT' : isR ? 'µR' : 'µSv';
+  const rateUnit = cnt ? 'CPM' : isR ? 'µR/h' : 'µSv/h';
+  const coverage = type.id === 'alerts' ? '' : logCoveragePercent(record, type);
+  const state = record.live ? 'live' : record.partial ? 'partial' : 'full';
+  return [formatLogDate(record.timestamp, type.id, record.calendar), type.id,
+    Number(dose.toPrecision(9)), doseUnit, Number(average.toPrecision(9)), rateUnit,
+    Number(maximum.toPrecision(9)), record.covered, coverage, state,
+    record.epoch, record.id, record.calendar ? 1 : 0];
+}
+
+function downloadLogCsv(records, filename) {
+  const header = ['timestamp', 'log_type', 'dose', 'dose_unit', 'average',
+    'rate_unit', 'maximum', 'covered_seconds', 'coverage_percent', 'status',
+    'epoch', 'record_id', 'calendar_valid'];
+  const csv = [header, ...records.map(({record, type}) => logCsvRow(record, type))]
+    .map((row) => row.map(csvCell).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF', csv], {type: 'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportLogsCsv() {
+  if (!serial || !logInfo || logCsvBusy) return;
+  const generation = logPageGeneration;
+  const type = logTypes.find((item) => item.id === selectedLogType);
+  const records = logRecords.slice();
+  logCsvBusy = true;
+  updateLogRangeControls();
+  try {
+    if (generation !== logPageGeneration) throw new Error('Log export cancelled because the view changed.');
+    const fromName = formatLogDate(logRangeStart, type.id).replace(/[^0-9]/g, '');
+    const toName = formatLogDate(logRangeEnd, type.id).replace(/[^0-9]/g, '');
+    const filename = logRangeAll ? `device-logs-${type.id}-all.csv` :
+      logCountLimit ? `device-logs-${type.id}-last-${logCountLimit}.csv` :
+      logRangeActive ? `device-logs-${type.id}-${fromName}-to-${toName}.csv` :
+        `device-logs-${type.id}-loaded.csv`;
+    downloadLogCsv(records.map((record) => ({record, type})),
+      filename);
+    elements.logsStatus.textContent = `Exported ${formatGroupedNumber(records.length)} ${type.label.toLowerCase()} records.`;
+  } catch (error) {
+    elements.logsStatus.textContent = error.message;
+  } finally {
+    logCsvBusy = false;
+    updateLogRangeControls();
+  }
 }
 
 async function loadLogPage(reset = false) {
@@ -1008,25 +1270,43 @@ async function loadLogPage(reset = false) {
   if (logPageLoading) { if (reset) ++logPageGeneration; logPageReloadPending = true; return; }
   if (reset) { ++logPageGeneration; clearLogView(); }
   const generation = logPageGeneration, type = logTypes.find((item) => item.id === selectedLogType);
-  const target = logRecords.length + LOG_INITIAL_TARGETS[type.id];
+  const target = logRangeActive ? Number.MAX_SAFE_INTEGER : logCountLimit ||
+    logRecords.length + LOG_INITIAL_TARGETS[type.id];
   const limit = logDateLimit();
   logPageLoading = true; renderLogSummary();
+  let loadFailed = false;
   try {
+    let crossedRangeStart = false;
     while (generation === logPageGeneration && logHasMore && logRecords.length < target) {
       const batchEnd = Math.min(target, logRecords.length + LOG_BATCH_SIZE);
       while (generation === logPageGeneration && logHasMore && logRecords.length < batchEnd) {
         const page = await queryLogPage(type, logCursor, limit, Math.min(2, batchEnd - logRecords.length));
         if (generation !== logPageGeneration) break;
         const keys = new Set(logRecords.map(logRecordKey));
-        for (const record of page.records) if (!keys.has(logRecordKey(record))) { logRecords.push(record); keys.add(logRecordKey(record)); }
-        logCursor = page.cursor; logHasMore = page.more && page.records.length > 0;
+        for (const record of page.records) {
+          if (logRangeActive && record.calendar && record.timestamp < logRangeStart) {
+            crossedRangeStart = true;
+            continue;
+          }
+          if (logRecordInRange(record) && !keys.has(logRecordKey(record))) {
+            logRecords.push(record); keys.add(logRecordKey(record));
+          }
+        }
+        logCursor = page.cursor;
+        logHasMore = page.more && page.records.length > 0 && !crossedRangeStart;
       }
-      if (generation === logPageGeneration) { renderLogSummary(); saveLogView(); }
+      if (generation === logPageGeneration) {
+        renderLogSummary(); saveLogView();
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
     }
   } catch (error) {
+    loadFailed = true;
     if (generation === logPageGeneration) elements.logsStatus.textContent = error.message;
   } finally {
     logPageLoading = false;
+    updateLogRangeControls();
+    if (!loadFailed && generation === logPageGeneration) renderLogSummary();
     if (generation === logPageGeneration) { logPageTotal = logRecords.length; saveLogView(); elements.loadMoreLogs.disabled = false; }
     if (logPageReloadPending && serial && logInfo) { logPageReloadPending = false; if (!logRecords.length) loadLogPage(false); else if (hasCurrentLogDate()) loadNewerLogRecords(); }
   }
@@ -1069,7 +1349,9 @@ async function loadLogInfo() {
     if (!logTypes.some((type) => type.id === selectedLogType) || (!logRecords.length && !logViewCache.size))
       selectedLogType = logTypes.find((type) => logInfo[type.countKey] > 0)?.id || 'minutes';
     renderLogTabs(); updateSpiDumpAvailability();
-    if (!elements.logsPage.hidden && !logRecords.length) loadLogPage(false);
+    if (!elements.logsPage.hidden && !logRecords.length) {
+      loadLogSelection();
+    }
   } catch (error) { elements.logsStatus.textContent = error.message; }
   finally { logInfoLoading = false; }
 }
@@ -1717,7 +1999,7 @@ async function runDeviceAction(action, value, button) {
     if (action === 0 && ![0, 4, 5].includes(value)) {
       logInfo = null;
       logRecords = [];
-      logViewCache.clear(); logHistorical = false; logSelectedDate = ""; logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
+      logViewCache.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
       logPageTotal = 0;
       await loadLogInfo();
     }
@@ -1962,8 +2244,10 @@ elements.debugTab.addEventListener('click', () => selectPage('debug'));
 elements.settingsTab.addEventListener('click', () => selectPage('settings'));
 elements.syncClock.addEventListener('click', synchronizeDeviceClock);
 elements.logsTab.addEventListener('click', () => selectPage('logs'));
-elements.loadMoreLogs.addEventListener('click', () => loadLogPage(false));
-elements.loadLogDate.addEventListener('click', loadLogNearDate);
+elements.loadMoreLogs.addEventListener('click', loadMoreLogRecords);
+elements.loadLogSelection.addEventListener('click', loadLogSelection);
+elements.logRangeMode.addEventListener('change', updateLogRangeControls);
+elements.exportLogsCsv.addEventListener('click', exportLogsCsv);
 elements.firmwareTab.addEventListener('click', () => selectPage('firmware'));
 elements.rebootFirmware.addEventListener('click', rebootToFirmware);
 elements.rebootBootloader.addEventListener('click', rebootToBootloader);
@@ -2714,7 +2998,7 @@ async function connectDevice(portOverride = null) {
   rateHistory.length = 0;
   logInfo = null;
   logRecords = [];
-  logViewCache.clear(); logHistorical = false; logSelectedDate = ""; logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
+  logViewCache.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
   logStartOffset = 0;
   logPageTotal = 0;
   updateSpiDumpAvailability();
@@ -2729,7 +3013,7 @@ async function connectDevice(portOverride = null) {
       deviceHiddenSettings = null;
       logInfo = null;
       logRecords = [];
-      logViewCache.clear(); logHistorical = false; logSelectedDate = ""; logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
+      logViewCache.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
       logStartOffset = 0;
       logPageTotal = 0;
       elements.settingsList.replaceChildren();
@@ -2770,7 +3054,7 @@ async function connectDevice(portOverride = null) {
     deviceHiddenSettings = null;
     logInfo = null;
     logRecords = [];
-    logViewCache.clear(); logHistorical = false; logSelectedDate = ""; logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
+    logViewCache.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
     logPageTotal = 0;
     elements.settingsList.replaceChildren();
     elements.logTabs.replaceChildren();
@@ -2795,7 +3079,7 @@ async function disconnectDevice() {
   deviceHiddenSettings = null;
   logInfo = null;
   logRecords = [];
-  logViewCache.clear(); logHistorical = false; logSelectedDate = ""; logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
+  logViewCache.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
   logPageTotal = 0;
   elements.settingsList.replaceChildren();
   elements.logTabs.replaceChildren();

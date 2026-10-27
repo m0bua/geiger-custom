@@ -178,10 +178,17 @@ button { font: inherit; }
 .log-tab { padding: 7px 11px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; cursor: pointer; }
 .log-tab.active { color: var(--green); background: rgba(0,229,139,.09); }
 .log-content { min-height: 100px; padding: 14px 0; color: var(--muted); font: 11px "DM Mono", Consolas, monospace; }
-.log-date-tools { display: flex; align-items: center; justify-content: flex-end; gap: 9px; padding: 10px 0 2px; color: var(--muted); font-size: 11px; }
-.logs-device-clock { margin-right: auto; font-size: 10px; letter-spacing: .04em; }
+.logs-tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0 2px; }
+.log-date-tools { display: flex; align-items: center; justify-content: flex-end; flex-wrap: nowrap; gap: 9px; color: var(--muted); font-size: 11px; }
+.log-date-tools > label { display: inline-flex; align-items: center; gap: 7px; }
+.log-date-tools #log-range-extra label { display: inline-flex; align-items: center; gap: 7px; }
+.logs-device-clock { flex: 0 0 auto; font-size: 10px; letter-spacing: .04em; }
 .logs-device-clock strong { margin-left: 5px; color: #d8e2e4; font: 500 11px "DM Mono", Consolas, monospace; letter-spacing: 0; }
 .log-date-tools input { min-height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; color: #d8e2e4; background: #111a1f; font: 11px "DM Mono", Consolas, monospace; }
+.log-date-tools select { min-height: 34px; padding: 0 7px; border: 1px solid var(--line); border-radius: 7px; color: #d8e2e4; background: #111a1f; font: 11px "DM Mono", Consolas, monospace; }
+.log-date-tools #log-range-extra { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 8px; }
+.log-date-tools #log-range-extra[hidden] { display: inline-flex !important; visibility: hidden; }
+.log-date-tools > button { flex: 0 0 auto; }
 .log-grid { min-width: 620px; display: grid; grid-template-columns: 1.1fr repeat(4, minmax(90px, 1fr)); gap: 8px; align-items: center; }
 .log-grid-header { padding: 8px 10px; color: var(--muted); font-size: 10px; text-transform: uppercase; }
 .log-grid-header span:not(:first-child) { text-align: right; }
@@ -275,6 +282,7 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .settings-clock-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .log-tabs { overflow-x: auto; }
   .log-tab { padding-inline: 8px; }
+  .logs-tools { align-items: flex-start; flex-wrap: wrap; }
   .log-date-tools { justify-content: flex-start; flex-wrap: wrap; }
   .firmware-controls { grid-template-columns: minmax(0, 1fr) auto auto; }
   .firmware-file-control { grid-column: 1 / -1; }
