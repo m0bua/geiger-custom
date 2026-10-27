@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1115">
   <title>Device Monitor</title>
-  <link rel="stylesheet" href="style.css?v=20261027-7">
+  <link rel="stylesheet" href="style.css?v=20261027-8">
 </head>
 <body>
   <main class="shell">
@@ -113,7 +113,17 @@
       <div class="panel-heading"><h2>Logs</h2><span id="logs-status">Connect to read logs.</span></div>
       <nav id="log-tabs" class="log-tabs" aria-label="Log types"></nav>
       <div class="logs-tools">
-        <span class="logs-device-clock">DEVICE TIME <strong id="logs-device-time">—</strong></span>
+        <div class="logs-left-tools">
+          <label for="log-fill-metric">Fill
+            <select id="log-fill-metric">
+              <option value="dose">Dose</option>
+              <option value="average">Average</option>
+              <option value="maximum">Maximum</option>
+              <option value="coverage">Coverage</option>
+            </select>
+          </label>
+          <span class="logs-device-clock">DEVICE TIME <strong id="logs-device-time">—</strong></span>
+        </div>
         <div class="log-date-tools">
           <span id="log-range-extra"></span>
           <label for="log-range-mode">Range
@@ -369,6 +379,6 @@
     </dialog>
 
   </main>
-  <script defer src="app.js?v=20261027-5"></script>
+  <script defer src="app.js?v=20261027-7"></script>
 </body>
 </html>

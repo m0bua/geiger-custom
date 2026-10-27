@@ -179,13 +179,15 @@ button { font: inherit; }
 .log-tab.active { color: var(--green); background: rgba(0,229,139,.09); }
 .log-content { min-height: 100px; padding: 14px 0; color: var(--muted); font: 11px "DM Mono", Consolas, monospace; }
 .logs-tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0 2px; }
+.logs-left-tools { display: flex; align-items: center; flex: 0 0 auto; gap: 10px; color: var(--muted); font-size: 11px; }
+.logs-left-tools label { display: inline-flex; align-items: center; gap: 7px; }
 .log-date-tools { display: flex; align-items: center; justify-content: flex-end; flex-wrap: nowrap; gap: 9px; color: var(--muted); font-size: 11px; }
 .log-date-tools > label { display: inline-flex; align-items: center; gap: 7px; }
 .log-date-tools #log-range-extra label { display: inline-flex; align-items: center; gap: 7px; }
 .logs-device-clock { flex: 0 0 auto; font-size: 10px; letter-spacing: .04em; }
 .logs-device-clock strong { margin-left: 5px; color: #d8e2e4; font: 500 11px "DM Mono", Consolas, monospace; letter-spacing: 0; }
 .log-date-tools input { min-height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; color: #d8e2e4; background: #111a1f; font: 11px "DM Mono", Consolas, monospace; }
-.log-date-tools select { min-height: 34px; padding: 0 7px; border: 1px solid var(--line); border-radius: 7px; color: #d8e2e4; background: #111a1f; font: 11px "DM Mono", Consolas, monospace; }
+.log-date-tools select, .logs-left-tools select { min-height: 34px; padding: 0 7px; border: 1px solid var(--line); border-radius: 7px; color: #d8e2e4; background: #111a1f; font: 11px "DM Mono", Consolas, monospace; }
 .log-date-tools #log-range-extra { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 .log-date-tools #log-range-extra[hidden] { display: inline-flex !important; visibility: hidden; }
 .log-date-tools > button { flex: 0 0 auto; }

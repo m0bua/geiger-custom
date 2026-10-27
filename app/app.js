@@ -213,6 +213,7 @@ const elements = {
   logContent: document.querySelector('#log-content'),
   logRangeMode: document.querySelector('#log-range-mode'),
   logRangeExtra: document.querySelector('#log-range-extra'),
+  logFillMetric: document.querySelector('#log-fill-metric'),
   exportLogsCsv: document.querySelector('#export-logs-csv'),
   logsDeviceTime: document.querySelector('#logs-device-time'),
   loadLogSelection: document.querySelector('#load-log-selection'),
@@ -564,6 +565,8 @@ let logRangeStart = 0;
 let logRangeEnd = 0;
 let logCsvBusy = false;
 const logRangeDefaults = new Set();
+let logFillMetric = 'dose';
+let demoLogRenderer = null;
 let clockSyncBusy = false;
 const rateHistory = [];
 const demoSettings = Array.from({ length: 29 }, () => 0);
@@ -1079,6 +1082,33 @@ function logDoseClass(record) {
     (record.dose ? Infinity : 0);
   return logRateClass(averageCpm);
 }
+function updateLogFillOptions(typeId) {
+  if (elements.logFillMetric.dataset.type === typeId) return;
+  const options = typeId === 'alerts' ?
+    [['duration', 'Duration'], ['dose', 'Dose'], ['average', 'Average'], ['maximum', 'Maximum']] :
+    [['dose', 'Dose'], ['average', 'Average'], ['maximum', 'Maximum'], ['coverage', 'Coverage']];
+  if (!options.some(([value]) => value === logFillMetric)) {
+    logFillMetric = options[0][0];
+  }
+  elements.logFillMetric.replaceChildren();
+  for (const [value, label] of options) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    elements.logFillMetric.append(option);
+  }
+  elements.logFillMetric.value = logFillMetric;
+  elements.logFillMetric.dataset.type = typeId;
+}
+function logFillValue(record, type) {
+  switch (logFillMetric) {
+    case 'duration': return type.id === 'alerts' ? record.covered : 0;
+    case 'average': return record.average;
+    case 'maximum': return record.maximum;
+    case 'coverage': return logCoveragePercent(record, type);
+    default: return record.dose;
+  }
+}
 function renderLogSummary() {
   elements.logContent.replaceChildren();
   updateLogRangeControls();
@@ -1086,6 +1116,7 @@ function renderLogSummary() {
   elements.loadMoreLogs.disabled = logPageLoading;
   if (!logInfo) return;
   const type = logTypes.find((item) => item.id === selectedLogType);
+  updateLogFillOptions(type.id);
   elements.logsStatus.textContent = `${formatGroupedNumber(logRecords.length)} records loaded | ${formatGroupedNumber(logInfo[type.countKey])} stored entries${logPageLoading ? (logRangeAll ? ' | loading all logs...' : logRangeActive ? ' | loading range...' : logCountLimit ? ` | loading last ${logCountLimit}...` : '') : ''}${logInfo.memory === 2 ? ' | recording off' : ''}${logInfo.error ? ' | storage error' : ''}`;
   if (!logRecords.length) { elements.logContent.textContent = logPageLoading ? 'Loading records…' : 'No records available.'; return; }
   const header = document.createElement('div'); header.className = 'log-grid log-grid-header';
@@ -1093,13 +1124,14 @@ function renderLogSummary() {
     '<span>Date</span><span>Duration</span><span>Dose</span><span>Average</span><span>Maximum</span>' :
     '<span>Date</span><span>Dose</span><span>Average</span><span>Maximum</span><span>Coverage</span>';
   elements.logContent.append(header);
-  const maximum = logRecords.reduce((maximum, record) => Math.max(maximum, record.dose), 1);
+  const maximum = logRecords.reduce((largest, record) =>
+    Math.max(largest, logFillValue(record, type)), 1);
   for (const record of logRecords) {
     const row = document.createElement('div');
     const isAlert = selectedLogType === 'alerts';
     row.className = 'log-grid log-record';
-    row.style.setProperty('--bar-width', `${Math.min(100, record.dose * 100 / maximum)}%`);
-    row.title = `Clock period ${record.epoch}${record.live ? ' · live' : ''}${record.partial ? ' · incomplete coverage' : ''}`;
+    row.style.setProperty('--bar-width', `${Math.min(100, logFillValue(record, type) * 100 / maximum)}%`);
+    row.title = `Fill ${logFillMetric}: ${logFillValue(record, type)} · Clock period ${record.epoch}${record.live ? ' · live' : ''}${record.partial ? ' · incomplete coverage' : ''}`;
     const values = [formatLogDate(record.timestamp, selectedLogType, record.calendar), ...logValueCells(record)];
     const metricClasses = isAlert ? [null, null, logDoseClass(record),
       logRateClass(record.average), logRateClass(record.maximum)] :
@@ -1836,8 +1868,10 @@ function renderOfflinePreview() {
   elements.logTabs.replaceChildren();
   elements.logContent.replaceChildren();
   const renderDemoLog = (type) => {
+    selectedLogType = type;
     elements.logTabs.querySelectorAll('[data-demo-log]').forEach((tab) =>
       tab.classList.toggle('active', tab.dataset.demoLog === type));
+    updateLogFillOptions(type);
     elements.logContent.replaceChildren();
     const header = document.createElement('div');
     header.className = 'log-grid log-grid-header';
@@ -1852,6 +1886,10 @@ function renderOfflinePreview() {
     const record = document.createElement('div');
     record.className = 'log-grid log-record';
     const demoType = logTypes.find((item) => item.id === type);
+    const demoRecord = {dose: 0, average: 0, maximum: 0,
+      covered: alert ? 0 : demoType.period, live: false, partial: false};
+    const fillValue = logFillValue(demoRecord, demoType);
+    record.style.setProperty('--bar-width', `${fillValue ? 100 : 0}%`);
     const values = alert ? ['—', '0:00', '0 µSv', '0 µSv/h', '0 µSv/h'] :
       ['—', '0 µSv', '0 µSv/h', '0 µSv/h', `100% · ${demoType.period}s · full`];
     values.forEach((text, index) => {
@@ -1864,6 +1902,7 @@ function renderOfflinePreview() {
     elements.logContent.append(header, record);
     elements.logsStatus.textContent = `DEMO DATA · 1 illustrative ${type} record`;
   };
+  demoLogRenderer = renderDemoLog;
   demoLogTypes.forEach(([id, label]) => {
     const tab = document.createElement('button');
     tab.type = 'button';
@@ -2247,6 +2286,11 @@ elements.logsTab.addEventListener('click', () => selectPage('logs'));
 elements.loadMoreLogs.addEventListener('click', loadMoreLogRecords);
 elements.loadLogSelection.addEventListener('click', loadLogSelection);
 elements.logRangeMode.addEventListener('change', updateLogRangeControls);
+elements.logFillMetric.addEventListener('change', () => {
+  logFillMetric = elements.logFillMetric.value;
+  if (serial && logInfo) renderLogSummary();
+  else demoLogRenderer?.(selectedLogType);
+});
 elements.exportLogsCsv.addEventListener('click', exportLogsCsv);
 elements.firmwareTab.addEventListener('click', () => selectPage('firmware'));
 elements.rebootFirmware.addEventListener('click', rebootToFirmware);
