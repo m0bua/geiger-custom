@@ -180,96 +180,157 @@
     <section id="manual-page" class="page information-page" hidden>
       <h2>Manual</h2>
       <details class="information-card manual-card">
-        <summary>Start here</summary>
-        <ol>
-          <li>Serve the repository locally with <code>python -m http.server 8000</code>, then open <code>http://localhost:8000/app/</code>.</li>
-          <li>Connect the device with <strong>Connect</strong>. Opening the serial port can restart the device; the app waits for it to answer.</li>
-          <li>Use the tabs to view readings, browse logs, edit supported settings, inspect diagnostics, or manage firmware.</li>
-        </ol>
-      </details>
-      <details class="information-card manual-card">
-        <summary>Firmware and backups</summary>
-        <p>Before flashing, use <strong>Firmware → Dumps → FLASH</strong> and save the downloaded backup. The local-build button flashes the latest existing <code>.pio/build/geiger2/firmware.bin</code>; it does not compile the firmware.</p>
-        <p>Manual flashing accepts validated STM32 <code>.hex</code> and <code>.bin</code> images. Read the image status and keep <strong>Verify after programming</strong> enabled. Reboot and dump controls are in the collapsible sections below Flash firmware.</p>
-      </details>
-      <details class="information-card manual-card">
         <summary>Readings and data</summary>
         <ul>
-          <li><strong>Overview:</strong> current rate, dose today, solar and battery readings, device clock, and recent rate chart.</li>
-          <li><strong>Logs:</strong> browse day, minute, hour, and alert records when available. Load older pages as needed.</li>
-          <li><strong>Settings:</strong> read and change settings supported by the connected firmware.</li>
-          <li><strong>Debug:</strong> inspect time and clock state, power readings, physical log counts and store state, and memory sizes with SPI identification in one table. Expand or collapse each section independently.</li>
+          <li><strong>Overview:</strong> shows the current rate, accumulated dose for today, device date/time and uptime, solar level, and battery level. The rate and dose units follow the device's UNIT and prefix settings. Hover over the rate chart to read a plotted value; it keeps the latest three minutes.</li>
+          <li><strong>Logs:</strong> browse minute, hour, day, and alert records when the device has them. Each row shows its date/time, dose or duration, rate statistics, and coverage where available. Coverage distinguishes complete from partial intervals. Use <strong>Load date</strong> to go to records near a chosen date and <strong>Load more</strong> to fetch older records.</li>
+          <li><strong>Settings:</strong> read and change options supported by the connected firmware. Values that depend on another setting may be disabled. The Show checkboxes control which options appear in the device menu; setting and visibility changes are applied immediately. The device clock can be synchronized to the computer's current local time. POWER OFF is always shown and has no visibility checkbox.</li>
+          <li><strong>Debug:</strong> inspect device time and clock source, uptime, pulse count, power readings, physical log counts, storage state, memory sizes, and SPI identification. Sections are in one table and can be collapsed independently.</li>
+          <li><strong>Without a connection:</strong> Overview, Logs, and Debug show clearly marked illustrative zero data. Settings use factory defaults and can be changed for preview, but preview changes are not saved and reset after reloading the page. Options unsupported by the connected firmware remain visible but disabled.</li>
         </ul>
       </details>
-      <details class="information-card device-manual">
-        <summary>Geiger-2 device manual</summary>
+      <details class="information-card manual-card">
+        <summary>Settings reference</summary>
+        <p>In the app, supported setting changes are sent to the device immediately. On the device, options with more than three choices require long Right to enter editing, short Left/Right to choose a value, and long Right to save; long Left cancels. Unsupported settings remain visible but disabled in the app. The <strong>Show</strong> checkbox controls whether a setting appears in the device menu; <strong>POWER OFF</strong> is always shown.</p>
+
+        <h3>Indication and alarms</h3>
+        <ul>
+          <li><strong>LED — OFF / ON / ALWAYS / YELLOW / RED / CUSTOM:</strong> controls pulse flashes. ON flashes only while the display is on; ALWAYS also flashes with the display off. YELLOW and RED flash at the matching rate threshold. CUSTOM uses RATE CUSTOM.</li>
+          <li><strong>CLICKS — OFF / ON / ALWAYS / YELLOW / RED / CUSTOM:</strong> same trigger choices as LED, using the speaker for pulse clicks.</li>
+          <li><strong>RATE SCREEN / RATE LIGHT / RATE SOUND — OFF / YELLOW / RED / CUSTOM:</strong> independently choose which rate levels activate the display, flashlight, or sound alarm. YELLOW starts at 0.4 µSv/h; RED starts above 0.9 µSv/h. CUSTOM uses RATE CUSTOM. The display stays on until the rate falls below its trigger. The flashlight alarm flashes twice per second; the sound alarm uses a siren.</li>
+          <li><strong>RATE CUSTOM:</strong> custom rate threshold: 0.3, 0.4, 0.5, 0.7, 0.9, 1, 2, 5, or 10 µSv/h. The device menu omits the unit to save space.</li>
+          <li><strong>DOSE SCREEN / DOSE LIGHT / DOSE SOUND — OFF / YELLOW / RED / CUSTOM:</strong> independently choose which accumulated-dose levels activate the display, flashlight, or sound alarm. YELLOW and RED mean the dose that would accumulate at 0.4 or 0.9 µSv/h over the selected DOSE PERIOD. The display stays on until the dose falls below its trigger. CUSTOM uses DOSE CUSTOM.</li>
+          <li><strong>DOSE CUSTOM:</strong> accumulated-dose threshold of 5, 7, 10, 30, 50, 100, 500, or 1000 µSv. The device menu omits the unit to save space.</li>
+          <li><strong>ALARM STOP — CLEAR / BUTTON:</strong> controls how the sound alarm is acknowledged. CLEAR lets the siren stop when its triggering condition ends. BUTTON keeps the siren latched after that condition ends until a button is pressed. A button press during any active alarm always silences the alarm outputs and is consumed; it does not navigate.</li>
+          <li><strong>TONE — STOCK / CLASSIC / MODERN:</strong> selects the sound character for pulse clicks and the sound alarm: the stock Geiger click, a dry crackle, or the modern synthesized tone.</li>
+        </ul>
+
+        <h3>Display</h3>
+        <ul>
+          <li><strong>LED BRIGHT:</strong> AUTO or 1%, 3%, 5%, 10%, 25%, 50%, 80%, 100%. AUTO follows solar level, with a 5% minimum and full brightness by 30% solar.</li>
+          <li><strong>SCREEN BRIGHT:</strong> AUTO or the same fixed percentages. AUTO follows solar level and has a 1% minimum.</li>
+          <li><strong>SCREEN TIMER — 1 / 5 / 10 / 30 / 60 / 90 seconds:</strong> inactivity time before the display turns off. SEARCH keeps the display on; INVISIBLE uses a one-second timeout.</li>
+          <li><strong>LEAD ZERO — SHOW / HIDE:</strong> controls the zero before a decimal fraction. HIDE removes that leading zero while preserving the fractional digits.</li>
+        </ul>
+
+        <h3>Units and secondary rows</h3>
+        <ul>
+          <li><strong>UNIT — Sv / CNT / R:</strong> selects radiation dose/rate units, pulse counts, or the device's stock-compatible R display convention (R uses the firmware's ×100 scaling; it is not a universal Sv-to-R conversion). The choice affects both main screens and the app's Overview and Logs.</li>
+          <li><strong>RATE PREFIX:</strong> for Sv/R, choose m, µ, n, or AUTO. In CNT mode, choose CPM or CPS.</li>
+          <li><strong>DOSE PREFIX:</strong> for Sv/R, choose m, µ, n, or AUTO. It is unavailable in CNT mode.</li>
+          <li><strong>RATE ROW 2:</strong> for Sv/R, show CPM, CPS, OFF, or the opposite radiation unit. For CNT, show Sv, R, OFF, or CPS. A value identical to the main unit is disabled in the app.</li>
+          <li><strong>DOSE ROW 2:</strong> show another unit, another dose period, TIME, CPM, or OFF. The current unit and current period are disabled choices. The default is TIME for DOSE PERIOD=UPTIME and CNT otherwise.</li>
+          <li><strong>DOSE PERIOD — UPTIME / DAY / TOTAL:</strong> selects the interval used for the accumulated dose: since this run started, since the current calendar day began, or the lifetime total.</li>
+        </ul>
+
+        <h3>Device and storage</h3>
+        <ul>
+          <li><strong>LONG PRESS — 300 / 500 / 700 / 900 / 1100 / 1300 ms:</strong> sets how long a button must be held to trigger a long press.</li>
+          <li><strong>HV — ON / OFF:</strong> OFF disables detector counting and freezes rate and dose updates. Turning it ON restarts the rate warm-up from zero.</li>
+          <li><strong>LOG MEMORY — EEPROM / SPI / OFF:</strong> EEPROM stores daily records; SPI adds minute and hour records. OFF stops new log writes without erasing existing logs. Enabling SPI erases SPI assets and prevents returning to stock firmware; read the app's confirmation before proceeding.</li>
+          <li><strong>RESET — SETTINGS / EEPROM:</strong> SETTINGS restores setting defaults and restarts the device. EEPROM clears internal EEPROM data, including settings and EEPROM logs, then restarts. This does not select a single log category.</li>
+          <li><strong>POWER OFF:</strong> shuts the device down.</li>
+          <li><strong>REBOOT:</strong> restarts the device.</li>
+        </ul>
+
+        <p><strong>Factory defaults:</strong> LED ALWAYS; CLICKS and alarm outputs OFF; both brightness settings AUTO; SCREEN TIMER 10 seconds; TONE STOCK; LEAD ZERO SHOW; UNIT Sv; both prefixes µ; RATE ROW 2 CPM; DOSE PERIOD DAY with DOSE ROW 2 CNT; LONG PRESS 900 ms; HV ON; LOG MEMORY EEPROM; ALARM STOP CLEAR. RATE CUSTOM defaults to 0.9 µSv/h and DOSE CUSTOM to 5 µSv. RATE CUSTOM, DOSE CUSTOM, LONG PRESS, HV, and LOG MEMORY are hidden from the device menu by default but remain available in the app.</p>
+      </details>
+      <details class="information-card manual-card device-manual">
+        <summary>Device manual</summary>
         <div class="device-manual-content">
         <p>This guide describes the device display and its two buttons. The illustrations are representative screen layouts; values shown in them are examples.</p>
-        <details class="manual-chapter">
-        <summary>Button gestures</summary>
+        <section class="manual-chapter">
+        <h3>Button gestures</h3>
         <ul>
           <li><strong>Short press:</strong> press and release before the configured long-press threshold.</li>
           <li><strong>Long press:</strong> hold until the device recognizes it. The threshold is configurable in Settings → LONG PRESS.</li>
-          <li><strong>Left button:</strong> usually moves backward, changes a value, or cancels.</li>
-          <li><strong>Right button:</strong> usually moves forward, changes a value, or confirms.</li>
+          <li><strong>Left button:</strong> changes indication mode on Rate/Dose; in menus it moves backward or cancels.</li>
+          <li><strong>Right button:</strong> switches the main screen; in menus it moves forward or confirms.</li>
         </ul>
-        <p>On the two main screens, short Right switches between Level and Dose. Long Right opens the extra-screen group. While held there, it advances through Settings and Debug; release when the desired page appears. Long Left exits a menu or returns to the main screen. On the Level screen, long Left toggles the flashlight.</p>
-        </details>
+        <p>At startup, the LED lights white for about one second. On Rate, short Left cycles NORMAL → SEARCH → INVISIBLE. If SEARCH has been active for 10 seconds, the next press returns directly to NORMAL. NORMAL has no mode letter; SEARCH shows a green S, INVISIBLE a red I, and the yellow L appears only while the flashlight is manually on. Short Right switches between Rate and Dose. Long Left toggles the flashlight on either main screen.</p>
+        <p>Long Right on Rate opens the last-used extra screen (Settings is first after startup). The extra screens are Settings and Debug; short Left/Right switches between them. On Settings, long Right opens the settings list; long Left leaves the list, and another long Left returns to the main screen. In Debug, long Right advances through its pages. Long Right on Dose opens Graphs. While any alarm is active, the first button press is consumed: it silences the siren, stops alarm light flashing, and acknowledges the alarm. The screen may then time out even if the trigger remains; the alarm can activate again only after the trigger clears and occurs again. If the display is asleep, a button press normally only wakes it. In INVISIBLE, short Left exits the mode and wakes the display in the same press.</p>
+        </section>
 
-        <details class="manual-chapter">
-        <summary>1 · Level screen</summary>
-        <p>The large value is the current dose rate. The top row shows device time, solar input, and battery status. The smaller second row can show CPM/CPS or the equivalent rate in R/Sv, depending on Settings. During CNT warm-up it shows a progress bar. The letter at the top indicates the selected indication mode; a flashlight marker appears when its manual light is on. The counter color and LEDs can change with the configured thresholds.</p>
-        <p><strong>Short Left</strong> cycles the indication modes. <strong>Short Right</strong> opens Dose. <strong>Long Left</strong> toggles the flashlight. <strong>Long Right</strong> opens the extra screens.</p>
+        <section class="manual-chapter">
+        <h3>1 · Level screen</h3>
+        <p>The large value is the current rate in the selected UNIT and RATE PREFIX. The top row shows device time when set, otherwise hours and minutes since startup, plus solar input and battery status. RATE ROW 2 selects the smaller second row. During startup, the rate is blue and the progress bar fills to 30 CNT; the estimate starts at 23 CPM and settles toward the measured rate. With HV off, Rate shows red DISABLED; counting and rate/dose updates stop, and turning HV back on restarts the rate warm-up from zero. Rate colors and alarms follow their configured thresholds.</p>
+        <p><strong>SEARCH</strong> keeps the display on and flashes the LED on detector pulses. <strong>INVISIBLE</strong> suppresses detector indications and alarms and turns the display off after one second; measurements continue. Short Left exits Invisible even while the display is asleep.</p>
         <div class="manual-screen-grid">
-          <figure><figcaption>1.0.1 · Blue rate display with CNT progress</figcaption><img src="../docs/renders/screens/1.0.1-rate-blue-cnt.svg" alt="Rate screen with blue counter and CNT progress bar" loading="lazy"></figure>
+          <figure><figcaption>1.0.1 · Rate warm-up with search and flashlight</figcaption><img src="../docs/renders/screens/1.0.1-rate-blue-cnt.svg" alt="Blue 0.153 µSv per hour rate, 15 CNT progress, Search S, and flashlight L" loading="lazy"></figure>
           <figure><figcaption>1.0.2 · Green rate display with CPM</figcaption><img src="../docs/renders/screens/1.0.2-rate-green-cpm.svg" alt="Rate screen with green counter and CPM row" loading="lazy"></figure>
         </div>
-        </details>
+        </section>
 
-        <details class="manual-chapter">
-        <summary>1.1 - Settings</summary>
-        <p>Long Right opens the settings list. Short Left/Right moves the highlight. Long Right activates the highlighted item. Simple options with up to three choices change immediately. For options with more choices, long Right enters value editing; short Left/Right cycles through values, long Right saves, and long Left cancels. The list includes display and LED behavior, click sounds, brightness and screen timeout, units and prefixes, secondary rows, dose period and alarms, log memory (EEPROM, SPI, or off), long-press timing, reset/cleanup actions, Power Off, and Reboot. Some items depend on the selected units or hardware. The device clock is set from the app's Settings page.</p>
+        <section class="manual-chapter">
+        <h3>1.1 - Settings</h3>
+        <p>Long Right opens the settings list. Short Left/Right moves the highlight. Long Right activates the highlighted item. Options with up to three choices change immediately. For options with more choices, long Right enters value editing; short Left/Right cycles values, long Right saves, and long Left cancels. The list includes indication and alarm behavior, tone, brightness and screen timeout, units and prefixes, secondary rows, dose period, log memory, long-press timing, reset actions, Power Off, and Reboot. Some items depend on the selected unit. Set the device clock on the app's Settings page.</p>
         <div class="manual-screen-grid">
-          <figure><figcaption>1.1.1 - Settings with a simple option selected</figcaption><img src="../docs/renders/screens/1.2.1-settings-simple.svg" alt="Settings screen with a simple option highlighted" loading="lazy"></figure>
-          <figure><figcaption>1.1.2 - Settings with a multi-value option selected</figcaption><img src="../docs/renders/screens/1.2.2-settings-many-options.svg" alt="Settings screen editing LED brightness with multiple choices" loading="lazy"></figure>
+          <figure><figcaption>1.1.1 - Settings with UNIT selected</figcaption><img src="../docs/renders/screens/1.2.1-settings-simple.svg" alt="Settings list with UNIT SV highlighted in green" loading="lazy"></figure>
+          <figure><figcaption>1.1.2 - Editing LED BRIGHT</figcaption><img src="../docs/renders/screens/1.2.2-settings-many-options.svg" alt="Settings list editing LED BRIGHT with AUTO selected" loading="lazy"></figure>
+          <figure><figcaption>1.1.3 - Bottom of the settings list</figcaption><img src="../docs/renders/screens/1.2.3-settings-actions.svg" alt="Bottom settings rows with RESET selected in red and POWER OFF and REBOOT in yellow" loading="lazy"></figure>
         </div>
-        </details>
+        </section>
 
-        <details class="manual-chapter">
-        <summary>1.2 - Debug</summary>
-        <p>Shows date, time, uptime, pulse count, RTC and clock, power readings, log counts and store state, and memory sizes with SPI identification in one table. TIME, POWER, LOGS, and MEMORY sections start expanded and can be collapsed independently. Short Left/Right moves between Settings and Debug.</p>
-        </details>
+        <section class="manual-chapter">
+        <h3>1.2 - Debug</h3>
+        <p>The extra-screen group contains Settings and Debug. Short Left/Right switches between them. Debug pages appear in this order: time/date, uptime, total pulse count and RTC status; voltage and power readings; physical log counts and store status; memory sizes and SPI identification. Long Right advances to the next Debug page. The app presents these diagnostics together in one table.</p>
+        </section>
 
-        <details class="manual-chapter">
-        <summary>2 · Dose</summary>
-        <p>Shows accumulated dose for the period selected by DOSE PERIOD in Settings: uptime, current day, or total. The unit and second row are configurable. The second row can show another unit or period, elapsed time, current CPM, or be turned off. By default it shows time for UPTIME and CNT for DAY/TOTAL. Short Left cycles the indication modes; short Right returns to Level; long Right opens the graph pages.</p>
+        <section class="manual-chapter">
+        <h3>2 · Dose</h3>
+        <p>Shows accumulated dose in the selected UNIT and DOSE PREFIX for the DOSE PERIOD: UPTIME (this run), DAY (the current calendar day), or TOTAL (lifetime). DOSE ROW 2 can show another unit or period, TIME, CPM, or OFF; the default is TIME for UPTIME and CNT otherwise. Short Left changes the shared NORMAL/SEARCH/INVISIBLE indication mode; short Right returns to Rate; long Left toggles the flashlight; long Right opens Graphs.</p>
         <figure class="manual-screen-single"><figcaption>2 · Accumulated dose</figcaption><img src="../docs/renders/screens/2-dose.svg" alt="Dose screen showing accumulated dose and a secondary row" loading="lazy"></figure>
-        </details>
+        </section>
 
-        <details class="manual-chapter">
-        <summary>2.1 · Graphs</summary>
-        <p>Long Right from Dose opens the graph view. Short Left/Right selects SEC, MIN, HOUR, DAY, or ALERT. In SEC, long Right cycles the live CPM window through 10, 30, 60, and 90 seconds. The Logs tab in this app lists minutes, hours, days, and alerts from the same firmware reader as these graphs.</p>
-        <p>For a log graph, long Right advances the white selected column. Its time or date appears at the top left; the first statistic is its average rate, while the others summarize the visible columns. Long Left returns to Dose. LOG MEMORY selects EEPROM, SPI, or OFF. Changing EEPROM/SPI transfers the available history before saving the new choice; OFF preserves stored records.</p>
+        <section class="manual-chapter">
+        <h3>2.1 · Graphs</h3>
+        <p>Long Right from Dose opens Graphs. Short Left/Right cycles SEC, MIN, HOUR, DAY, and ALRT. SEC shows live rate history; long Right cycles its 10/30/60/90-second window. For a log graph, long Right enters column selection; short Left/Right moves cyclically through columns. The selected column is green and its date/time and dose, MAX, AVG, and coverage duration are shown. Long Left leaves column selection; another long Left returns to Dose.</p>
+        <p>Log graphs show the newest temporary buffer entry first, followed by stored records. They use six-pixel bars with one-pixel gaps, about 15 bars visible at once. The device graph limits are 60 minutes, 24 hours, 50 days, and up to 50 alerts. With no column selected, MIN and HOUR summarize their displayed window; DAY summarizes available daily records. MIN/HOUR recording requires LOG MEMORY=SPI; EEPROM stores daily records. The app's Logs tab lists stored records and coverage details.</p>
         <div class="manual-screen-grid">
-          <figure><figcaption>2.1 · 90-second rate graph</figcaption><img src="../docs/renders/screens/2.1-graph-90s.svg" alt="Rate graph with a 90-second window" loading="lazy"></figure>
-          <figure><figcaption>2.2 · Day graph with a selected record</figcaption><img src="../docs/renders/screens/2.2-graph-days.svg" alt="Day history graph with selected column and date" loading="lazy"></figure>
+          <figure><figcaption>2.1 · 90-second live rate graph</figcaption><img src="../docs/renders/screens/2.1-graph-90s.svg" alt="Live rate graph with a 90-second window" loading="lazy"></figure>
+          <figure><figcaption>2.2 · DAY dose graph with the newest record selected</figcaption><img src="../docs/renders/screens/2.2-graph-days.svg" alt="Day dose graph with the current record selected in green and lower statistics on the left" loading="lazy"></figure>
+          <figure><figcaption>2.3 · ALRT graph with a selected alert</figcaption><img src="../docs/renders/screens/2.3-graph-alerts.svg" alt="Alert log graph with selected alert time, green selected bar, and red maximum" loading="lazy"></figure>
         </div>
         <p class="information-note">Screen colors, values, times, battery and solar percentages in these SVG renders are illustrative. They are not live readings or calibration references.</p>
-        </details>
+        </section>
         </div>
       </details>
-      <p class="information-note">Web Serial requires a supported browser and a secure context such as localhost or HTTPS.</p>
+      <details class="information-card manual-card">
+        <summary>Command-line flashing (STM32CubeProgrammer)</summary>
+        <p>Replace <code>COM</code> with the device's serial port. Run the commands from the directory containing the firmware image.</p>
+        <h3>Start application firmware</h3>
+        <pre class="firmware-command"><code>STM32_Programmer_CLI -c port=COM br=115200 p=even rts=high dtr=low</code></pre>
+        <h3>Enter the ROM bootloader</h3>
+        <pre class="firmware-command"><code>STM32_Programmer_CLI -c port=COM br=115200 p=even rts=high dtr=high</code></pre>
+        <h3>Flash a HEX image</h3>
+        <pre class="firmware-command"><code>STM32_Programmer_CLI -c port=COM br=115200 p=even rts=low dtr=high -w rom.hex -v</code></pre>
+        <h3>Flash a BIN image</h3>
+        <pre class="firmware-command"><code>STM32_Programmer_CLI -c port=COM br=115200 p=even rts=low dtr=low -w rom.bin -v</code></pre>
+      </details>
     </section>
 
     <section id="about-page" class="page information-page" hidden>
       <h2>About</h2>
-      <p class="app-version">Web app: <strong>Unreleased development build</strong> · Device protocol: <strong>v1</strong></p>
+      <p class="app-version">Web app: <strong>Unreleased development build</strong></p>
       <section class="information-card">
         <h3>Recent changes</h3>
         <ul class="release-list">
-          <li><time datetime="2026-10-23">2026-10-23</time> — local-build flashing, exclusive Firmware accordions, persistent Activity log, and pre-flash backup reminders.</li>
-          <li><time datetime="2026-10-23">2026-10-23</time> — HEX/BIN validation and verified flashing, reboot controls, and FLASH/EEPROM/SPI dumps.</li>
-          <li><time datetime="2026-10-22">2026-10-22</time> — Overview, Logs, Settings, and Debug pages over Web Serial.</li>
+          <li>
+            <time datetime="2026-10-27">2026-10-27</time> — First firmware and web app release. Compared with stock:
+            <ul>
+              <li><strong>Logs:</strong> up to 60 minute records, 24 hourly records, 50 daily records, and alert records; selectable EEPROM or SPI storage.</li>
+              <li><strong>Graphs:</strong> live rate and historical minute, hour, day, and alert views.</li>
+              <li><strong>Device options:</strong> configurable rate and dose units, prefixes, and secondary rows; indication modes; LED, flashlight, and sound behavior; brightness and screen timeout.</li>
+              <li><strong>Web app:</strong> Overview, Logs, Settings, and Debug over Web Serial; validated and verified HEX/BIN flashing; reboot controls; FLASH/EEPROM/SPI dumps; activity log and pre-flash backup reminders.</li>
+            </ul>
+          </li>
+        </ul>
+      </section>
+      <section class="information-card">
+        <h3>Known issues</h3>
+        <ul>
+          <li>After using the app, disconnect and reconnect the USB cable before using another tool. Otherwise, commands may behave unpredictably.</li>
+          <li>Estimated battery life is currently 5–8 days. Power optimization is still in progress.</li>
         </ul>
       </section>
       <section class="information-card">
@@ -280,10 +341,17 @@
           <li>SPI dump requires compatible running firmware with SPI logging enabled and a ready SPI memory chip.</li>
         </ul>
       </section>
-      <p class="information-note">See <a href="../docs/docs/OPEN_ITEMS.md">project open items</a> for the current hardware and firmware verification list.</p>
     </section>
 
-    <footer>Protocol V1</footer>
+    <dialog id="spi-confirm-dialog" class="confirm-dialog" aria-labelledby="spi-confirm-title" aria-describedby="spi-confirm-message">
+      <h2 id="spi-confirm-title">Enable SPI logging?</h2>
+      <p id="spi-confirm-message">This will erase the assets stored on the SPI chip. After the assets are erased, you will not be able to return this device to stock firmware. Continue only if you accept this permanent change.</p>
+      <div class="confirm-dialog-actions">
+        <button id="spi-confirm-cancel" class="button" type="button" value="cancel">Cancel</button>
+        <button id="spi-confirm-accept" class="button button-danger" type="button" value="confirm">Erase assets and enable SPI</button>
+      </div>
+    </dialog>
+
   </main>
   <script defer src="app.js?v=20261027-1"></script>
 </body>

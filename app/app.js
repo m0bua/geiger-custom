@@ -237,6 +237,9 @@ const elements = {
   aboutPage: document.querySelector('#about-page'),
   settingsStatus: document.querySelector('#settings-status'),
   settingsList: document.querySelector('#settings-list'),
+  spiConfirmDialog: document.querySelector('#spi-confirm-dialog'),
+  spiConfirmCancel: document.querySelector('#spi-confirm-cancel'),
+  spiConfirmAccept: document.querySelector('#spi-confirm-accept'),
   rateFoot: document.querySelector('#rate-foot'),
   rateLabel: document.querySelector('#rate-label'),
   rateDose: document.querySelector('#rate-dose'),
@@ -272,6 +275,27 @@ const elements = {
 };
 
 class ProtocolError extends Error {}
+
+function confirmSpiEnable() {
+  const dialog = elements.spiConfirmDialog;
+  if (!dialog || typeof dialog.showModal !== 'function') {
+    return Promise.resolve(window.confirm(
+      'Enabling SPI will erase all assets stored on the SPI chip. Returning to stock firmware will not be possible. Continue?'));
+  }
+  return new Promise((resolve) => {
+    const onClose = () => {
+      dialog.removeEventListener('close', onClose);
+      resolve(dialog.returnValue === 'confirm');
+    };
+    dialog.addEventListener('close', onClose);
+    dialog.showModal();
+  });
+}
+
+elements.spiConfirmCancel?.addEventListener('click', () =>
+  elements.spiConfirmDialog.close('cancel'));
+elements.spiConfirmAccept?.addEventListener('click', () =>
+  elements.spiConfirmDialog.close('confirm'));
 
 function crc16CcittFalse(bytes) {
   let crc = 0xffff;
@@ -564,7 +588,7 @@ const remoteSettings = [
   { id: 21, label: 'LONG PRESS', options: ['300 ms', '500 ms', '700 ms', '900 ms', '1100 ms', '1300 ms'] },
   { id: 15, label: 'HV', options: ['ON', 'OFF'] },
   { id: 13, label: 'LOG MEMORY', options: ['EEPROM', 'SPI', 'OFF'] },
-  { id: 14, label: 'RESET', options: ['SETTINGS', 'MIN-LOG', 'HOUR-LOG', 'DAY-LOG', 'ERROR-LOG', 'LOGS', 'EEPROM-LOGS', 'EEPROM', 'SPI', 'ALL'] },
+  { id: 14, label: 'RESET', options: ['SETTINGS', 'EEPROM'] },
   { id: 18, label: 'POWER OFF', options: [] },
   { id: 19, label: 'REBOOT', options: [] },
 ];
@@ -1388,7 +1412,7 @@ function renderSettings() {
       select.value = String(selectedValue);
       const inactiveSetting = setting.id === 11 && optionSettings[9] === 1;
       select.disabled = (!preview && !supported) || inactiveSetting;
-      select.addEventListener('change', () => {
+      select.addEventListener('change', async () => {
         const nextValue = Number(select.value);
         if (preview) {
           demoSettings[setting.id] = nextValue;
@@ -1409,11 +1433,12 @@ function renderSettings() {
           return;
         }
         if (supported && !inactiveSetting) {
-          if (setting.id === 13 && nextValue === 1 &&
-              deviceSettings[13] !== 1 && !window.confirm(
-                'Enabling SPI will erase all assets stored on the SPI chip. After that, returning to stock firmware will not be possible. Continue?')) {
-            select.value = String(deviceSettings[13]);
-            return;
+          if (setting.id === 13 && nextValue === 1 && deviceSettings[13] !== 1) {
+            const accepted = await confirmSpiEnable();
+            if (!accepted) {
+              select.value = String(deviceSettings[13]);
+              return;
+            }
           }
           writeSetting(setting.id, nextValue, select);
         }
