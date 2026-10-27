@@ -16,6 +16,8 @@ python -m http.server 8000
 
 Then open <http://localhost:8000/app/>. This also enables the local-build flash shortcut when `.pio/build/geiger2/firmware.bin` is present.
 
+To build the standalone release app manually on GitHub, open **Actions → Build standalone app → Run workflow**. The workflow compiles firmware, embeds it and the manual illustrations into one minified HTML file, uploads the HTML and separate `firmware.bin` as workflow artifacts, and creates a GitHub prerelease with both files attached. The tag uses UTC `YYYYMMDDhhmm`; the release title is `APP-YYYYMMDDhhmm`.
+
 ## Layout
 
 - `include/` — portable application interfaces and configuration types.

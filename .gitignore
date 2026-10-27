@@ -1,4 +1,5 @@
 .vscode
 build/
 .pio/
+dist/
 platformio.local.ini

@@ -217,6 +217,10 @@ const elements = {
   logsStatus: document.querySelector('#logs-status'),
   loadMoreLogs: document.querySelector('#load-more-logs'),
   firmwarePage: document.querySelector('#firmware-page'),
+  embeddedQuickFlash: document.querySelector('#embedded-quick-flash'),
+  firmwareTools: document.querySelector('#firmware-tools'),
+  quickBackupFlash: document.querySelector('#quick-backup-flash'),
+  quickFlashFirmware: document.querySelector('#quick-flash-firmware'),
   localBuildFlash: document.querySelector('#local-build-flash'),
   flashLocalBuild: document.querySelector('#flash-local-build'),
   rebootFirmware: document.querySelector('#reboot-firmware'),
@@ -1965,10 +1969,12 @@ elements.rebootFirmware.addEventListener('click', rebootToFirmware);
 elements.rebootBootloader.addEventListener('click', rebootToBootloader);
 elements.firmwareFile.addEventListener('change', () => loadFirmwareImage());
 elements.flashLocalBuild.addEventListener('click', flashLocalBuild);
+elements.quickFlashFirmware?.addEventListener('click', quickFlashEmbeddedFirmware);
 elements.clearFirmware.addEventListener('click', clearFirmwareSelection);
 elements.flashFirmware.addEventListener('click', flashSelectedFirmware);
 elements.dumpFlash.addEventListener('click', () => dumpRomMemory(
   'FLASH', STM32_FLASH_BASE, STM32_FLASH_SIZE, 'flash'));
+elements.quickBackupFlash?.addEventListener('click', () => elements.dumpFlash.click());
 elements.dumpEeprom.addEventListener('click', () => dumpRomMemory(
   'EEPROM', STM32_EEPROM_BASE, STM32_EEPROM_SIZE, 'eeprom'));
 elements.dumpSpi.addEventListener('click', dumpSpiMemory);
@@ -1982,6 +1988,11 @@ window.addEventListener('hashchange', () => {
 selectPage(window.location.hash.slice(1) || 'overview');
 window.addEventListener('resize', drawRateChart);
 detectLocalBuild();
+if (typeof globalThis.EMBEDDED_FIRMWARE_B64 === 'string' && elements.embeddedQuickFlash) {
+  elements.embeddedQuickFlash.hidden = false;
+  elements.embeddedQuickFlash.open = true;
+  elements.firmwareTools.open = false;
+}
 
 function appendFirmwareLog(message, level = 'normal') {
   const timestamp = new Date().toLocaleTimeString();
@@ -2216,6 +2227,22 @@ async function flashLocalBuild() {
   }
 }
 
+async function quickFlashEmbeddedFirmware() {
+  if (firmwareFlashBusy || typeof globalThis.EMBEDDED_FIRMWARE_B64 !== 'string') return;
+  if (!window.confirm('Quick flash will erase and replace the device firmware with the image embedded in this app. Continue?')) return;
+  try {
+    const binary = atob(globalThis.EMBEDDED_FIRMWARE_B64);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const image = new File([bytes], 'embedded-firmware.bin', { type: 'application/octet-stream' });
+    await loadFirmwareImage(image);
+    if (!selectedFirmwareImage) throw new Error('The embedded firmware failed image validation.');
+    await flashSelectedFirmware();
+  } catch (error) {
+    appendFirmwareLog(`Quick flash failed: ${error.message}`, 'error');
+    setRebootStatus(`Quick flash failed: ${error.message}`, 'error');
+  }
+}
+
 function clearFirmwareSelection() {
   elements.firmwareFile.value = '';
   selectedFirmwareImage = null;
@@ -2245,6 +2272,7 @@ function makeDumpFilename(kind) {
 function setDumpBusy(busy) {
   dumpBusy = busy;
   elements.dumpFlash.disabled = busy;
+  if (elements.quickBackupFlash) elements.quickBackupFlash.disabled = busy;
   elements.dumpEeprom.disabled = busy;
   updateSpiDumpAvailability();
 }

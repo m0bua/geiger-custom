@@ -123,11 +123,20 @@
     </section>
 
     <section id="firmware-page" class="page placeholder-page" hidden>
-      <details class="firmware-tools firmware-section" name="firmware-sections" open>
+      <details id="embedded-quick-flash" class="firmware-section quick-flash" name="firmware-sections" hidden>
+        <summary>Quick flash</summary>
+        <p>Program the firmware embedded in this app. The image is verified after writing.</p>
+        <p class="backup-reminder">Recommended: dump and save a FLASH backup before programming. Quick flash erases the firmware currently on the device.</p>
+        <div class="actions">
+          <button id="quick-backup-flash" class="button" type="button">Backup FLASH</button>
+          <button id="quick-flash-firmware" class="button button-primary" type="button">Quick flash</button>
+        </div>
+      </details>
+      <details id="firmware-tools" class="firmware-tools firmware-section" name="firmware-sections" open>
         <summary>Flash firmware</summary>
         <div id="local-build-flash" class="local-build-flash" hidden>
           <div class="local-build-copy">
-            <p>Flash the latest compiled <code>.pio/build/geiger2/firmware.bin</code>. This uses the existing image checks and does not run PlatformIO.</p>
+            <p>Flash the latest locally compiled firmware. This uses the existing image checks and does not run PlatformIO.</p>
             <p class="backup-reminder">Recommended: dump and save a FLASH backup before programming.</p>
           </div>
           <button id="flash-local-build" class="button button-primary" type="button">Flash current build</button>

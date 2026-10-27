@@ -1,0 +1,62 @@
+name: Build standalone app
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: standalone-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Set up Node.js for Terser
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install GNU Arm Embedded toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc-arm-none-eabi binutils-arm-none-eabi
+
+      - name: Build firmware and standalone app
+        run: python tools/build_release.py --require-minifier
+
+      - name: Upload standalone HTML
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dosimeter-App
+          path: |
+            dist/Dosimeter-App.html
+            .pio/scratch/geiger2_manual/firmware.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Create GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_time="$(date -u +%Y%m%d%H%M)"
+          tag="$release_time"
+          gh release create "$tag" \
+            dist/Dosimeter-App.html \
+            .pio/scratch/geiger2_manual/firmware.bin \
+            --title "APP-$release_time" \
+            --target "$GITHUB_SHA" \
+            --notes "Single-file dosimeter app and separate firmware image. Built from commit ${GITHUB_SHA}. Release timestamp is UTC." \
+            --prerelease

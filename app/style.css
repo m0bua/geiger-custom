@@ -117,6 +117,8 @@ button { font: inherit; }
 .firmware-section > :not(summary) { margin-top: 12px; }
 .firmware-section > :last-child { margin-bottom: 14px; }
 .local-build-flash { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.quick-flash { max-width: 900px; margin-top: 10px; padding: 14px; border: 1px solid rgba(0,229,139,.25); border-radius: 9px; background: rgba(0,229,139,.045); }
+.quick-flash strong { color: var(--green); font-size: 13px; }
 .local-build-copy { display: grid; gap: 7px; }
 .local-build-flash p { margin: 0; color: var(--muted); font-size: 12px; }
 .local-build-flash code { color: #c8d3d6; font: 11px "DM Mono", Consolas, monospace; }
