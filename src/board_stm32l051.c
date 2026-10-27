@@ -2866,8 +2866,8 @@ static void lcd_graph_build_logs(void)
     lcd_graph_selected_calendar = selected != NULL && selected->calendar_valid;
     lcd_graph_stat_max = lcd_graph_cursor_mode && selected ? selected->maximum_cpm :
         lcd_graph_log_summary_max;
-    lcd_graph_stat_min = lcd_graph_cursor_mode && selected ?
-        selected->covered_seconds : lcd_graph_log_summary_coverage;
+    lcd_graph_stat_min = lcd_graph_cursor_mode && selected ? selected->covered_seconds :
+        lcd_graph_log_summary_coverage;
     lcd_graph_stat_average = lcd_graph_cursor_mode && selected ? selected->average_cpm :
         lcd_graph_log_summary_average;
     lcd_graph_format_dose(lcd_graph_cursor_mode && selected ? selected->count :
