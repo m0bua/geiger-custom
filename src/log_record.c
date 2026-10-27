@@ -79,6 +79,7 @@ static uint8_t missing_coverage_code(log_record_kind_t kind,
                                      uint32_t covered_seconds)
 {
     const uint32_t period = log_record_period_seconds(kind);
+    if (kind == LOG_RECORD_MINUTE && covered_seconds >= 59u) return 0u;
     if (period == 0u || covered_seconds >= period) return 0u;
     if (covered_seconds == 0u) covered_seconds = 1u;
     const uint64_t missing = (uint64_t)(period - covered_seconds) * 256u;

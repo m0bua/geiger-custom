@@ -232,7 +232,7 @@
           <li><strong>LONG PRESS — 300 / 500 / 700 / 900 / 1100 / 1300 ms:</strong> sets how long a button must be held to trigger a long press.</li>
           <li><strong>HV — ON / OFF:</strong> OFF disables detector counting and freezes rate and dose updates. Turning it ON restarts the rate warm-up from zero.</li>
           <li><strong>LOG MEMORY — EEPROM / SPI / OFF:</strong> EEPROM stores daily records; SPI adds minute and hour records. OFF stops new log writes without erasing existing logs. Enabling SPI erases SPI assets and prevents returning to stock firmware; read the app's confirmation before proceeding.</li>
-          <li><strong>RESET — SETTINGS / EEPROM:</strong> SETTINGS restores setting defaults and restarts the device. EEPROM clears internal EEPROM data, including settings and EEPROM logs, then restarts. This does not select a single log category.</li>
+          <li><strong>RESET: SETTINGS / LOGS / OLD LOGS / SPI / EEPROM / ALL:</strong> SETTINGS restores defaults; LOGS clears EEPROM and SPI log data; OLD LOGS clears logs in inactive storage (EEPROM when LOG MEMORY is SPI, SPI when it is EEPROM, and both when LOG MEMORY is OFF); SPI erases the SPI chip, including stock assets; EEPROM erases internal EEPROM, including settings; ALL erases both memories. Destructive choices restart the device.</li>
           <li><strong>POWER OFF:</strong> shuts the device down.</li>
           <li><strong>REBOOT:</strong> restarts the device.</li>
         </ul>

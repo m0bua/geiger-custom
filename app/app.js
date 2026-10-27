@@ -591,7 +591,7 @@ const remoteSettings = [
   { id: 21, label: 'LONG PRESS', options: ['300 ms', '500 ms', '700 ms', '900 ms', '1100 ms', '1300 ms'] },
   { id: 15, label: 'HV', options: ['ON', 'OFF'] },
   { id: 13, label: 'LOG MEMORY', options: ['EEPROM', 'SPI', 'OFF'] },
-  { id: 14, label: 'RESET', options: ['SETTINGS', 'EEPROM'] },
+  { id: 14, label: 'RESET', options: ['SETTINGS', 'LOGS', 'OLD LOGS', 'SPI', 'EEPROM', 'ALL'] },
   { id: 18, label: 'POWER OFF', options: [] },
   { id: 19, label: 'REBOOT', options: [] },
 ];
@@ -1690,15 +1690,15 @@ async function runDeviceAction(action, value, button) {
   if (!serial || (protocolCapabilities & CAP_DEVICE_ACTION) === 0) return;
   const resetWarnings = [
     'Reset all settings to defaults? The device will reboot.',
-    'Clear minute logs? This cannot be undone.',
-    'Clear hourly logs? This cannot be undone.',
-    'Clear daily logs? This cannot be undone.',
-    'Clear alert logs? This cannot be undone.',
-    'Clear all logs? This cannot be undone.',
-    'Clear EEPROM logs? This cannot be undone and may also clear settings stored in the EEPROM log area.',
+    'Clear all log records in EEPROM and SPI? Erasing SPI also removes stock assets, so stock firmware may no longer work.',
+    deviceSettings?.[13] === 1 ?
+      'Clear inactive EEPROM logs? Active SPI logs will remain.' :
+      deviceSettings?.[13] === 0 ?
+        'Clear inactive SPI logs? This erases the entire SPI chip, including stock assets; stock firmware may no longer work.' :
+        'LOG MEMORY is OFF: clear all logs in EEPROM and SPI? SPI erasure also removes stock assets.',
+    'Erase the entire SPI chip, including assets needed by stock firmware? This cannot be undone.',
     'Erase the entire EEPROM, including settings and logs? The device will restart.',
-    'Erase SPI data? This may remove assets needed by stock firmware.',
-    'Erase all EEPROM and SPI data? This cannot be undone; the device will restart.',
+    'Erase all EEPROM and SPI data, including stock assets? This cannot be undone; the device will restart.',
   ];
   if (action === 0 && !window.confirm(resetWarnings[value] ||
       'Perform this reset? This cannot be undone.')) return;
@@ -1714,7 +1714,7 @@ async function runDeviceAction(action, value, button) {
     elements.settingsStatus.textContent = action === 0 ?
       `Reset requested: ${remoteSettings.find((item) => item.id === 14).options[value]}` :
       action === 1 ? 'Power off requested' : 'Reboot requested';
-    if (action === 0 && ![0, 7, 9].includes(value)) {
+    if (action === 0 && ![0, 4, 5].includes(value)) {
       logInfo = null;
       logRecords = [];
       logViewCache.clear(); logHistorical = false; logSelectedDate = ""; logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};

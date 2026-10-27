@@ -1,11 +1,7 @@
 FEAT: battery life improve (speep: 82-85%)
-BUG?: перевірити незбереження налаштувань, особливо прихованих пунктів
-BUG: reset + more reset items.
-BUG: log 59s
 
 FEAT: експорт логів з додатку
 FEAT: кольори тем
-FEAT: затемнення перед вимкненням екрану
 FEAT: refactor long setting items
 
 BUG: після бутлодеру в додатку початок прошивки через platformio перезапускає в прошивку
