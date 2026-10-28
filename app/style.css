@@ -209,6 +209,11 @@ button { font: inherit; }
 .log-record .coverage-green { color: var(--green); }
 .log-content { overflow-x: auto; }
 .log-actions { display: flex; justify-content: center; }
+.logs-diagnostics { margin-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+.logs-diagnostics summary { padding: 10px 0; cursor: pointer; }
+.logs-diagnostics-actions { display: flex; gap: 7px; margin-bottom: 7px; }
+.logs-diagnostics-actions .button { min-height: 28px; padding: 0 9px; font-size: 10px; }
+.logs-diagnostics pre { max-height: 220px; overflow: auto; margin: 0 0 10px; padding: 9px; border: 1px solid rgba(160,186,194,.12); border-radius: 6px; color: #aebbc0; background: rgba(0,0,0,.2); font: 10px/1.45 "DM Mono", Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
 #settings-status { color: var(--muted); font: 10px "DM Mono", Consolas, monospace; }
 .settings-list { display: flex; flex-direction: column; gap: 18px; }
 .settings-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(var(--settings-row-count), auto); grid-auto-flow: column; column-gap: 24px; }

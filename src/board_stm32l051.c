@@ -2812,7 +2812,7 @@ static void lcd_graph_build_logs(void)
             if (current.period_start != previous->period_start ||
                 current.epoch != previous->epoch) {
                 uint8_t selected_record = lcd_graph_selected_record;
-                if (lcd_graph_cursor_mode && selected_record != 0u)
+                if (lcd_graph_cursor_mode)
                     ++selected_record;
                 lcd_graph_reset_log_window();
                 lcd_graph_update_log_summary();

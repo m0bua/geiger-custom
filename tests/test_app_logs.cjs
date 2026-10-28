@@ -15,7 +15,7 @@ async function main() {
     setAttribute() {}
     querySelectorAll() { return this.children.filter((item) => item.dataset.logType); }
   }
-  const elements = Object.fromEntries(['logContent', 'logDate', 'loadLogDate', 'loadMoreLogs', 'logsStatus', 'logTabs', 'logsPage'].map((name) => [name, new Element()]));
+  const elements = Object.fromEntries(['logContent', 'logDate', 'loadLogDate', 'loadMoreLogs', 'logsStatus', 'logTabs', 'logsPage', 'logRangeMode'].map((name) => [name, new Element()]));
   const debug = {};
   const start = (Date.parse('2026-10-22T12:00:00Z') - Date.UTC(2000, 0, 1)) / 1000;
   const data = [[], [], [], []];
@@ -61,7 +61,8 @@ async function main() {
     let logInfo=null,selectedLogType='minutes',logRecords=[],logCursor={time:0xffffffff,epoch:0xffff,skip:0};
     let logHasMore=true,logHistorical=false,logSelectedDate='',logStartOffset=0,logPageTotal=0;
     let logPageLoading=false,logPageReloadPending=false,logPageGeneration=0,logRefreshBusy=false,logInfoLoading=false,logCountsRefreshBusy=false;
-    const logViewCache=new Map(); let deviceSettings=null;
+    const logViewCache=new Map(); let deviceSettings=null; const logDiagnostics=[];
+    function logDiagnostic() {}
   `;
   const section = app.slice(app.indexOf('function applyLogInfo('), app.indexOf('async function synchronizeDeviceClock('));
   vm.runInContext(prefix + section, context);
@@ -103,6 +104,10 @@ async function main() {
   assert.equal(run('logRecords.length'), 60);
   assert.equal(run('logRecords[0].timestamp'), start - 12 * 3600 - 60);
   const before = requests.length; await run('refreshLatestLogRecord()'); assert.equal(requests.length, before);
+  run("logRangeActive=true; logCountLimit=0; logSelectedDate='latest:0:1'; logRangeEnd=1; elements.logRangeMode.value='latest'");
+  assert.equal(run('hasCurrentLogDate()'), true);
+  assert.equal(run('logDateLimit()'), 0);
+  assert.equal(run('logRecordInRange({calendar:false,timestamp:999999})'), true);
   elements.logDate.value = '2026-10-22'; await run('loadLogNearDate()');
   assert.ok(run('logRecords.length') >= 128);
   malformed = true;

@@ -234,6 +234,9 @@ const elements = {
   loadLogSelection: document.querySelector('#load-log-selection'),
   logsStatus: document.querySelector('#logs-status'),
   loadMoreLogs: document.querySelector('#load-more-logs'),
+  logDiagnostics: document.querySelector('#log-diagnostics'),
+  copyLogDiagnostics: document.querySelector('#copy-log-diagnostics'),
+  clearLogDiagnostics: document.querySelector('#clear-log-diagnostics'),
   firmwarePage: document.querySelector('#firmware-page'),
   embeddedQuickFlash: document.querySelector('#embedded-quick-flash'),
   firmwareTools: document.querySelector('#firmware-tools'),
@@ -889,6 +892,7 @@ let logRangeEnd = 0;
 let logCsvBusy = false;
 const logRangeDefaults = new Set();
 let logFillMetric = 'dose';
+const logDiagnostics = [];
 let demoLogRenderer = null;
 let clockSyncBusy = false;
 const rateHistory = [];
@@ -1087,6 +1091,16 @@ function showNotice(message, kind = '') {
   elements.notice.querySelector('p').textContent = message;
 }
 
+function logDiagnostic(message, error = null) {
+  const stamp = new Date().toISOString().slice(11, 23);
+  const detail = error ? ` ${error.name || 'Error'}: ${error.message || error}` : '';
+  const line = `[${stamp}] ${message}${detail}`;
+  logDiagnostics.push(line);
+  if (logDiagnostics.length > 200) logDiagnostics.shift();
+  if (elements.logDiagnostics) elements.logDiagnostics.textContent = logDiagnostics.join('\n');
+  if (error) console.error(line, error); else console.debug(line);
+}
+
 function selectPage(page, updateUrl = true) {
   if (page === 'instructions') page = 'manual';
   const pages = ['overview', 'debug', 'settings', 'logs', 'firmware', 'manual', 'about'];
@@ -1189,12 +1203,15 @@ function clearLogView() {
   logRecords = []; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0}; logHasMore = true;
   logStartOffset = 0; logPageTotal = 0;
 }
-function hasCurrentLogDate() { return !logRangeActive && !logCountLimit; }
+function isLatestLogView() {
+  return elements.logRangeMode.value === 'latest';
+}
+function hasCurrentLogDate() { return isLatestLogView() || (!logRangeActive && !logCountLimit); }
 function logDateLimit() {
-  return logRangeActive && !logRangeAll ? logRangeEnd : 0;
+  return logRangeActive && !logRangeAll && !isLatestLogView() ? logRangeEnd : 0;
 }
 function logRecordInRange(record) {
-  return !logRangeActive || logRangeAll || (record.calendar &&
+  return !logRangeActive || logRangeAll || isLatestLogView() || (record.calendar &&
     record.timestamp >= logRangeStart && record.timestamp <= logRangeEnd);
 }
 
@@ -1474,7 +1491,10 @@ function renderLogSummary() {
 }
 
 async function queryLogPage(type, cursor, limit, count = LOG_BATCH_SIZE) {
-  count = Math.max(1, Math.min(count, Math.floor((protocolMaxPayload - 12) / 25)));
+  // Keep log pages at two records: the firmware's transport/protocol path is
+  // intentionally exercised as 2+2+1, even when HELLO advertises 137 bytes.
+  count = Math.max(1, Math.min(count, 2, Math.floor((protocolMaxPayload - 12) / 25)));
+  logDiagnostic(`GET_LOG_PAGE request type=${type.id} count=${count} limit=${limit} cursor=${cursor.time}/${cursor.epoch}/${cursor.skip}`);
   const request = new Uint8Array(18); const view = new DataView(request.buffer);
   request[0] = type.protocolId; request[1] = count;
   view.setUint32(2, type.period, true); view.setUint32(6, cursor.time, true);
@@ -1492,7 +1512,9 @@ async function queryLogPage(type, cursor, limit, count = LOG_BATCH_SIZE) {
       id: data.getUint16(at + 23, true), available: !!(flags & 1), partial: !!(flags & 2),
       live: !!(flags & 4), calendar: !!(flags & 8)});
   }
-  return {records, more: !!payload[3], cursor: {time: data.getUint32(4, true), epoch: data.getUint16(8, true), skip: data.getUint16(10, true)}};
+  const nextCursor = {time: data.getUint32(4, true), epoch: data.getUint16(8, true), skip: data.getUint16(10, true)};
+  logDiagnostic(`GET_LOG_PAGE response records=${records.length} more=${!!payload[3]} next=${nextCursor.time}/${nextCursor.epoch}/${nextCursor.skip}`);
+  return {records, more: !!payload[3], cursor: nextCursor};
 }
 
 async function applyCalendarRange(range, mode) {
@@ -1522,6 +1544,7 @@ async function loadLogSelection() {
   if (mode === 'latest') {
     if (!logInfo.calendarValid) return loadRecentLogs(LOG_INITIAL_TARGETS[type.id]);
     setDefaultLogRange(type, true);
+    return loadRecentLogs(LOG_INITIAL_TARGETS[type.id]);
   }
   if (mode !== 'latest' && mode !== 'custom') return;
   if (!logInfo.calendarValid) return;
@@ -1628,9 +1651,11 @@ async function loadLogPage(reset = false) {
   if (logPageLoading) { if (reset) ++logPageGeneration; logPageReloadPending = true; return; }
   if (reset) { ++logPageGeneration; clearLogView(); }
   const generation = logPageGeneration, type = logTypes.find((item) => item.id === selectedLogType);
-  const target = logRangeActive ? Number.MAX_SAFE_INTEGER : logCountLimit ||
-    logRecords.length + LOG_INITIAL_TARGETS[type.id];
+  const target = isLatestLogView() ? LOG_INITIAL_TARGETS[type.id] :
+    logRangeActive ? Number.MAX_SAFE_INTEGER : logCountLimit ||
+      logRecords.length + LOG_INITIAL_TARGETS[type.id];
   const limit = logDateLimit();
+  logDiagnostic(`loadLogPage start type=${type.id} mode=${elements.logRangeMode.value} target=${target} limit=${limit} existing=${logRecords.length}`);
   logPageLoading = true; renderLogSummary();
   let loadFailed = false;
   const keys = new Set(logRecords.map(logRecordKey));
@@ -1651,6 +1676,7 @@ async function loadLogPage(reset = false) {
             logRecords.push(record); keys.add(logRecordKey(record));
           }
         }
+        logDiagnostic(`loadLogPage batch records=${page.records.length} total=${logRecords.length}`);
         logCursor = page.cursor;
         logHasMore = page.more && page.records.length > 0 && !crossedRangeStart;
       }
@@ -1665,8 +1691,10 @@ async function loadLogPage(reset = false) {
         }
       }
     }
+    if (isLatestLogView() && logRecords.length >= target) logHasMore = false;
   } catch (error) {
     loadFailed = true;
+    logDiagnostic('loadLogPage failed', error);
     if (generation === logPageGeneration) elements.logsStatus.textContent = error.message;
   } finally {
     logPageLoading = false;
@@ -1702,6 +1730,7 @@ async function loadNewerLogRecords(catchUp = true) {
       renderLogSummary(); saveLogView();
     }
   } catch (error) {
+    logDiagnostic('loadNewerLogRecords failed', error);
     if (generation === logPageGeneration) elements.logsStatus.textContent = error.message;
   } finally { logRefreshBusy = false; }
 }
@@ -1717,7 +1746,10 @@ async function loadLogInfo() {
     if (!elements.logsPage.hidden && !logRecords.length) {
       loadLogSelection();
     }
-  } catch (error) { elements.logsStatus.textContent = error.message; }
+  } catch (error) {
+    logDiagnostic('loadLogInfo failed', error);
+    elements.logsStatus.textContent = error.message;
+  }
   finally { logInfoLoading = false; }
 }
 
@@ -2661,6 +2693,18 @@ elements.syncClock.addEventListener('click', synchronizeDeviceClock);
 elements.logsTab.addEventListener('click', () => selectPage('logs'));
 elements.loadMoreLogs.addEventListener('click', loadMoreLogRecords);
 elements.loadLogSelection.addEventListener('click', loadLogSelection);
+elements.clearLogDiagnostics.addEventListener('click', () => {
+  logDiagnostics.length = 0;
+  elements.logDiagnostics.textContent = '';
+});
+elements.copyLogDiagnostics.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(logDiagnostics.join('\n'));
+    logDiagnostic('Diagnostics copied to clipboard.');
+  } catch (error) {
+    logDiagnostic('Could not copy diagnostics', error);
+  }
+});
 elements.logRangeMode.addEventListener('change', updateLogRangeControls);
 elements.logFillMetric.addEventListener('change', () => {
   logFillMetric = elements.logFillMetric.value;

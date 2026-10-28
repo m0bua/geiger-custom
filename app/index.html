@@ -150,6 +150,14 @@
       </div>
       <div id="log-content" class="log-content"></div>
       <div class="log-actions"><button id="load-more-logs" class="button button-quiet" type="button" hidden>Load more</button></div>
+      <details class="logs-diagnostics">
+        <summary>Diagnostics</summary>
+        <div class="logs-diagnostics-actions">
+          <button id="copy-log-diagnostics" class="button button-quiet" type="button">Copy</button>
+          <button id="clear-log-diagnostics" class="button button-quiet" type="button">Clear</button>
+        </div>
+        <pre id="log-diagnostics" aria-live="polite"></pre>
+      </details>
     </section>
 
     <section id="firmware-page" class="page placeholder-page" hidden>
