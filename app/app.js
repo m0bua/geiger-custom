@@ -15,7 +15,7 @@ const CAP_SET_SETTING = 1 << 2;
 const CAP_GET_SPI_DUMP = 1 << 5;
 const CAP_SET_RTC = 1 << 6;
 const CAP_DEVICE_ACTION = 1 << 7;
-const MAX_PAYLOAD = 64;
+const MAX_PAYLOAD = 137;
 const LOG_BATCH_SIZE = 5;
 const LOG_INITIAL_TARGETS = { minutes: 60, hours: 24, days: 30, alerts: 5 };
 const STM32_FLASH_BASE = 0x08000000;
@@ -860,6 +860,7 @@ let dumpBusy = false;
 let pollTimer = 0;
 let polling = false;
 let protocolCapabilities = 0;
+let protocolMaxPayload = 64;
 let deviceSettings = null;
 let deviceHiddenSettings = null;
 let selectedResetAction = 0;
@@ -1472,7 +1473,8 @@ function renderLogSummary() {
   }
 }
 
-async function queryLogPage(type, cursor, limit, count = 2) {
+async function queryLogPage(type, cursor, limit, count = LOG_BATCH_SIZE) {
+  count = Math.max(1, Math.min(count, Math.floor((protocolMaxPayload - 12) / 25)));
   const request = new Uint8Array(18); const view = new DataView(request.buffer);
   request[0] = type.protocolId; request[1] = count;
   view.setUint32(2, type.period, true); view.setUint32(6, cursor.time, true);
@@ -1631,14 +1633,15 @@ async function loadLogPage(reset = false) {
   const limit = logDateLimit();
   logPageLoading = true; renderLogSummary();
   let loadFailed = false;
+  const keys = new Set(logRecords.map(logRecordKey));
+  let lastRenderedCount = logRecords.length;
   try {
     let crossedRangeStart = false;
     while (generation === logPageGeneration && logHasMore && logRecords.length < target) {
       const batchEnd = Math.min(target, logRecords.length + LOG_BATCH_SIZE);
       while (generation === logPageGeneration && logHasMore && logRecords.length < batchEnd) {
-        const page = await queryLogPage(type, logCursor, limit, Math.min(2, batchEnd - logRecords.length));
+        const page = await queryLogPage(type, logCursor, limit, Math.min(LOG_BATCH_SIZE, batchEnd - logRecords.length));
         if (generation !== logPageGeneration) break;
-        const keys = new Set(logRecords.map(logRecordKey));
         for (const record of page.records) {
           if (logRangeActive && record.calendar && record.timestamp < logRangeStart) {
             crossedRangeStart = true;
@@ -1652,8 +1655,14 @@ async function loadLogPage(reset = false) {
         logHasMore = page.more && page.records.length > 0 && !crossedRangeStart;
       }
       if (generation === logPageGeneration) {
-        renderLogSummary(); saveLogView();
-        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const finished = !logHasMore || logRecords.length >= target;
+        if (finished || logRecords.length - lastRenderedCount >= 60) {
+          renderLogSummary(); saveLogView();
+          lastRenderedCount = logRecords.length;
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+        } else {
+          elements.logsStatus.textContent = `${formatGroupedNumber(logRecords.length)} records loaded | ${formatGroupedNumber(logInfo[type.countKey])} stored entries | loading range...`;
+        }
       }
     }
   } catch (error) {
@@ -1680,7 +1689,7 @@ async function loadNewerLogRecords(catchUp = true) {
     while (!boundary && more && generation === logPageGeneration) {
       let batch = 0;
       while (batch < LOG_BATCH_SIZE && !boundary && more) {
-        const page = await queryLogPage(type, cursor, 0, Math.min(2, LOG_BATCH_SIZE - batch));
+        const page = await queryLogPage(type, cursor, 0, LOG_BATCH_SIZE - batch);
         if (generation !== logPageGeneration || elements.logsPage.hidden) return;
         for (const record of page.records) { fresh.push(record); if (known.has(logRecordKey(record))) boundary = true; }
         batch += page.records.length; cursor = page.cursor; more = page.more && page.records.length > 0;
@@ -1916,6 +1925,7 @@ function handleHello(payload) {
     throw new ProtocolError(`Unsupported protocol or capabilities (version ${protocolVersion}, payload ${maxPayload}).`);
   }
   protocolCapabilities = capabilities;
+  protocolMaxPayload = Math.min(MAX_PAYLOAD, maxPayload);
   updateRtcControls();
   updateSpiDumpAvailability();
 }

@@ -33,7 +33,15 @@ typedef struct {
     uint8_t year, age;
     bool bounds;
 } eeprom_read_cache_t;
+typedef struct {
+    uint32_t revision, date_limit, time;
+    uint16_t epoch;
+    uint8_t age;
+    bool ordered;
+    bool valid;
+} eeprom_find_cache_t;
 static eeprom_read_cache_t read_cache[4];
+static eeprom_find_cache_t find_cache[4];
 static uint8_t segment_years[LOG_SEGMENT_ID_COUNT];
 static bool update_segment_table(uint8_t segment_id,
                                  uint8_t year_descriptor);
@@ -494,8 +502,46 @@ bool log_eeprom_find(log_record_kind_t kind, uint16_t before_epoch,
                       uint32_t before_time, uint16_t skip, bool inclusive,
                       uint32_t date_limit, uint32_t reference, log_stored_t *item)
 {
+    const uint8_t index = ring_index(kind);
+    const uint8_t count = log_eeprom_count(kind);
+    eeprom_find_cache_t *cache;
+    if (index == 0xFFu || item == NULL) return false;
+    cache = &find_cache[index];
+
+    /* Ring age follows append order. For monotonic non-alert logs, continue
+     * from the next older slot instead of rescanning newer EEPROM entries. */
+    if (kind != LOG_RECORD_ALERT && skip == 0u && !inclusive &&
+        cache->valid && cache->revision == read_revision &&
+        cache->ordered && cache->date_limit == date_limit &&
+        (before_epoch < cache->epoch ||
+         (before_epoch == cache->epoch && before_time <= cache->time)) &&
+        (uint16_t)cache->age + 1u < count) {
+        for (uint8_t age = (uint8_t)(cache->age + 1u); age < count; ++age) {
+            log_record_t record;
+            uint8_t year;
+            uint32_t time;
+            if (!log_eeprom_read(kind, age, &record) ||
+                !log_eeprom_segment_year(record.segment_id, &year) ||
+                !log_record_time(kind, record.period_index, year, reference, &time)) continue;
+            uint16_t epoch = log_eeprom_record_epoch(record.segment_id);
+            if (epoch > before_epoch || (date_limit && time > date_limit) ||
+                (epoch == before_epoch && time >= before_time)) continue;
+            *item = (log_stored_t){record, time, epoch, year,
+                (uint16_t)((state.head[index] + log_eeprom_capacity(kind) - 1u - age) % log_eeprom_capacity(kind))};
+            *cache = (eeprom_find_cache_t){read_revision, date_limit,
+                time, epoch, age, true, true};
+            return true;
+        }
+        return false;
+    }
+
     bool found = false;
-    for (uint8_t age = 0u; age < log_eeprom_count(kind); ++age) {
+    bool ordered = true;
+    bool have_previous = false;
+    uint16_t previous_epoch = 0u;
+    uint32_t previous_time = 0u;
+    uint8_t best_age = 0u;
+    for (uint8_t age = 0u; age < count; ++age) {
         log_record_t record;
         uint8_t year;
         uint32_t time;
@@ -503,12 +549,25 @@ bool log_eeprom_find(log_record_kind_t kind, uint16_t before_epoch,
             !log_eeprom_segment_year(record.segment_id, &year) ||
             !log_record_time(kind, record.period_index, year, reference, &time)) continue;
         uint16_t epoch = log_eeprom_record_epoch(record.segment_id);
+        if (have_previous && (epoch > previous_epoch ||
+            (epoch == previous_epoch && time > previous_time))) ordered = false;
+        previous_epoch = epoch;
+        previous_time = time;
+        have_previous = true;
         if (epoch > before_epoch || (date_limit && time > date_limit) ||
             (epoch == before_epoch && (time > before_time || (!inclusive && time == before_time)))) continue;
         if (epoch == before_epoch && time == before_time && skip) { --skip; continue; }
         if (!found || epoch > item->epoch || (epoch == item->epoch && time > item->time)) {
-            *item = (log_stored_t){record, time, epoch, year, (uint16_t)((state.head[(uint8_t)kind] + log_eeprom_capacity(kind) - 1u - age) % log_eeprom_capacity(kind))}; found = true;
+            *item = (log_stored_t){record, time, epoch, year, (uint16_t)((state.head[index] + log_eeprom_capacity(kind) - 1u - age) % log_eeprom_capacity(kind))};
+            best_age = age;
+            found = true;
         }
+    }
+    if (found && kind != LOG_RECORD_ALERT && skip == 0u && !inclusive) {
+        *cache = (eeprom_find_cache_t){read_revision, date_limit,
+            item->time, item->epoch, best_age, ordered, true};
+    } else {
+        cache->valid = false;
     }
     return found;
 }

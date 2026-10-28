@@ -24,6 +24,7 @@ typedef struct {
     uint32_t active_address;
     uint32_t active_generation;
     uint32_t newest_generation;
+    uint32_t record_count;
     uint16_t active_epoch;
     uint16_t slot_capacity;
     uint16_t next_slot;
@@ -33,7 +34,19 @@ typedef struct {
     bool has_generation;
     bool has_active;
     bool appendable;
+    bool record_count_valid;
 } spi_log_stream_t;
+
+typedef struct {
+    uint32_t address;
+    uint32_t time;
+    uint32_t date_limit;
+    uint32_t revision;
+    uint32_t generation;
+    uint16_t epoch;
+    uint16_t slot;
+    bool valid;
+} spi_find_cache_t;
 
 typedef struct {
     log_record_kind_t kind;
@@ -54,6 +67,7 @@ typedef struct {
     bool bounds, cached;
 } query_cache_t;
 static query_cache_t query_cache[3];
+static spi_find_cache_t find_cache[3];
 
 static uint16_t count_erased_headers(spi_log_stream_t *stream,
                                     uint32_t *first_address);
@@ -312,6 +326,8 @@ static bool spi_log_scan(bool recover)
         stream->active_address = 0u;
         stream->active_generation = 0u;
         stream->newest_generation = 0u;
+        stream->record_count = 0u;
+        stream->record_count_valid = false;
         stream->active_epoch = 0u;
         stream->slot_capacity = slot_capacity(
             (log_record_kind_t)stream_kind(index), SPI_LOG_VERSION);
@@ -585,6 +601,7 @@ bool spi_log_append(log_record_kind_t kind, uint16_t epoch,
 
     ++query_revision;
     ++stream->next_slot;
+    if (stream->record_count_valid) ++stream->record_count;
     if (stream->next_slot >= stream->slot_capacity) {
         stream->appendable = false;
     }
@@ -629,7 +646,14 @@ bool spi_log_erase_oldest(log_record_kind_t kind,
     if (!spi_nor_read(sector->address + SPI_LOG_HEADER_RETIRE_OFFSET,
             &verify_retired, 1u) || verify_retired != retired) return false;
     ++query_revision;
-    return erase_and_verify(sector->address);
+    if (!erase_and_verify(sector->address)) return false;
+    if (streams[index].record_count_valid) {
+        if (streams[index].record_count >= oldest.record_count)
+            streams[index].record_count -= oldest.record_count;
+        else
+            streams[index].record_count = 0u;
+    }
+    return true;
 }
 
 static bool query_sector(log_record_kind_t kind, uint32_t address,
@@ -699,15 +723,20 @@ bool spi_log_query_read(void *context, log_record_kind_t kind,
 uint32_t spi_log_count(log_record_kind_t kind)
 {
     uint8_t index = stream_index(kind);
-    uint32_t count = 0u;
     if (!log_ready || index == 0xFFu) return 0u;
-    for (uint16_t sector = 0u; sector < streams[index].sector_count; ++sector) {
-        spi_log_header_t header;
-        uint32_t address = sector_address(&streams[index], sector);
-        if (read_header(address, &header) == 1 && header.kind == kind)
-            count += count_sector_records(kind, &header, address);
+    spi_log_stream_t *stream = &streams[index];
+    if (!stream->record_count_valid) {
+        uint32_t count = 0u;
+        for (uint16_t sector = 0u; sector < stream->sector_count; ++sector) {
+            spi_log_header_t header;
+            uint32_t address = sector_address(stream, sector);
+            if (read_header(address, &header) == 1 && header.kind == kind)
+                count += count_sector_records(kind, &header, address);
+        }
+        stream->record_count = count;
+        stream->record_count_valid = true;
     }
-    return count;
+    return stream->record_count;
 }
 
 bool spi_log_clear(void)
@@ -727,9 +756,57 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
     uint32_t ceiling_generation = UINT32_MAX;
     uint16_t ceiling_slot = UINT16_MAX;
     if (!log_ready || index == 0xFFu || item == NULL) return false;
+
+    /* History is read newest-first. Reuse the previous slot and search only
+     * its older prefix while the cursor remains in the same SPI sector. */
+    if (skip == 0u && !inclusive && find_cache[index].valid &&
+        find_cache[index].revision == query_revision &&
+        find_cache[index].epoch == before_epoch &&
+        find_cache[index].date_limit == date_limit &&
+        before_time <= find_cache[index].time) {
+        spi_find_cache_t *cache = &find_cache[index];
+        spi_log_header_t header;
+        if (read_header(cache->address, &header) == 1 &&
+            header.kind == kind && header.epoch == cache->epoch &&
+            header.generation == cache->generation && cache->slot != 0u) {
+            uint16_t low = 0u, high = cache->slot;
+            while (low < high) {
+                const uint16_t mid = (uint16_t)(low + (high - low) / 2u);
+                log_record_t record;
+                uint32_t time;
+                if (read_slot(kind, &header, cache->address, mid, &record) != 1 ||
+                    !log_record_time(kind, record.period_index,
+                        header.year_descriptor, reference, &time)) {
+                    high = mid;
+                } else if (time < before_time) {
+                    low = (uint16_t)(mid + 1u);
+                } else {
+                    high = mid;
+                }
+            }
+            if (low != 0u) {
+                const uint16_t slot = (uint16_t)(low - 1u);
+                log_record_t record;
+                uint32_t time;
+                if (read_slot(kind, &header, cache->address, slot, &record) == 1 &&
+                    log_record_time(kind, record.period_index,
+                        header.year_descriptor, reference, &time) &&
+                    time < before_time) {
+                    *item = (log_stored_t){record, time, header.epoch,
+                        header.year_descriptor,
+                        (uint16_t)(header.generation * 512u + slot)};
+                    cache->time = time;
+                    cache->slot = slot;
+                    return true;
+                }
+            }
+        }
+    }
+
     for (;;) {
         bool found = false;
         uint32_t chosen_generation = 0u;
+        uint32_t chosen_address = 0u;
         uint16_t chosen_slot = 0u;
         log_stored_t best = {0};
         for (uint16_t sector = 0u; sector < streams[index].sector_count; ++sector) {
@@ -767,6 +844,7 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
                       (header.generation == chosen_generation && slot > chosen_slot)))) {
                     best = (log_stored_t){record, time, header.epoch, header.year_descriptor, (uint16_t)(header.generation * 512u + slot)};
                     chosen_generation = header.generation;
+                    chosen_address = address;
                     chosen_slot = slot;
                     found = true;
                 }
@@ -778,6 +856,20 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
             --skip; ceiling_generation = chosen_generation; ceiling_slot = chosen_slot; continue;
         }
         *item = best;
+        if (!inclusive && skip == 0u) {
+            find_cache[index] = (spi_find_cache_t){
+                .address = chosen_address,
+                .time = best.time,
+                .date_limit = date_limit,
+                .revision = query_revision,
+                .generation = chosen_generation,
+                .epoch = best.epoch,
+                .slot = chosen_slot,
+                .valid = true
+            };
+        } else {
+            find_cache[index].valid = false;
+        }
         return true;
     }
 }
@@ -792,8 +884,14 @@ bool spi_log_expire_alerts(uint8_t year)
         if (read_header(address, &header) != 1 || !(header.year_descriptor & LOG_YEAR_VALID) ||
             ((year - header.year_descriptor) & LOG_YEAR_MASK) < 15u) continue;
         uint8_t retired = SPI_LOG_HEADER_RETIRED;
+        uint16_t count = stream->record_count_valid ?
+            count_sector_records(LOG_RECORD_ALERT, &header, address) : 0u;
         if (!spi_nor_program_page(address + SPI_LOG_HEADER_RETIRE_OFFSET, &retired, 1u) ||
             !erase_and_verify(address)) return false;
+        if (stream->record_count_valid) {
+            if (stream->record_count >= count) stream->record_count -= count;
+            else stream->record_count = 0u;
+        }
         if (stream->has_active && stream->active_address == address) {
             stream->has_active = stream->appendable = false;
         }

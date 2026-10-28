@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define PROTOCOL_V1_VERSION 1u
-#define PROTOCOL_V1_MAX_PAYLOAD 64u
+#define PROTOCOL_V1_MAX_PAYLOAD 137u
 
 typedef struct {
     uint32_t uptime_seconds;

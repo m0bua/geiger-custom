@@ -294,7 +294,7 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         uint32_t period = read_u32(&request[2]);
         log_cursor_t cursor = {read_u32(&request[6]), read_u16(&request[10]), read_u16(&request[12])};
         uint32_t limit = read_u32(&request[14]);
-        if (type > 3u || requested == 0u || requested > 2u || period < 60u || period % 60u || period > LOG_QUERY_MAX_PERIOD_SECONDS) {
+        if (type > 3u || requested == 0u || requested > 5u || period < 60u || period % 60u || period > LOG_QUERY_MAX_PERIOD_SECONDS) {
             response[0] = PROTOCOL_STATUS_INVALID_VALUE;
         } else {
             log_point_t point;

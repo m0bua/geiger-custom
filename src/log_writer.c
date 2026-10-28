@@ -80,101 +80,9 @@ static bool append_record(log_record_kind_t kind, uint16_t epoch,
                           uint8_t year_descriptor,
                           const log_record_t *record);
 
-static uint32_t free_records(log_record_kind_t kind)
-{
-    if (active_log_memory == BOARD_LOG_MEMORY_SPI) {
-        return spi_log_free_records(kind);
-    }
-    if (active_log_memory == BOARD_LOG_MEMORY_EEPROM) {
-        const uint8_t capacity = log_eeprom_capacity(kind);
-        const uint8_t count = log_eeprom_count(kind);
-        return count < capacity ? (uint32_t)(capacity - count) : 0u;
-    }
-    return 0u;
-}
-
 static bool should_persist_period(log_record_kind_t kind)
 {
-    if (kind == LOG_RECORD_HOUR) {
-        return free_records(LOG_RECORD_MINUTE) < 60u;
-    }
-    if (kind == LOG_RECORD_DAY) {
-        return free_records(LOG_RECORD_HOUR) < 24u;
-    }
-    return false;
-}
-
-static bool cascade_spi_minutes(const spi_log_sector_info_t *oldest)
-{
-    const bool calendar_valid =
-        (oldest->year_descriptor & LOG_YEAR_VALID) != 0u;
-    log_query_time_context_t context = {calendar_valid};
-    const uint32_t reference = previous_calendar_valid ?
-        previous_calendar : previous_uptime;
-
-    for (uint16_t index = 0u; index < oldest->record_count; ++index) {
-        log_record_t first, existing, hour;
-        uint32_t time, period_index;
-        uint8_t descriptor;
-        bool live = false;
-        log_point_t aggregate;
-        if (!spi_log_read_sector_record(LOG_RECORD_MINUTE, oldest, index,
-                &first)) return false;
-        if (first.period_index % 60u != 0u ||
-            !log_record_time(LOG_RECORD_MINUTE, first.period_index,
-                oldest->year_descriptor, reference, &time)) continue;
-        if (spi_log_query_read(&context, LOG_RECORD_HOUR, oldest->epoch,
-                time, &existing, &live)) continue;
-        if (!log_query_aggregate(spi_log_query_read, &context, oldest->epoch,
-                time, 3600u, &aggregate) || !aggregate.available ||
-            aggregate.covered_seconds == 0u || aggregate.live) continue;
-        if (!log_record_location(LOG_RECORD_HOUR, time, calendar_valid,
-                &period_index, &descriptor)) return false;
-        hour = (log_record_t){.period_index = period_index,
-            .count = aggregate.count,
-            .maximum_cpm = aggregate.maximum_cpm,
-            .segment_id = first.segment_id,
-            .covered_seconds = aggregate.covered_seconds};
-        if (!append_record(LOG_RECORD_HOUR, oldest->epoch, descriptor, &hour)) return false;
-    }
-    return true;
-}
-
-static bool cascade_spi_hours(const spi_log_sector_info_t *oldest)
-{
-    const bool calendar_valid =
-        (oldest->year_descriptor & LOG_YEAR_VALID) != 0u;
-    log_query_time_context_t context = {calendar_valid};
-    const uint32_t reference = previous_calendar_valid ?
-        previous_calendar : previous_uptime;
-
-    for (uint16_t index = 0u; index < oldest->record_count; ++index) {
-        log_record_t first, existing, day;
-        uint32_t time, period_index;
-        uint8_t descriptor;
-        bool live = false;
-        log_point_t aggregate;
-        if (!spi_log_read_sector_record(LOG_RECORD_HOUR, oldest, index,
-                &first)) return false;
-        if (first.period_index % 24u != 0u ||
-            !log_record_time(LOG_RECORD_HOUR, first.period_index,
-                oldest->year_descriptor, reference, &time)) continue;
-        if (log_eeprom_query_read(&context, LOG_RECORD_DAY, oldest->epoch,
-                time, &existing, &live)) continue;
-        if (!log_query_aggregate(spi_log_query_read, &context, oldest->epoch,
-                time, 86400u, &aggregate) || !aggregate.available ||
-            aggregate.covered_seconds == 0u || aggregate.live) continue;
-        if (!log_record_location(LOG_RECORD_DAY, time, calendar_valid,
-                &period_index, &descriptor)) return false;
-        day = (log_record_t){.period_index = period_index,
-            .count = aggregate.count,
-            .maximum_cpm = aggregate.maximum_cpm,
-            .segment_id = first.segment_id,
-            .covered_seconds = aggregate.covered_seconds};
-        if (!log_eeprom_append(LOG_RECORD_DAY, oldest->epoch, &day,
-                descriptor)) return false;
-    }
-    return true;
+    return kind == LOG_RECORD_HOUR || kind == LOG_RECORD_DAY;
 }
 
 static bool append_record(log_record_kind_t kind, uint16_t epoch,
@@ -194,8 +102,6 @@ static bool append_record(log_record_kind_t kind, uint16_t epoch,
         year_descriptor, &oldest);
 
     if (prepared == SPI_LOG_NEEDS_EVICTION) {
-        if (kind == LOG_RECORD_MINUTE && !cascade_spi_minutes(&oldest)) return false;
-        if (kind == LOG_RECORD_HOUR && !cascade_spi_hours(&oldest)) return false;
         if (!spi_log_erase_oldest(kind, &oldest)) return false;
         prepared = spi_log_prepare(kind, epoch, year_descriptor, &oldest);
     }
