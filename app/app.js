@@ -635,8 +635,10 @@ class SerialProtocol {
     this.frameBytes.push(byte);
   }
 
-  async request(opcode, payload = new Uint8Array(), timeoutMs = 1800) {
+  async request(opcode, payload = new Uint8Array(), timeoutMs = null) {
     if (!this.writer) throw new Error('Serial port is not open.');
+    const requestTimeout = timeoutMs ??
+      (this.port instanceof Cp210xUsbPort ? 3500 : 1800);
     this.requestId = (this.requestId + 1) & 0xffff;
     if (this.requestId === 0) this.requestId = 1;
     const id = this.requestId;
@@ -644,7 +646,7 @@ class SerialProtocol {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error('Device did not respond. Check the USB connection and try again.'));
-      }, timeoutMs);
+      }, requestTimeout);
       this.pending.set(id, { opcode, resolve, reject, timeout });
     });
     try {
@@ -1584,7 +1586,7 @@ async function synchronizeDeviceClock() {
     const request = new Uint8Array(4);
     new DataView(request.buffer).setUint32(0, secondsSince2000, true);
     const syncStartedAt = Date.now();
-    const response = await serial.request(OP_SET_RTC, request, 5000);
+    const response = await serial.request(OP_SET_RTC, request, 20000);
     if (response.length !== 1 || response[0] !== 0) {
       throw new ProtocolError('The device rejected the clock update.');
     }
@@ -2473,10 +2475,11 @@ async function refreshDebugPage() {
 async function requestHelloAfterBoot(protocol) {
   // WebUSB leaves modem-control lines untouched, so it does not trigger reset.
   await delay(protocol.port instanceof Cp210xUsbPort ? 100 : 1000);
+  const timeout = protocol.port instanceof Cp210xUsbPort ? 3500 : 1800;
   let lastError;
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
-      return await protocol.request(OP_HELLO, new Uint8Array(), 1800);
+      return await protocol.request(OP_HELLO, new Uint8Array(), timeout);
     } catch (error) {
       lastError = error;
       if (attempt < 3) {
@@ -3011,7 +3014,7 @@ async function openBootloaderForImage(mode) {
       return { client, info, port };
     } catch (error) {
       await client.close(false);
-      appendFirmwareLog(`Bootloader probe: ${error.message}`, 'error');
+      appendFirmwareLog(`No ROM sync during the initial probe (${error.message}); proceeding with bootloader entry.`);
     }
     await port.close();
     portMayBeOpen = false;

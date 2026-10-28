@@ -284,10 +284,18 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .detail-grid { grid-template-columns: repeat(2, 1fr); }
   .settings-pair { grid-template-columns: 1fr; grid-template-rows: none; grid-auto-flow: row; }
   .settings-clock-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .panel-heading { align-items: flex-start; flex-wrap: wrap; gap: 9px; }
+  .panel-heading-actions { width: 100%; min-width: 0; justify-content: space-between; gap: 8px; }
+  .panel-heading-actions > #settings-status { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; line-height: 1.4; }
+  .logs-panel > .panel-heading > #logs-status { min-width: 0; flex: 1 1 100%; overflow-wrap: anywhere; line-height: 1.4; }
   .log-tabs { overflow-x: auto; }
   .log-tab { padding-inline: 8px; }
-  .logs-tools { align-items: flex-start; flex-wrap: wrap; }
-  .log-date-tools { justify-content: flex-start; flex-wrap: wrap; }
+  .logs-tools { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .logs-left-tools { width: 100%; justify-content: space-between; }
+  .log-date-tools { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 7px; }
+  .log-date-tools #log-range-extra[hidden] { display: none !important; }
+  .firmware-log-toolbar { position: static; display: flex; justify-content: flex-end; padding: 6px 6px 0; }
+  .firmware-log-toolbar .button { opacity: .85; }
   .firmware-controls { grid-template-columns: minmax(0, 1fr) auto auto; }
   .firmware-file-control { grid-column: 1 / -1; }
   .firmware-tools .verify-option { grid-column: 1 / -1; }
