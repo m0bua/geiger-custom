@@ -4,7 +4,7 @@ Small browser-only client for firmware protocol v1. It has no build step, depend
 
 ## Run
 
-For the most reliable serial access, serve the repository from `http://localhost` or HTTPS in a browser with Web Serial support (tested in Chrome/Edge and Firefox). From the repository root, run:
+For desktop serial access, serve the repository from `http://localhost` or HTTPS in a browser with Web Serial support (tested in Chrome/Edge and Firefox). Android uses the separate **Connect USB** WebUSB path for CP210x `10C4:EA60`; this path needs physical phone testing. iOS supports the PWA interface but has no implemented USB transport. From the repository root, run:
 
 ```powershell
 python -m http.server 8000

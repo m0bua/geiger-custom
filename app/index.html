@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="app-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="app-icon.svg">
-  <link rel="stylesheet" href="style.css?v=20261028-1">
+  <link rel="stylesheet" href="style.css?v=20261028-2">
 </head>
 <body>
   <main class="shell">
@@ -30,12 +30,13 @@
       </div>
       <div class="actions">
         <button id="install-app" class="button button-quiet" type="button" hidden>Install</button>
+        <button id="connect-usb-button" class="button button-quiet" type="button" hidden>Connect USB</button>
         <button id="connect-button" class="button button-primary" type="button">Connect</button>
       </div>
     </section>
 
     <section class="notice" id="notice" role="status" aria-live="polite">
-      <p>Connect over Web Serial from localhost or HTTPS. Opening the port may restart the device.</p>
+      <p>Desktop: connect over Web Serial. Android: use Connect USB for a CP210x adapter. Opening a serial port may restart the device.</p>
     </section>
 
     <section id="overview-page" class="page">
@@ -386,6 +387,6 @@
     </dialog>
 
   </main>
-  <script defer src="app.js?v=20261028-1"></script>
+  <script defer src="app.js?v=20261028-3"></script>
 </body>
 </html>

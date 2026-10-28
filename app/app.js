@@ -181,6 +181,7 @@ class Stm32Bootloader {
 
 const elements = {
   connect: document.querySelector('#connect-button'),
+  connectUsb: document.querySelector('#connect-usb-button'),
   connection: document.querySelector('#connection'),
   connectionLabel: document.querySelector('#connection-label'),
   notice: document.querySelector('#notice'),
@@ -393,6 +394,137 @@ function decodeFrame(wire) {
   };
 }
 
+class Cp210xUsbPort {
+  constructor() {
+    this.device = null;
+    this.interfaceNumber = -1;
+    this.inEndpoint = null;
+    this.outEndpoint = null;
+    this.claimed = false;
+    this.closing = false;
+    this.readable = null;
+    this.writable = null;
+  }
+
+  getInfo() {
+    return { usbVendorId: this.device?.vendorId, usbProductId: this.device?.productId };
+  }
+
+  async controlOut(request, value = 0, data = new Uint8Array()) {
+    const result = await this.device.controlTransferOut({
+      requestType: 'vendor', recipient: 'interface', request, value,
+      index: this.interfaceNumber,
+    }, data);
+    if (result.status !== 'ok') throw new Error(`CP210x control request 0x${request.toString(16)} failed (${result.status}).`);
+  }
+
+  async open() {
+    if (!navigator.usb) throw new Error('WebUSB is unavailable. Open this portal in Chrome on Android.');
+    try {
+      this.device = await navigator.usb.requestDevice({
+        filters: [{ vendorId: 0x10c4, productId: 0xea60 }],
+      });
+      await this.device.open();
+      if (!this.device.configuration) {
+        const config = this.device.configurations[0];
+        if (!config) throw new Error('The CP210x adapter has no USB configuration.');
+        await this.device.selectConfiguration(config.configurationValue);
+      }
+      let selected = null;
+      for (const iface of this.device.configuration.interfaces) {
+        for (const alternate of iface.alternates) {
+          const input = alternate.endpoints.find((ep) => ep.type === 'bulk' && ep.direction === 'in');
+          const output = alternate.endpoints.find((ep) => ep.type === 'bulk' && ep.direction === 'out');
+          if (input && output) { selected = { iface, alternate, input, output }; break; }
+        }
+        if (selected) break;
+      }
+      if (!selected) throw new Error('The CP210x USB interface has no bulk UART endpoints.');
+      this.interfaceNumber = selected.iface.interfaceNumber;
+      await this.device.claimInterface(this.interfaceNumber);
+      this.claimed = true;
+      if (selected.iface.alternate.alternateSetting !== selected.alternate.alternateSetting) {
+        await this.device.selectAlternateInterface(this.interfaceNumber,
+          selected.alternate.alternateSetting);
+      }
+      this.inEndpoint = selected.input.endpointNumber;
+      this.outEndpoint = selected.output.endpointNumber;
+
+      // Configure CP210x for runtime UART 115200 8N1. Do not issue SET_MHS:
+      // changing DTR/RTS can reset the device or enter its ROM bootloader.
+      await this.controlOut(0x00, 0x0001); // IFC_ENABLE / UART_ENABLE
+      await this.controlOut(0x03, 0x0800); // SET_LINE_CTL / 8 data, no parity, 1 stop
+      const baud = new Uint8Array(4);
+      new DataView(baud.buffer).setUint32(0, 115200, true);
+      await this.controlOut(0x1e, 0, baud); // SET_BAUDRATE
+      this.closing = false;
+      this.readable = new ReadableStream({
+        pull: (controller) => this.pullInput(controller),
+        cancel: () => { this.closing = true; },
+      });
+      this.writable = new WritableStream({
+        write: (chunk) => this.writeOutput(chunk),
+        close: () => {},
+        abort: () => { this.closing = true; },
+      });
+    } catch (error) {
+      if (this.device?.opened) {
+        try { await this.device.close(); } catch { /* retain the initial USB error */ }
+      }
+      if (error?.name === 'NotFoundError') {
+        throw new Error('No CP210x adapter was selected. Check the OTG connection and choose USB Connect again.');
+      }
+      if (error?.name === 'SecurityError' || error?.name === 'NotAllowedError') {
+        throw new Error('Chrome could not access the CP210x USB interface. Check USB permission and close other apps using the adapter.');
+      }
+      throw error;
+    }
+  }
+
+  async pullInput(controller) {
+    if (this.closing) { controller.close(); return; }
+    try {
+      const result = await this.device.transferIn(this.inEndpoint, 64);
+      if (this.closing) { controller.close(); return; }
+      if (result.status !== 'ok') throw new Error(`CP210x USB read failed (${result.status}).`);
+      if (result.data?.byteLength) {
+        controller.enqueue(new Uint8Array(result.data.buffer,
+          result.data.byteOffset, result.data.byteLength).slice());
+      }
+    } catch (error) {
+      if (this.closing) controller.close();
+      else controller.error(error);
+    }
+  }
+
+  async writeOutput(chunk) {
+    if (this.closing || !this.device?.opened) throw new Error('USB connection is closed.');
+    const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+    for (let offset = 0; offset < bytes.length; offset += 256) {
+      const result = await this.device.transferOut(this.outEndpoint,
+        bytes.subarray(offset, Math.min(offset + 256, bytes.length)));
+      if (result.status !== 'ok') throw new Error(`CP210x USB write failed (${result.status}).`);
+    }
+  }
+
+  async abort() {
+    this.closing = true;
+    if (this.device?.opened) {
+      try { await this.device.close(); } catch { /* close() retries cleanup below */ }
+    }
+  }
+
+  async close() {
+    this.closing = true;
+    if (!this.device?.opened) return;
+    if (this.claimed) {
+      try { await this.device.releaseInterface(this.interfaceNumber); }
+      finally { this.claimed = false; }
+    }
+    await this.device.close();
+  }
+}
+
 class SerialProtocol {
   constructor(onFrame, onClose) {
     this.onFrame = onFrame;
@@ -409,18 +541,29 @@ class SerialProtocol {
     this.discardFrame = false;
   }
 
-  async connect(portOverride = null) {
-    if (!('serial' in navigator)) {
-      throw new Error('Web Serial is unavailable here. Use Chrome or Edge on desktop, or Chrome on a compatible Android device with USB host/OTG support. iPhone browsers do not support Web Serial.');
+  async connect(portOverride = null, transport = 'serial') {
+    if (transport === 'webusb') {
+      this.port = portOverride || new Cp210xUsbPort();
+      await this.port.open();
+      selectedUsbPort = this.port;
+      selectedSerialPort = null;
+      activeTransport = 'webusb';
+    } else {
+      if (!('serial' in navigator)) {
+        throw new Error('Web Serial is unavailable here. On Android, use Connect USB with a CP210x adapter.');
+      }
+      this.port = portOverride || await navigator.serial.requestPort();
+      selectedSerialPort = this.port;
+      this.portInfo = this.port.getInfo?.() || {};
+      await this.port.open({ baudRate: 115200, dataBits: 8, parity: 'none', stopBits: 1, flowControl: 'none', bufferSize: 256 });
+      activeTransport = 'serial';
     }
-    this.port = portOverride || await navigator.serial.requestPort();
-    selectedSerialPort = this.port;
-    this.portInfo = this.port.getInfo?.() || {};
-    await this.port.open({ baudRate: 115200, dataBits: 8, parity: 'none', stopBits: 1, flowControl: 'none', bufferSize: 256 });
+    this.portInfo = this.portInfo || this.port.getInfo?.() || {};
     portMayBeOpen = true;
     // Restore the previously working behavior: release DTR/RTS after open.
     // This can reboot the device; HELLO is retried after its startup delay.
-    await this.port.setSignals({ dataTerminalReady: false, requestToSend: false });
+    if (transport !== 'webusb')
+      await this.port.setSignals({ dataTerminalReady: false, requestToSend: false });
     this.reader = this.port.readable.getReader();
     this.writer = this.port.writable.getWriter();
     this.closing = false;
@@ -506,6 +649,7 @@ class SerialProtocol {
       pending.reject(new Error('Connection closed.'));
     }
     this.pending.clear();
+    if (this.port?.abort) await this.port.abort();
     if (this.reader) {
       try { await this.reader.cancel(); } catch { /* port may already be gone */ }
     }
@@ -530,6 +674,9 @@ let offlinePreview = true;
 let installPromptEvent = null;
 let rateHoverIndex = null;
 let selectedSerialPort = null;
+let selectedUsbPort = null;
+let activeTransport = 'serial';
+const androidWebUsbAvailable = /Android/i.test(navigator.userAgent) && !!navigator.usb;
 let bootloaderPortOpen = false;
 let portMayBeOpen = false;
 let selectedFirmwareImage = null;
@@ -1445,6 +1592,10 @@ function setConnection(state, label) {
     (state === 'connecting' ? 'Connecting…' : 'Connect');
   elements.connect.classList.toggle('button-primary', !canDisconnect);
   elements.connect.classList.toggle('button-quiet', canDisconnect);
+  if (elements.connectUsb) {
+    elements.connectUsb.hidden = !androidWebUsbAvailable || canDisconnect;
+    elements.connectUsb.disabled = state === 'connecting' || canDisconnect;
+  }
   const liveData = state === 'connected' && !offlinePreview;
   elements.debugModeBadge.textContent = liveData ? 'DEVICE DATA' :
     (state === 'disconnected' || state === 'disconnect-pending' ?
@@ -2293,8 +2444,8 @@ async function refreshDebugPage() {
 }
 
 async function requestHelloAfterBoot(protocol) {
-  // Briefly allow the device to settle after opening the serial port.
-  await delay(1000);
+  // WebUSB leaves modem-control lines untouched, so it does not trigger reset.
+  await delay(protocol.port instanceof Cp210xUsbPort ? 100 : 1000);
   let lastError;
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
@@ -2776,6 +2927,8 @@ async function dumpSpiMemory() {
 }
 
 async function openBootloaderForImage(mode) {
+  if (activeTransport === 'webusb')
+    throw new Error('Firmware and ROM bootloader actions require Web Serial. Android USB currently supports monitoring only.');
   const port = selectedSerialPort || await navigator.serial.requestPort();
   selectedSerialPort = port;
   clearInterval(pollTimer);
@@ -3070,7 +3223,8 @@ async function flashSelectedFirmware() {
   }
 }
 
-async function connectDevice(portOverride = null) {
+async function connectDevice(portOverride = null, transport = 'serial') {
+  activeTransport = transport;
   protocolCapabilities = 0;
   deviceSettings = null;
   deviceHiddenSettings = null;
@@ -3082,12 +3236,15 @@ async function connectDevice(portOverride = null) {
   logPageTotal = 0;
   updateSpiDumpAvailability();
   setConnection('connecting', 'Connecting…');
-  showNotice('Select the device port. The app will wait if opening it restarts the device.', '');
+  showNotice(transport === 'webusb' ?
+    'Select the CP210x USB adapter. DTR/RTS will not be changed.' :
+    'Select the device port. The app will wait if opening it restarts the device.', '');
   try {
     serial = new SerialProtocol((frame) => serial?.dispatch(frame), (error) => {
       clearInterval(pollTimer);
       pollTimer = 0;
       serial = null;
+      activeTransport = 'serial';
       deviceSettings = null;
       deviceHiddenSettings = null;
       logInfo = null;
@@ -3105,7 +3262,7 @@ async function connectDevice(portOverride = null) {
       renderOfflinePreview();
       showNotice(error.message, 'error');
     });
-    await serial.connect(portOverride);
+    await serial.connect(portOverride, transport);
     bootloaderPortOpen = false;
     elements.rebootFirmware.disabled = false;
     setConnection('connected', 'Connected');
@@ -3128,6 +3285,8 @@ async function connectDevice(portOverride = null) {
   } catch (error) {
     if (serial) await serial.disconnect();
     serial = null;
+    if (!portMayBeOpen) selectedUsbPort = null;
+    activeTransport = 'serial';
     elements.rebootFirmware.disabled = false;
     deviceSettings = null;
     deviceHiddenSettings = null;
@@ -3170,7 +3329,7 @@ async function disconnectDevice() {
   if (!closed) showNotice('Port is still open. Press Disconnect to retry closing it.', 'error');
 }
 
-async function disconnectPortAfterAction(port = selectedSerialPort) {
+async function disconnectPortAfterAction(port = selectedSerialPort || selectedUsbPort) {
   clearInterval(pollTimer);
   pollTimer = 0;
   const activeSerial = serial;
@@ -3184,6 +3343,10 @@ async function disconnectPortAfterAction(port = selectedSerialPort) {
   }
   bootloaderPortOpen = false;
   const stillOpen = portMayBeOpen;
+  if (!stillOpen) {
+    activeTransport = 'serial';
+    selectedUsbPort = null;
+  }
   setConnection(stillOpen ? 'disconnect-pending' : 'disconnected', stillOpen ? 'Disconnect required' : 'Disconnected');
   return !stillOpen;
 }
@@ -3249,6 +3412,10 @@ async function startStockFirmwareAndVerify(port) {
 }
 
 async function rebootToFirmware() {
+  if (activeTransport === 'webusb') {
+    setRebootStatus('Android WebUSB supports monitoring only; use desktop Web Serial for firmware controls.', 'warning');
+    return;
+  }
   if (elements.rebootFirmware.disabled) return;
   elements.rebootFirmware.disabled = true;
   elements.rebootBootloader.disabled = true;
@@ -3293,6 +3460,10 @@ async function rebootToFirmware() {
 }
 
 async function rebootToBootloader() {
+  if (activeTransport === 'webusb') {
+    setRebootStatus('Android WebUSB supports monitoring only; use desktop Web Serial for firmware controls.', 'warning');
+    return;
+  }
   elements.rebootBootloader.disabled = true;
   elements.rebootFirmware.disabled = true;
   let port = selectedSerialPort;
@@ -3367,6 +3538,9 @@ elements.connect.addEventListener('click', () => {
   if (serial || bootloaderPortOpen || portMayBeOpen) disconnectDevice();
   else connectDevice();
 });
+elements.connectUsb.addEventListener('click', () => {
+  if (!serial && !portMayBeOpen) connectDevice(null, 'webusb');
+});
 
 document.querySelectorAll('.debug-section-toggle').forEach((button) => {
   button.addEventListener('click', () => {
@@ -3417,7 +3591,10 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
 renderOfflinePreview();
 renderSettingsClock();
 window.setInterval(renderSettingsClock, 1000);
+if (androidWebUsbAvailable) elements.connectUsb.hidden = false;
 if (!('serial' in navigator)) {
   elements.connect.disabled = true;
-  showNotice('Web Serial is not supported. Use a supported browser on localhost or HTTPS.', 'error');
+  showNotice(androidWebUsbAvailable ?
+    'Android: connect using Connect USB and select the CP210x adapter.' :
+    'Serial access is unavailable in this browser. Use desktop Chrome/Edge or Android Chrome with USB Connect.', 'error');
 }

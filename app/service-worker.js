@@ -1,9 +1,9 @@
-const CACHE_NAME = 'device-monitor-shell-v1';
+const CACHE_NAME = 'device-monitor-shell-v3';
 const SHELL = [
   './',
   './index.html',
-  './style.css?v=20261028-1',
-  './app.js?v=20261028-1',
+  './style.css?v=20261028-2',
+  './app.js?v=20261028-3',
   './manifest.webmanifest',
   './app-icon.svg',
 ];
