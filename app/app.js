@@ -2261,6 +2261,36 @@ async function refreshStatus() {
   }
 }
 
+async function refreshSettingsPage() {
+  const button = document.querySelector('#settings-refresh');
+  if (!serial) {
+    elements.settingsStatus.textContent = 'Connect to refresh device data.';
+    return;
+  }
+  button.disabled = true;
+  try {
+    await loadSettings();
+    await loadLogInfo();
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function refreshDebugPage() {
+  const button = document.querySelector('#debug-refresh');
+  if (!serial) {
+    showNotice('Connect to refresh device data.', '');
+    return;
+  }
+  button.disabled = true;
+  try {
+    await refreshStatus();
+    await loadLogInfo();
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function requestHelloAfterBoot(protocol) {
   // Briefly allow the device to settle after opening the serial port.
   await delay(1000);
@@ -2283,6 +2313,8 @@ async function requestHelloAfterBoot(protocol) {
 elements.overviewTab.addEventListener('click', () => selectPage('overview'));
 elements.debugTab.addEventListener('click', () => selectPage('debug'));
 elements.settingsTab.addEventListener('click', () => selectPage('settings'));
+document.querySelector('#settings-refresh').addEventListener('click', refreshSettingsPage);
+document.querySelector('#debug-refresh').addEventListener('click', refreshDebugPage);
 elements.syncClock.addEventListener('click', synchronizeDeviceClock);
 elements.logsTab.addEventListener('click', () => selectPage('logs'));
 elements.loadMoreLogs.addEventListener('click', loadMoreLogRecords);

@@ -230,6 +230,8 @@ button { font: inherit; }
 .settings-note { margin: 13px 0 0; color: #77868c; font-size: 10px; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
 .panel-heading h2 { margin: 0; font-size: 15px; }
+.panel-heading-actions { display: flex; align-items: center; gap: 12px; }
+.refresh-button { min-height: 30px; padding: 0 11px; }
 #last-update { color: var(--muted); font: 10px "DM Mono", Consolas, monospace; }
 .detail-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
 .debug-usage-table { width: 100%; border-collapse: collapse; table-layout: fixed; font: 12px "DM Mono", Consolas, monospace; }
