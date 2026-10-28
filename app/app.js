@@ -418,13 +418,18 @@ class Cp210xUsbPort {
     if (result.status !== 'ok') throw new Error(`CP210x control request 0x${request.toString(16)} failed (${result.status}).`);
   }
 
-  async open() {
+  async open(options = {}) {
     if (!navigator.usb) throw new Error('WebUSB is unavailable. Open this portal in Chrome on Android.');
     try {
-      this.device = await navigator.usb.requestDevice({
+      if (!this.device) {
+        const permitted = await navigator.usb.getDevices();
+        this.device = permitted.find((device) =>
+          device.vendorId === 0x10c4 && device.productId === 0xea60) || null;
+      }
+      if (!this.device) this.device = await navigator.usb.requestDevice({
         filters: [{ vendorId: 0x10c4, productId: 0xea60 }],
       });
-      await this.device.open();
+      if (!this.device.opened) await this.device.open();
       if (!this.device.configuration) {
         const config = this.device.configurations[0];
         if (!config) throw new Error('The CP210x adapter has no USB configuration.');
@@ -450,12 +455,13 @@ class Cp210xUsbPort {
       this.inEndpoint = selected.input.endpointNumber;
       this.outEndpoint = selected.output.endpointNumber;
 
-      // Configure CP210x for runtime UART 115200 8N1. Do not issue SET_MHS:
-      // changing DTR/RTS can reset the device or enter its ROM bootloader.
       await this.controlOut(0x00, 0x0001); // IFC_ENABLE / UART_ENABLE
-      await this.controlOut(0x03, 0x0800); // SET_LINE_CTL / 8 data, no parity, 1 stop
+      const parityBits = options.parity === 'even' ? 0x0020 :
+        options.parity === 'odd' ? 0x0010 : 0x0000;
+      const stopBits = options.stopBits === 2 ? 0x0002 : 0x0000;
+      await this.controlOut(0x03, 0x0800 | parityBits | stopBits); // SET_LINE_CTL
       const baud = new Uint8Array(4);
-      new DataView(baud.buffer).setUint32(0, 115200, true);
+      new DataView(baud.buffer).setUint32(0, options.baudRate || 115200, true);
       await this.controlOut(0x1e, 0, baud); // SET_BAUDRATE
       this.closing = false;
       this.readable = new ReadableStream({
@@ -507,6 +513,14 @@ class Cp210xUsbPort {
     }
   }
 
+  async setSignals({ dataTerminalReady = false, requestToSend = false } = {}) {
+    if (!this.device?.opened) throw new Error('CP210x USB device is not open.');
+    const value = 0x0100 | 0x0200 |
+      (dataTerminalReady ? 0x0001 : 0) |
+      (requestToSend ? 0x0002 : 0);
+    await this.controlOut(0x07, value); // SET_MHS, explicit DTR/RTS update
+  }
+
   async abort() {
     this.closing = true;
     if (this.device?.opened) {
@@ -516,7 +530,7 @@ class Cp210xUsbPort {
 
   async close() {
     this.closing = true;
-    if (!this.device?.opened) return;
+    if (!this.device?.opened) { this.claimed = false; return; }
     if (this.claimed) {
       try { await this.device.releaseInterface(this.interfaceNumber); }
       finally { this.claimed = false; }
@@ -2796,20 +2810,37 @@ function setDumpStatus(message, level = '') {
   elements.dumpStatus.dataset.level = level;
 }
 
+async function selectFirmwarePort() {
+  if (serial?.port) {
+    activeTransport = serial.port instanceof Cp210xUsbPort ? 'webusb' : 'serial';
+    return { port: serial.port, transport: activeTransport };
+  }
+  if (activeTransport === 'webusb' && selectedUsbPort) {
+    return { port: selectedUsbPort, transport: 'webusb' };
+  }
+  if (androidWebUsbAvailable || !('serial' in navigator)) {
+    const port = selectedUsbPort || new Cp210xUsbPort();
+    selectedUsbPort = port;
+    selectedSerialPort = null;
+    activeTransport = 'webusb';
+    return { port, transport: 'webusb' };
+  }
+  const port = selectedSerialPort || await navigator.serial.requestPort();
+  selectedSerialPort = port;
+  selectedUsbPort = null;
+  activeTransport = 'serial';
+  return { port, transport: 'serial' };
+}
+
 async function dumpRomMemory(label, address, length, filename) {
   if (dumpBusy) return;
-  if (!('serial' in navigator)) {
-    setDumpStatus('Web Serial is unavailable in this browser.', 'error');
-    return;
-  }
-  let port = selectedSerialPort;
+  let port = null;
   try {
-    if (!port) port = await navigator.serial.requestPort();
+    ({ port } = await selectFirmwarePort());
   } catch (error) {
-    setDumpStatus(`Could not select the serial port: ${error.message}`, 'error');
+    setDumpStatus(`Could not select the USB port: ${error.message}`, 'error');
     return;
   }
-  selectedSerialPort = port;
   const wasConnected = !!serial;
   const dumpFilename = makeDumpFilename(filename);
   let session = null;
@@ -2927,10 +2958,7 @@ async function dumpSpiMemory() {
 }
 
 async function openBootloaderForImage(mode) {
-  if (activeTransport === 'webusb')
-    throw new Error('Firmware and ROM bootloader actions require Web Serial. Android USB currently supports monitoring only.');
-  const port = selectedSerialPort || await navigator.serial.requestPort();
-  selectedSerialPort = port;
+  const { port } = await selectFirmwarePort();
   clearInterval(pollTimer);
   pollTimer = 0;
   if (serial) {
@@ -3062,8 +3090,8 @@ async function flashSelectedFirmware() {
     return;
   }
   if (!selectedFirmwareImage) return;
-  if (!('serial' in navigator)) {
-    appendFirmwareLog('Web Serial is unavailable in this browser.', 'error');
+  if (!('serial' in navigator) && !androidWebUsbAvailable && activeTransport !== 'webusb') {
+    appendFirmwareLog('USB serial access is unavailable in this browser.', 'error');
     return;
   }
   firmwareFlashBusy = true;
@@ -3141,7 +3169,7 @@ async function flashSelectedFirmware() {
       setRebootStatus(`Update failed: ${error.message}`, 'error');
     }
   } finally {
-    const port = session?.port || selectedSerialPort;
+    const port = session?.port || selectedUsbPort || selectedSerialPort;
     if (session) {
       await session.client.close(false);
       if (success) {
@@ -3371,7 +3399,7 @@ async function startFirmwareAndVerify(port) {
   let probe = null;
   try {
     probe = new SerialProtocol((frame) => probe?.dispatch(frame), () => {});
-    await probe.connect(port);
+    await probe.connect(port, port instanceof Cp210xUsbPort ? 'webusb' : 'serial');
     await requestHelloAfterBoot(probe);
   } finally {
     if (probe) await probe.disconnect();
@@ -3412,10 +3440,6 @@ async function startStockFirmwareAndVerify(port) {
 }
 
 async function rebootToFirmware() {
-  if (activeTransport === 'webusb') {
-    setRebootStatus('Android WebUSB supports monitoring only; use desktop Web Serial for firmware controls.', 'warning');
-    return;
-  }
   if (elements.rebootFirmware.disabled) return;
   elements.rebootFirmware.disabled = true;
   elements.rebootBootloader.disabled = true;
@@ -3425,14 +3449,10 @@ async function rebootToFirmware() {
   clearInterval(pollTimer);
   pollTimer = 0;
   setConnection('connecting', 'Starting firmware…');
-  let port = selectedSerialPort;
+  let port = null;
   let actionError = null;
   try {
-    if (!port) {
-      if (!('serial' in navigator)) throw new Error('Web Serial is unavailable in this browser.');
-      port = await navigator.serial.requestPort();
-      selectedSerialPort = port;
-    }
+    ({ port } = await selectFirmwarePort());
 
     await startFirmwareAndVerify(port);
     setRebootStatus('Firmware is running. Serial port disconnected.', 'success');
@@ -3460,21 +3480,13 @@ async function rebootToFirmware() {
 }
 
 async function rebootToBootloader() {
-  if (activeTransport === 'webusb') {
-    setRebootStatus('Android WebUSB supports monitoring only; use desktop Web Serial for firmware controls.', 'warning');
-    return;
-  }
   elements.rebootBootloader.disabled = true;
   elements.rebootFirmware.disabled = true;
-  let port = selectedSerialPort;
+  let port = null;
   let actionError = null;
   appendFirmwareLog('Starting ROM bootloader entry check.');
   try {
-    if (!port) {
-      if (!('serial' in navigator)) throw new Error('Web Serial is unavailable in this browser.');
-      port = await navigator.serial.requestPort();
-      selectedSerialPort = port;
-    }
+    ({ port } = await selectFirmwarePort());
     setRebootStatus('Trying the full updater sequence in 115200 8E1…');
     showNotice('Bootloader test: RTS/DTR high-high, then RTS low with DTR high, then ROM sync.', '');
     clearInterval(pollTimer);
@@ -3522,7 +3534,7 @@ async function rebootToBootloader() {
   } finally {
     const closed = await disconnectPortAfterAction(port);
     if (!closed) {
-      const message = 'Serial port is still open. Press Disconnect in the top-right to retry.';
+      const message = 'USB port is still open. Press Disconnect in the top-right to retry.';
       setRebootStatus(`${elements.rebootStatus.textContent} ${message}`, 'error');
       appendFirmwareLog(message, 'error');
       showNotice(message, 'error');
