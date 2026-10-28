@@ -1,3 +1,5 @@
+[App portal](https://m0bua.github.io/geiger-custom/)
+
 # Geiger-2 firmware bootstrap
 
 STM32L051C8T6 firmware for the Geiger-2. The current prototype displays rolling dose rate and accumulated dose, reads detector pulses and ADC channels, and drives the LCD through SPI2/DMA. Project status and technical references are indexed in [`docs/README.md`](docs/README.md).
