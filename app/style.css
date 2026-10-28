@@ -10,7 +10,7 @@
   --green: #00e58b;
 }
 * { box-sizing: border-box; }
-body { min-width: 320px; min-height: 100vh; margin: 0; background: radial-gradient(ellipse at 48% -20%, rgba(20,112,90,.15), transparent 56%), #0b1115; }
+body { min-width: 320px; min-height: 100vh; margin: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); background: radial-gradient(ellipse at 48% -20%, rgba(20,112,90,.15), transparent 56%), #0b1115; }
 button { font: inherit; }
 .shell { width: min(960px, calc(100% - 40px)); margin: 0 auto; }
 .connection { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }

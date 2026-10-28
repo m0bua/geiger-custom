@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1115">
+  <title>Device Monitor</title>
+  <style>
+    :root{color-scheme:dark;font:15px system-ui,sans-serif;background:#0b1115;color:#e6edf0;--muted:#8d9ba2;--line:#26343a;--green:#00e58b}
+    *{box-sizing:border-box}body{min-height:100vh;margin:0;background:radial-gradient(ellipse at 48% -20%,rgba(20,112,90,.15),transparent 56%),#0b1115}
+    main{width:min(760px,calc(100% - 32px));margin:0 auto;padding:48px 0}
+    header{padding-bottom:20px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:24px}header p{margin:8px 0 0;color:var(--muted)}
+    h2{margin:28px 0 12px;font-size:13px;color:var(--muted);letter-spacing:.12em}
+    ul{list-style:none;padding:0;margin:0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+    li+li{border-top:1px solid var(--line)}.version{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px}
+    a{color:var(--green);font-weight:650;text-decoration:none}a:hover{text-decoration:underline}.meta{color:var(--muted);font:11px ui-monospace,monospace}
+    details{margin-top:18px;border:1px solid var(--line);border-radius:12px}summary{padding:14px 16px;color:var(--muted);cursor:pointer}
+    details ul{border:0;border-top:1px solid var(--line);border-radius:0 0 12px 12px}
+    .empty{padding:16px;color:var(--muted)}footer{margin-top:28px;color:var(--muted);font-size:12px}footer a{font-weight:500}
+    @media(max-width:520px){main{padding:28px 0}.version{align-items:flex-start;flex-direction:column;gap:5px}}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Device Monitor</h1>
+      <p>Choose a release to open its matching app version.</p>
+    </header>
+    <h2>RELEASES</h2>
+    <ul id="stable-releases"><!-- STABLE_RELEASES --></ul>
+    <details id="prerelease-details">
+      <summary>Pre-releases (<span id="prerelease-count">0</span>)</summary>
+      <ul id="prereleases"><!-- PRERELEASES --></ul>
+    </details>
+    <footer>Live app: <a href="./app/">latest development build</a> | <a href="https://github.com/m0bua/geiger-custom/releases">GitHub release notes</a></footer>
+  </main>
+</body>
+</html>

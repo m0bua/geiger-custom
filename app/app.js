@@ -527,6 +527,7 @@ class SerialProtocol {
 
 let serial = null;
 let offlinePreview = true;
+let installPromptEvent = null;
 let rateHoverIndex = null;
 let selectedSerialPort = null;
 let bootloaderPortOpen = false;
@@ -3380,6 +3381,39 @@ elements.rateChart.addEventListener('pointerleave', () => {
   hideRateChartTooltip();
   drawRateChart();
 });
+const installButton = document.querySelector('#install-app');
+const isIosBrowser = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandaloneApp = window.matchMedia('(display-mode: standalone)').matches ||
+  navigator.standalone === true;
+if (!isStandaloneApp && isIosBrowser) installButton.hidden = false;
+window.addEventListener('beforeinstallprompt', (event) => {
+  event.preventDefault();
+  installPromptEvent = event;
+  installButton.hidden = false;
+});
+installButton.addEventListener('click', async () => {
+  if (!installPromptEvent) {
+    showNotice('To install: open the browser Share menu and choose “Add to Home Screen”.', '');
+    return;
+  }
+  installPromptEvent.prompt();
+  await installPromptEvent.userChoice;
+  installPromptEvent = null;
+  installButton.hidden = true;
+});
+window.addEventListener('appinstalled', () => {
+  installPromptEvent = null;
+  installButton.hidden = true;
+  showNotice('App installed.', 'success');
+});
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js').catch(() => {
+      /* The online app remains usable if offline caching is unavailable. */
+    });
+  }, { once: true });
+}
 renderOfflinePreview();
 renderSettingsClock();
 window.setInterval(renderSettingsClock, 1000);
