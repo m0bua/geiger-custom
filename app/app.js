@@ -411,7 +411,7 @@ class SerialProtocol {
 
   async connect(portOverride = null) {
     if (!('serial' in navigator)) {
-      throw new Error('Web Serial is not available in this browser. Try a supported desktop browser.');
+      throw new Error('Web Serial is unavailable here. Use Chrome or Edge on desktop, or Chrome on a compatible Android device with USB host/OTG support. iPhone browsers do not support Web Serial.');
     }
     this.port = portOverride || await navigator.serial.requestPort();
     selectedSerialPort = this.port;

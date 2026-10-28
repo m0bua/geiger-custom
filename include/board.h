@@ -63,6 +63,7 @@ void board_display_extra_enter(void);
 bool board_display_extra_active(void);
 void board_display_extra_step(bool forward);
 void board_display_extra_exit(void);
+void board_display_force_home(void);
 bool board_display_settings_list_active(void);
 uint8_t board_display_settings_remote_count(void);
 bool board_display_settings_remote_read(uint8_t *values, uint8_t capacity);

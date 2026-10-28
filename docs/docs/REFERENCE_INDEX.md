@@ -25,6 +25,7 @@
 ## Звіти про застосунок і протокол
 
 - [APP_WEB_SERIAL_AND_CUSTOM_PROTOCOL.md](APP_WEB_SERIAL_AND_CUSTOM_PROTOCOL.md) — аналіз MilerdPort/стокового UART, кастомного протоколу та фізичних тестів Web Serial і native Windows на COM3.
+- [ANDROID_PWA_USB_SPEC.md](ANDROID_PWA_USB_SPEC.md) — ТЗ на Android WebUSB-підключення через CP210x і встановлення вебзастосунку як PWA.
 - [POWER_SAVING_AND_CUSTOM_RECOMMENDATIONS.md](POWER_SAVING_AND_CUSTOM_RECOMMENDATIONS.md) — вимоги й досліди з енергоспоживанням.
 - [FLASHLIGHT_AND_SOUND_PORTING.md](FLASHLIGHT_AND_SOUND_PORTING.md) — статичний аналіз стокових функцій ліхтарика й звуку.
 

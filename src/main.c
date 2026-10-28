@@ -108,6 +108,7 @@ int main(void)
     uint32_t debug_usb_seconds = 0u;
     uint32_t light_alarm_deadline = 0u;
     uint32_t startup_led_deadline;
+    uint32_t left_button_pressed_at = 0u;
     bool backlight_on = false;
     bool screen_alarm_active = false;
     bool light_alarm_active = false;
@@ -129,6 +130,7 @@ int main(void)
     bool right_long_seen = false;
     bool left_long_repeat_pending = false;
     bool right_long_repeat_pending = false;
+    bool left_force_home_done = false;
 
     (void)firmware_identity_marker[0];
     board_init();
@@ -302,6 +304,8 @@ int main(void)
                 inactivity_deadline = now + screen_timeout_ms;
             }
             if ((events & BOARD_BUTTON_LEFT_DOWN) != 0u) {
+                left_button_pressed_at = now;
+                left_force_home_done = false;
                 left_long_repeat_navigation = false;
                 left_long_seen = false;
                 left_long_repeat_pending = false;
@@ -312,7 +316,18 @@ int main(void)
                 right_long_repeat_pending = false;
             }
             if ((events & BOARD_BUTTON_LEFT_LONG) != 0u) {
-                if (!left_long_seen) {
+                if (!left_force_home_done &&
+                    (uint32_t)(now - left_button_pressed_at) >= 3000u) {
+                    left_force_home_done = true;
+                    left_long_seen = true;
+                    left_long_repeat_navigation = false;
+                    left_long_repeat_pending = false;
+                    board_display_force_home();
+                    if (!backlight_on) {
+                        screen_backlight_wake();
+                        backlight_on = true;
+                    }
+                } else if (!left_force_home_done && !left_long_seen) {
                     left_long_seen = true;
                     if (board_display_settings_list_active()) {
                         board_display_settings_list_exit();
@@ -325,7 +340,7 @@ int main(void)
                     left_long_repeat_navigation =
                         board_display_settings_list_active() ||
                         board_display_extra_active();
-                } else if (left_long_repeat_navigation) {
+                } else if (!left_force_home_done && left_long_repeat_navigation) {
                     /* Wait until the intermediate screen is fully drawn. */
                     left_long_repeat_pending = true;
                 }
@@ -355,6 +370,7 @@ int main(void)
                 left_long_repeat_navigation = false;
                 left_long_repeat_pending = false;
                 left_long_seen = false;
+                left_force_home_done = false;
             }
             if ((events & BOARD_BUTTON_RIGHT_UP) != 0u) {
                 right_long_repeat_navigation = false;
