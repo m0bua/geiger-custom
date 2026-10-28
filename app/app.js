@@ -570,7 +570,9 @@ let demoLogRenderer = null;
 let clockSyncBusy = false;
 const rateHistory = [];
 const demoSettings = Array.from({ length: 29 }, () => 0);
-const demoHiddenSettings = new Set([13, 15, 16, 21, 27]);
+const demoHiddenSettings = new Set([
+  8, 10, 11, 13, 14, 15, 16, 17, 19, 20, 21, 24, 25, 26, 27,
+]);
 Object.assign(demoSettings, {
   0: 2, 5: 0, 6: 0, 7: 2, 9: 0, 10: 1, 11: 1, 12: 0, 22: 1,
   15: 0, 16: 4, 21: 3, 23: 1,
@@ -602,7 +604,7 @@ const remoteSettings = [
   { id: 21, label: 'LONG PRESS', options: ['300 ms', '500 ms', '700 ms', '900 ms', '1100 ms', '1300 ms'] },
   { id: 15, label: 'HV', options: ['ON', 'OFF'] },
   { id: 13, label: 'LOG MEMORY', options: ['EEPROM', 'SPI', 'OFF'] },
-  { id: 14, label: 'RESET', options: ['SETTINGS', 'LOGS', 'OLD LOGS', 'SPI', 'EEPROM', 'ALL'] },
+  { id: 14, label: 'RESET', options: ['SETTINGS', 'LOGS', 'OLD LOGS', 'EEPROM', 'SPI', 'ALL'] },
   { id: 18, label: 'POWER OFF', options: [] },
   { id: 19, label: 'REBOOT', options: [] },
 ];
@@ -2017,8 +2019,8 @@ async function runDeviceAction(action, value, button) {
       deviceSettings?.[13] === 0 ?
         'Clear inactive SPI logs? This erases the entire SPI chip, including stock assets; stock firmware may no longer work.' :
         'LOG MEMORY is OFF: clear all logs in EEPROM and SPI? SPI erasure also removes stock assets.',
-    'Erase the entire SPI chip, including assets needed by stock firmware? This cannot be undone.',
     'Erase the entire EEPROM, including settings and logs? The device will restart.',
+    'Erase the entire SPI chip, including assets needed by stock firmware? This cannot be undone.',
     'Erase all EEPROM and SPI data, including stock assets? This cannot be undone; the device will restart.',
   ];
   if (action === 0 && !window.confirm(resetWarnings[value] ||
@@ -2035,7 +2037,7 @@ async function runDeviceAction(action, value, button) {
     elements.settingsStatus.textContent = action === 0 ?
       `Reset requested: ${remoteSettings.find((item) => item.id === 14).options[value]}` :
       action === 1 ? 'Power off requested' : 'Reboot requested';
-    if (action === 0 && ![0, 4, 5].includes(value)) {
+    if (action === 0 && ![0, 3, 5].includes(value)) {
       logInfo = null;
       logRecords = [];
       logViewCache.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
