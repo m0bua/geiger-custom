@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import html
 import os
 from pathlib import Path
@@ -147,6 +148,7 @@ def main() -> int:
     firmware = DEFAULT_FIRMWARE.read_bytes()
     if not firmware or len(firmware) > 65536:
         raise ValueError(f"Firmware image has invalid size: {len(firmware)} bytes")
+    canonical_hash = hashlib.sha256(firmware.ljust(65536, b"\xff")).hexdigest()
 
     document = (APP / "index.html").read_text(encoding="utf-8")
     document, version_count = re.subn(
@@ -158,6 +160,11 @@ def main() -> int:
         raise ValueError("Could not set the app version in About")
     css = minify_css((APP / "style.css").read_text(encoding="utf-8"))
     js = (APP / "app.js").read_text(encoding="utf-8")
+    compatible_hashes = "const COMPATIBLE_PROJECT_IMAGE_SHA256 = new Set(["
+    if compatible_hashes not in js:
+        raise ValueError("Could not find the firmware compatibility checksum list")
+    js = js.replace(compatible_hashes,
+                    compatible_hashes + f"\n  '{canonical_hash}',", 1)
     # The packaged app flashes its embedded image; keep the developer-only
     # local-build probe generic so the release contains no device branding.
     js = js.replace("../.pio/build/geiger2/firmware.bin", "../.pio/build/firmware.bin")
@@ -191,6 +198,8 @@ def main() -> int:
         stream.write(document)
     print(f"Standalone app: {output}")
     print(f"Embedded firmware: {len(firmware)} / 65536 bytes")
+    print(f"Firmware SHA-256: {hashlib.sha256(firmware).hexdigest()}")
+    print(f"Canonical 64 KiB SHA-256: {canonical_hash}")
     print(f"JavaScript minification: {'Terser with identifier mangling' if js_minified else 'unavailable; whitespace-safe HTML/CSS compaction only'}")
     print(f"Single-file package: {output.stat().st_size:,} bytes")
     return 0

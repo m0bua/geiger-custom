@@ -21,17 +21,17 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
 
       - name: Set up Node.js for Terser
         uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      - name: Install GNU Arm Embedded toolchain
+      - name: Install the firmware's pinned ARM toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes gcc-arm-none-eabi binutils-arm-none-eabi
+          python -m pip install platformio==6.1.18
+          pio pkg install --global --tool platformio/toolchain-gccarmnoneeabi@1.70201.0
 
       - name: Set release version
         id: release
@@ -51,16 +51,26 @@ jobs:
           compression-level: 0
           retention-days: 30
 
-      - name: Create GitHub prerelease
+      - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           release_time="${{ steps.release.outputs.tag }}"
           tag="$release_time"
+          firmware=".pio/scratch/geiger2_manual/firmware.bin"
+          firmware_sha256="$(sha256sum "$firmware" | cut -d ' ' -f1)"
+          canonical_sha256="$(python -c 'from pathlib import Path; import hashlib; b=Path(".pio/scratch/geiger2_manual/firmware.bin").read_bytes(); print(hashlib.sha256(b.ljust(65536, bytes([255]))).hexdigest())')"
+          cat > /tmp/release-notes.md <<EOF
+          First production-ready app and firmware build.
+
+          Firmware BIN SHA-256: ${firmware_sha256}
+          Canonical 64 KiB flash image SHA-256 (0xFF padded; used for app compatibility checks): ${canonical_sha256}
+
+          Built from commit ${GITHUB_SHA}. Release timestamp and version are UTC.
+          EOF
           gh release create "$tag" \
             dist/Dosimeter-App.html \
-            .pio/scratch/geiger2_manual/firmware.bin \
+            "$firmware" \
             --title "APP-$release_time" \
             --target "$GITHUB_SHA" \
-            --notes "Single-file dosimeter app and separate firmware image. Built from commit ${GITHUB_SHA}. Release timestamp is UTC." \
-            --prerelease
+            --notes-file /tmp/release-notes.md
