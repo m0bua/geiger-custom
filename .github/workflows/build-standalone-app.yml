@@ -33,8 +33,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes gcc-arm-none-eabi binutils-arm-none-eabi
 
+      - name: Set release version
+        id: release
+        run: echo "tag=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+
       - name: Build firmware and standalone app
-        run: python tools/build_release.py --require-minifier
+        run: python tools/build_release.py --version "${{ steps.release.outputs.tag }}" --require-minifier
 
       - name: Upload standalone HTML
         uses: actions/upload-artifact@v4
@@ -51,7 +55,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          release_time="$(date -u +%Y%m%d%H%M)"
+          release_time="${{ steps.release.outputs.tag }}"
           tag="$release_time"
           gh release create "$tag" \
             dist/Dosimeter-App.html \

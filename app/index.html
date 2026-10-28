@@ -345,10 +345,21 @@
 
     <section id="about-page" class="page information-page" hidden>
       <h2>About</h2>
-      <p class="app-version">Web app: <strong>Unreleased development build</strong></p>
+      <p>Companion app for custom firmware on the <strong>Mira Safety Geiger-2</strong> and <strong>Milerd HiStand</strong>.</p>
+      <p class="app-version">Version: <strong id="app-version">local</strong></p>
       <section class="information-card">
         <h3>Recent changes</h3>
         <ul class="release-list">
+          <li>
+            <time datetime="2026-10-28">2026-10-28</time> — Android and release portal improvements:
+            <ul>
+              <li><strong>Android:</strong> installable web app and improved mobile layout, USB connection, and firmware programming.</li>
+              <li><strong>Release portal:</strong> versioned app builds, so each release opens its matching app version.</li>
+              <li><strong>Graphs:</strong> improved date navigation and historical log display.</li>
+              <li><strong>Log storage:</strong> switching between EEPROM and SPI starts a fresh log set without migrating records; daily logs are preserved.</li>
+              <li><strong>Small fixes:</strong> interface and connection stability improvements.</li>
+            </ul>
+          </li>
           <li>
             <time datetime="2026-10-27">2026-10-27</time> — First firmware and web app release. Compared with stock:
             <ul>

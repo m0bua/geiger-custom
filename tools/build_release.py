@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import html
 import os
 from pathlib import Path
 import re
@@ -129,6 +130,8 @@ def main() -> int:
                         help=f"output HTML path (default: {DEFAULT_OUTPUT.relative_to(ROOT)})")
     parser.add_argument("--toolchain", type=Path,
                         help="optional ARM GCC bin directory passed to build_firmware.py")
+    parser.add_argument("--version", default="local",
+                        help="version label embedded in About (release tag, e.g. YYYYMMDDhhmm)")
     parser.add_argument("--require-minifier", action="store_true",
                         default=os.environ.get("CI", "").lower() == "true",
                         help="fail unless Terser is available (automatically required on CI)")
@@ -146,6 +149,13 @@ def main() -> int:
         raise ValueError(f"Firmware image has invalid size: {len(firmware)} bytes")
 
     document = (APP / "index.html").read_text(encoding="utf-8")
+    document, version_count = re.subn(
+        r'(<strong id="app-version">).*?(</strong>)',
+        lambda match: match.group(1) + html.escape(args.version) + match.group(2),
+        document, count=1,
+    )
+    if version_count != 1:
+        raise ValueError("Could not set the app version in About")
     css = minify_css((APP / "style.css").read_text(encoding="utf-8"))
     js = (APP / "app.js").read_text(encoding="utf-8")
     # The packaged app flashes its embedded image; keep the developer-only
