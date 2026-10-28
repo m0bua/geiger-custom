@@ -195,6 +195,7 @@ class Stm32Bootloader {
 const elements = {
   connect: document.querySelector('#connect-button'),
   connectUsb: document.querySelector('#connect-usb-button'),
+  bridgePort: document.querySelector('#windows-bridge-port'),
   connection: document.querySelector('#connection'),
   connectionLabel: document.querySelector('#connection-label'),
   notice: document.querySelector('#notice'),
@@ -432,18 +433,26 @@ class Cp210xUsbPort {
   }
 
   async open(options = {}) {
-    if (!navigator.usb) throw new Error('WebUSB is unavailable. Open this portal in Chrome on Android.');
+    if (!navigator.usb) throw new Error('WebUSB is unavailable in this browser.');
+    let stage = 'checking permitted devices';
     try {
       if (!this.device) {
         const permitted = await navigator.usb.getDevices();
         this.device = permitted.find((device) =>
           device.vendorId === 0x10c4 && device.productId === 0xea60) || null;
       }
-      if (!this.device) this.device = await navigator.usb.requestDevice({
-        filters: [{ vendorId: 0x10c4, productId: 0xea60 }],
-      });
-      if (!this.device.opened) await this.device.open();
+      if (!this.device) {
+        stage = 'requesting CP210x USB permission';
+        this.device = await navigator.usb.requestDevice({
+          filters: [{ vendorId: 0x10c4, productId: 0xea60 }],
+        });
+      }
+      if (!this.device.opened) {
+        stage = 'opening the CP210x USB device';
+        await this.device.open();
+      }
       if (!this.device.configuration) {
+        stage = 'selecting the CP210x USB configuration';
         const config = this.device.configurations[0];
         if (!config) throw new Error('The CP210x adapter has no USB configuration.');
         await this.device.selectConfiguration(config.configurationValue);
@@ -459,15 +468,18 @@ class Cp210xUsbPort {
       }
       if (!selected) throw new Error('The CP210x USB interface has no bulk UART endpoints.');
       this.interfaceNumber = selected.iface.interfaceNumber;
+      stage = `claiming CP210x USB interface ${this.interfaceNumber}`;
       await this.device.claimInterface(this.interfaceNumber);
       this.claimed = true;
       if (selected.iface.alternate.alternateSetting !== selected.alternate.alternateSetting) {
+        stage = 'selecting the CP210x USB alternate interface';
         await this.device.selectAlternateInterface(this.interfaceNumber,
           selected.alternate.alternateSetting);
       }
       this.inEndpoint = selected.input.endpointNumber;
       this.outEndpoint = selected.output.endpointNumber;
 
+      stage = 'configuring CP210x UART';
       await this.controlOut(0x00, 0x0001); // IFC_ENABLE / UART_ENABLE
       const parityBits = options.parity === 'even' ? 0x0020 :
         options.parity === 'odd' ? 0x0010 : 0x0000;
@@ -493,10 +505,8 @@ class Cp210xUsbPort {
       if (error?.name === 'NotFoundError') {
         throw new Error('No CP210x adapter was selected. Check the OTG connection and choose USB Connect again.');
       }
-      if (error?.name === 'SecurityError' || error?.name === 'NotAllowedError') {
-        throw new Error('Chrome could not access the CP210x USB interface. Check USB permission and close other apps using the adapter.');
-      }
-      throw error;
+      const detail = error?.message ? `: ${error.message}` : '';
+      throw new Error(`WebUSB failed while ${stage} (${error?.name || 'Error'})${detail}.`);
     }
   }
 
@@ -552,6 +562,124 @@ class Cp210xUsbPort {
   }
 }
 
+class NativeBridgePort {
+  constructor(portName) {
+    this.portName = portName;
+    this.socket = null;
+    this.readable = null;
+    this.writable = null;
+    this.readController = null;
+    this.readQueue = [];
+    this.pending = new Map();
+    this.nextId = 1;
+    this.signals = { dataTerminalReady: false, requestToSend: false };
+  }
+
+  getInfo() { return { usbVendorId: 0x10c4, usbProductId: 0xea60 }; }
+
+  async command(op, values = {}) {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Local serial bridge timed out during ${op}.`));
+      }, 5000);
+      this.pending.set(id, { resolve, reject, timeout });
+      this.socket.send(JSON.stringify({ op, id, ...values }));
+    });
+  }
+
+  receiveMessage(event) {
+    if (typeof event.data !== 'string') {
+      const bytes = new Uint8Array(event.data);
+      if (this.readController) this.readController.enqueue(bytes);
+      else this.readQueue.push(bytes);
+      return;
+    }
+    let message;
+    try { message = JSON.parse(event.data); } catch { return; }
+    if (message.type === 'error' && !message.id) {
+      this.readController?.error(new Error(message.message || 'Local COM port failed.'));
+      return;
+    }
+    const pending = this.pending.get(message.id);
+    if (!pending) return;
+    clearTimeout(pending.timeout);
+    this.pending.delete(message.id);
+    if (message.type === 'error') pending.reject(new Error(message.message || 'Local bridge error.'));
+    else pending.resolve(message);
+  }
+
+  async open(options = {}) {
+    const socket = new WebSocket(`ws://${location.host}/serial`);
+    socket.binaryType = 'arraybuffer';
+    this.socket = socket;
+    await new Promise((resolve, reject) => {
+      socket.addEventListener('open', resolve, { once: true });
+      socket.addEventListener('error', () => reject(new Error('Could not connect to the local serial bridge.')), { once: true });
+    });
+    socket.addEventListener('message', (event) => this.receiveMessage(event));
+    socket.addEventListener('close', () => {
+      for (const pending of this.pending.values()) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error('Local serial bridge disconnected.'));
+      }
+      this.pending.clear();
+      try { this.readController?.close(); } catch { /* stream already closed */ }
+    });
+    await this.command('open', {
+      port: this.portName, baudRate: options.baudRate || 115200,
+      dataBits: options.dataBits || 8, parity: options.parity || 'none',
+      stopBits: options.stopBits || 1, dtr: false, rts: false,
+    });
+    this.readable = new ReadableStream({
+      start: (controller) => {
+        this.readController = controller;
+        while (this.readQueue.length) controller.enqueue(this.readQueue.shift());
+      },
+      cancel: () => { this.readController = null; },
+    });
+    this.writable = new WritableStream({
+      write: async (chunk) => {
+        const id = this.nextId++;
+        const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+        const frame = new Uint8Array(4 + bytes.length);
+        new DataView(frame.buffer).setUint32(0, id, true);
+        frame.set(bytes, 4);
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            this.pending.delete(id);
+            reject(new Error('Local serial write timed out.'));
+          }, 5000);
+          this.pending.set(id, { resolve, reject, timeout });
+          this.socket.send(frame);
+        });
+      },
+    });
+  }
+
+  async setSignals({ dataTerminalReady, requestToSend } = {}) {
+    if (dataTerminalReady !== undefined) this.signals.dataTerminalReady = dataTerminalReady;
+    if (requestToSend !== undefined) this.signals.requestToSend = requestToSend;
+    await this.command('signals', {
+      dtr: this.signals.dataTerminalReady, rts: this.signals.requestToSend,
+    });
+  }
+
+  async abort() { /* Keep the bridge alive until queued serial writes drain. */ }
+
+  async close() {
+    if (!this.socket) return;
+    try { await this.command('close'); } finally {
+      this.socket.close();
+      this.socket = null;
+      this.readController = null;
+      this.readable = null;
+      this.writable = null;
+    }
+  }
+}
+
 class SerialProtocol {
   constructor(onFrame, onClose) {
     this.onFrame = onFrame;
@@ -564,12 +692,20 @@ class SerialProtocol {
     this.closing = false;
     this.requestId = 0;
     this.pending = new Map();
+    this.activeWrites = new Set();
     this.frameBytes = [];
     this.discardFrame = false;
   }
 
   async connect(portOverride = null, transport = 'serial') {
-    if (transport === 'webusb') {
+    if (transport === 'native') {
+      this.port = portOverride || new NativeBridgePort(selectedBridgePort);
+      await this.port.open({ baudRate: 115200, dataBits: 8, parity: 'none', stopBits: 1 });
+      selectedNativePort = this.port;
+      selectedSerialPort = null;
+      selectedUsbPort = null;
+      activeTransport = 'native';
+    } else if (transport === 'webusb') {
       this.port = portOverride || new Cp210xUsbPort();
       await this.port.open();
       selectedUsbPort = this.port;
@@ -587,9 +723,9 @@ class SerialProtocol {
     }
     this.portInfo = this.portInfo || this.port.getInfo?.() || {};
     portMayBeOpen = true;
-    // Restore the previously working behavior: release DTR/RTS after open.
-    // This can reboot the device; HELLO is retried after its startup delay.
-    if (transport !== 'webusb')
+    // Preserve the first-release Web Serial behavior. The native Windows
+    // bridge applies its own initial DTR/RTS profile when opening the COM port.
+    if (transport === 'serial')
       await this.port.setSignals({ dataTerminalReady: false, requestToSend: false });
     this.reader = this.port.readable.getReader();
     this.writer = this.port.writable.getWriter();
@@ -636,7 +772,7 @@ class SerialProtocol {
   }
 
   async request(opcode, payload = new Uint8Array(), timeoutMs = null) {
-    if (!this.writer) throw new Error('Serial port is not open.');
+    if (!this.writer || this.closing) throw new Error('Serial port is not open.');
     const requestTimeout = timeoutMs ??
       (this.port instanceof Cp210xUsbPort ? 3500 : 1800);
     this.requestId = (this.requestId + 1) & 0xffff;
@@ -650,7 +786,10 @@ class SerialProtocol {
       this.pending.set(id, { opcode, resolve, reject, timeout });
     });
     try {
-      await this.writer.write(encodeFrame(KIND_REQUEST, id, opcode, payload));
+      const writeTask = this.writer.write(encodeFrame(KIND_REQUEST, id, opcode, payload));
+      this.activeWrites.add(writeTask);
+      try { await writeTask; }
+      finally { this.activeWrites.delete(writeTask); }
     } catch (error) {
       const pending = this.pending.get(id);
       if (pending) {
@@ -679,11 +818,13 @@ class SerialProtocol {
     }
     this.pending.clear();
     if (this.port?.abort) await this.port.abort();
+    await Promise.allSettled(this.activeWrites);
     if (this.reader) {
       try { await this.reader.cancel(); } catch { /* port may already be gone */ }
     }
     if (this.readTask) await this.readTask.catch(() => {});
     if (this.writer) {
+      try { await this.writer.close(); } catch { /* device may have been removed */ }
       try { this.writer.releaseLock(); } catch { /* already released */ }
       this.writer = null;
     }
@@ -704,8 +845,12 @@ let installPromptEvent = null;
 let rateHoverIndex = null;
 let selectedSerialPort = null;
 let selectedUsbPort = null;
+let selectedNativePort = null;
+let selectedBridgePort = '';
+let nativeBridgeAvailable = false;
 let activeTransport = 'serial';
-const androidWebUsbAvailable = /Android/i.test(navigator.userAgent) && !!navigator.usb;
+const webUsbAvailable = !!navigator.usb;
+const androidUsbAvailable = webUsbAvailable && /Android/i.test(navigator.userAgent);
 let bootloaderPortOpen = false;
 let portMayBeOpen = false;
 let selectedFirmwareImage = null;
@@ -1622,9 +1767,10 @@ function setConnection(state, label) {
   elements.connect.classList.toggle('button-primary', !canDisconnect);
   elements.connect.classList.toggle('button-quiet', canDisconnect);
   if (elements.connectUsb) {
-    elements.connectUsb.hidden = !androidWebUsbAvailable || canDisconnect;
+    elements.connectUsb.hidden = !webUsbAvailable || canDisconnect;
     elements.connectUsb.disabled = state === 'connecting' || canDisconnect;
   }
+  if (elements.bridgePort) elements.bridgePort.disabled = state === 'connecting' || canDisconnect;
   const liveData = state === 'connected' && !offlinePreview;
   elements.debugModeBadge.textContent = liveData ? 'DEVICE DATA' :
     (state === 'disconnected' || state === 'disconnect-pending' ?
@@ -2832,13 +2978,25 @@ function setDumpStatus(message, level = '') {
 
 async function selectFirmwarePort() {
   if (serial?.port) {
-    activeTransport = serial.port instanceof Cp210xUsbPort ? 'webusb' : 'serial';
+    activeTransport = serial.port instanceof NativeBridgePort ? 'native' :
+      (serial.port instanceof Cp210xUsbPort ? 'webusb' : 'serial');
     return { port: serial.port, transport: activeTransport };
+  }
+  if (activeTransport === 'native' && selectedNativePort) {
+    return { port: selectedNativePort, transport: 'native' };
   }
   if (activeTransport === 'webusb' && selectedUsbPort) {
     return { port: selectedUsbPort, transport: 'webusb' };
   }
-  if (androidWebUsbAvailable || !('serial' in navigator)) {
+  if (nativeBridgeAvailable && selectedBridgePort) {
+    const port = selectedNativePort || new NativeBridgePort(selectedBridgePort);
+    selectedNativePort = port;
+    selectedUsbPort = null;
+    selectedSerialPort = null;
+    activeTransport = 'native';
+    return { port, transport: 'native' };
+  }
+  if (androidUsbAvailable) {
     const port = selectedUsbPort || new Cp210xUsbPort();
     selectedUsbPort = port;
     selectedSerialPort = null;
@@ -3110,7 +3268,7 @@ async function flashSelectedFirmware() {
     return;
   }
   if (!selectedFirmwareImage) return;
-  if (!('serial' in navigator) && !androidWebUsbAvailable && activeTransport !== 'webusb') {
+  if (!('serial' in navigator) && !androidUsbAvailable && activeTransport !== 'webusb') {
     appendFirmwareLog('USB serial access is unavailable in this browser.', 'error');
     return;
   }
@@ -3290,7 +3448,9 @@ async function flashSelectedFirmware() {
   }
 }
 
-async function connectDevice(portOverride = null, transport = 'serial') {
+async function connectDevice(portOverride = null, transport = null) {
+  transport ||= portOverride instanceof NativeBridgePort ? 'native' :
+    (portOverride instanceof Cp210xUsbPort ? 'webusb' : 'serial');
   activeTransport = transport;
   protocolCapabilities = 0;
   deviceSettings = null;
@@ -3396,7 +3556,7 @@ async function disconnectDevice() {
   if (!closed) showNotice('Port is still open. Press Disconnect to retry closing it.', 'error');
 }
 
-async function disconnectPortAfterAction(port = selectedSerialPort || selectedUsbPort) {
+async function disconnectPortAfterAction(port = selectedSerialPort || selectedUsbPort || selectedNativePort) {
   clearInterval(pollTimer);
   pollTimer = 0;
   const activeSerial = serial;
@@ -3473,7 +3633,8 @@ async function startFirmwareAndVerify(port, alreadyStarted = false) {
   let probe = null;
   try {
     probe = new SerialProtocol((frame) => probe?.dispatch(frame), () => {});
-    await probe.connect(port, port instanceof Cp210xUsbPort ? 'webusb' : 'serial');
+    await probe.connect(port, port instanceof NativeBridgePort ? 'native' :
+      (port instanceof Cp210xUsbPort ? 'webusb' : 'serial'));
     await requestHelloAfterBoot(probe);
   } finally {
     if (probe) await probe.disconnect();
@@ -3626,9 +3787,11 @@ async function rebootToBootloader() {
 
 elements.connect.addEventListener('click', () => {
   if (serial || bootloaderPortOpen || portMayBeOpen) disconnectDevice();
+  else if (nativeBridgeAvailable && selectedBridgePort) connectDevice(
+    selectedNativePort || new NativeBridgePort(selectedBridgePort), 'native');
   else connectDevice();
 });
-elements.connectUsb.addEventListener('click', () => {
+elements.connectUsb?.addEventListener('click', () => {
   if (!serial && !portMayBeOpen) connectDevice(null, 'webusb');
 });
 
@@ -3681,10 +3844,43 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
 renderOfflinePreview();
 renderSettingsClock();
 window.setInterval(renderSettingsClock, 1000);
-if (androidWebUsbAvailable) elements.connectUsb.hidden = false;
+async function refreshNativeBridgePorts() {
+  if (!elements.bridgePort || !window.location.hostname.match(/^(127\.0\.0\.1|localhost)$/)) return;
+  try {
+    const response = await fetch('/api/ports', { cache: 'no-store' });
+    if (!response.ok) return;
+    const ports = await response.json();
+    if (!Array.isArray(ports)) return;
+    nativeBridgeAvailable = true;
+    if (elements.bridgePort.disabled || document.activeElement === elements.bridgePort) return;
+    const previous = selectedBridgePort;
+    elements.bridgePort.replaceChildren();
+    for (const item of ports) {
+      const option = document.createElement('option');
+      option.value = item.port;
+      option.textContent = `${item.port}${item.description ? ` · ${item.description}` : ''}`;
+      elements.bridgePort.append(option);
+    }
+    selectedBridgePort = ports.some((item) => item.port === previous) ? previous :
+      (ports[0]?.port || '');
+    elements.bridgePort.value = selectedBridgePort;
+    elements.bridgePort.title = 'Select the Windows COM port';
+    if (!selectedNativePort || selectedNativePort.portName !== selectedBridgePort)
+      selectedNativePort = selectedBridgePort ? new NativeBridgePort(selectedBridgePort) : null;
+    elements.bridgePort.hidden = ports.length === 0;
+    elements.connect.title = ports.length ? 'Connect using the Windows local serial bridge' : '';
+  } catch { /* The regular Web Serial app remains available without the bridge. */ }
+}
+elements.bridgePort?.addEventListener('change', () => {
+  selectedBridgePort = elements.bridgePort.value;
+  selectedNativePort = selectedBridgePort ? new NativeBridgePort(selectedBridgePort) : null;
+});
+refreshNativeBridgePorts();
+window.setInterval(refreshNativeBridgePorts, 3000);
+if (webUsbAvailable && elements.connectUsb) elements.connectUsb.hidden = false;
 if (!('serial' in navigator)) {
   elements.connect.disabled = true;
-  showNotice(androidWebUsbAvailable ?
-    'Android: connect using Connect USB and select the CP210x adapter.' :
+  showNotice(androidUsbAvailable ?
+    'Connect using USB and select the CP210x adapter.' :
     'Serial access is unavailable in this browser. Use desktop Chrome/Edge or Android Chrome with USB Connect.', 'error');
 }

@@ -129,6 +129,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-o", "--output", type=Path, default=DEFAULT_OUTPUT,
                         help=f"output HTML path (default: {DEFAULT_OUTPUT.relative_to(ROOT)})")
+    parser.add_argument("--firmware-bin", type=Path,
+                        help="use this existing BIN instead of rebuilding firmware")
     parser.add_argument("--toolchain", type=Path,
                         help="optional ARM GCC bin directory passed to build_firmware.py")
     parser.add_argument("--version", default="local",
@@ -138,14 +140,19 @@ def main() -> int:
                         help="fail unless Terser is available (automatically required on CI)")
     args = parser.parse_args()
 
-    build_command = [sys.executable, str(ROOT / "tools/build_firmware.py")]
-    if args.toolchain:
-        build_command.extend(["--toolchain", str(args.toolchain.resolve())])
-    subprocess.run(build_command, cwd=ROOT, check=True)
+    firmware_path = args.firmware_bin.resolve() if args.firmware_bin else DEFAULT_FIRMWARE
+    if args.firmware_bin:
+        if not firmware_path.is_file():
+            raise FileNotFoundError(f"Firmware BIN does not exist: {firmware_path}")
+    else:
+        build_command = [sys.executable, str(ROOT / "tools/build_firmware.py")]
+        if args.toolchain:
+            build_command.extend(["--toolchain", str(args.toolchain.resolve())])
+        subprocess.run(build_command, cwd=ROOT, check=True)
+        if not firmware_path.is_file():
+            raise FileNotFoundError(f"Firmware build did not produce {firmware_path}")
 
-    if not DEFAULT_FIRMWARE.is_file():
-        raise FileNotFoundError(f"Firmware build did not produce {DEFAULT_FIRMWARE}")
-    firmware = DEFAULT_FIRMWARE.read_bytes()
+    firmware = firmware_path.read_bytes()
     if not firmware or len(firmware) > 65536:
         raise ValueError(f"Firmware image has invalid size: {len(firmware)} bytes")
     canonical_hash = hashlib.sha256(firmware.ljust(65536, b"\xff")).hexdigest()

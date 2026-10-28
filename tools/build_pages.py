@@ -41,8 +41,8 @@ def main() -> int:
         tag = str(release.get("tag_name", ""))
         if not tag or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for char in tag):
             continue
-        asset = next((item for item in release.get("assets", [])
-                      if item.get("name") == "Dosimeter-App.html"), None)
+        assets = {item.get("name"): item for item in release.get("assets", [])}
+        asset = assets.get("Dosimeter-App.html")
         if not asset:
             continue
         slug = quote(tag, safe="-_.")
@@ -82,9 +82,19 @@ def main() -> int:
         published = html.escape(published)
         url = f"./versions/{slug}/"
         notes_url = html.escape(str(release.get("html_url", "#")), quote=True)
+        downloads = [f'<a href="{url}">Open</a>']
+        for asset_name, label in (("Dosimeter-App.html", "HTML"),
+                                  ("Dosimeter-App.exe", "Windows EXE"),
+                                  ("firmware.bin", "BIN")):
+            release_asset = assets.get(asset_name)
+            download_url = release_asset.get("browser_download_url") if release_asset else None
+            if download_url:
+                safe_download = html.escape(str(download_url), quote=True)
+                downloads.append(f'<a href="{safe_download}">{label}</a>')
+        downloads.append(f'<a href="{notes_url}">notes</a>')
         row = (f'<li><div class="version"><a href="{url}">{title}</a>'
                f'<span class="meta">{published} · {html.escape(tag)} · '
-               f'<a href="{notes_url}">notes</a></span></div></li>')
+               f'<span class="downloads">{" · ".join(downloads)}</span></span></div></li>')
         (prerelease_rows if release.get("prerelease") else stable_rows).append(row)
 
     empty = '<li class="empty">No published app versions yet.</li>'

@@ -12,9 +12,31 @@ python -m http.server 8000
 
 Then open `http://localhost:8000/app/`. The page uses a classic deferred script (no ES-module import), so the UI itself can also be opened as `file://`; Web Serial may still require localhost/HTTPS depending on browser security policy.
 
+### Optional Windows serial bridge
+
+If desktop Chrome/Firefox cannot open the CP210x through the browser serial API, install PySerial and launch the loopback-only bridge:
+
+```powershell
+python -m pip install pyserial
+python tools/geiger2_windows_bridge.py
+```
+
+Open the printed `http://127.0.0.1:8765/app/index.html` address. The app detects the bridge, shows the available COM ports, and uses the selected one for readings, settings, logs, and firmware actions. The helper binds only to `127.0.0.1`; it opens a COM port only after **Connect** and requests inactive DTR/RTS outputs as part of the initial port configuration, with no extra post-open signal toggles. Stop it with Ctrl+C. Without the helper, the regular Web Serial and Android Connect USB paths remain available. This is an experimental Windows path; verify normal startup on the device before relying on firmware actions.
+
+### Single-file Windows desktop app
+
+The Windows desktop app packages this same web UI, its embedded firmware, and the COM bridge into one GUI `.exe`. It starts its loopback bridge and WebView2 window internally; users do not launch Python, a server, or a separate browser. Build on Windows with Python 3.11+, the project ARM GCC toolchain, Node.js if minification is required, and the Microsoft Edge WebView2 Runtime:
+
+```powershell
+python -m pip install -r tools/windows_app_requirements.txt
+python tools/build_windows_app.py --version YYYYMMDDhhmm
+```
+
+The executable is written to `dist/windows/Dosimeter-App.exe`. The builder regenerates the embedded standalone HTML from `app/`, derives the Windows `.ico` from the Android SVG icon, and uses PyInstaller one-file packaging. `.github/workflows/build-windows-app.yml` can produce a downloadable workflow artifact. The release workflow also builds the Windows app and attaches it beside the HTML and firmware BIN; the portal lists direct download links for all available release assets. The target PC must have WebView2 Runtime installed.
+
 ## Standalone release
 
-From the repository root, run `python tools/build_release.py`. The script builds the current firmware with the installed ARM GCC toolchain, then packages the app, firmware image, and all manual SVG illustrations into `dist/Dosimeter-App.html`. If Node.js/`npx` is installed, Terser compresses and mangles the bundled JavaScript; on CI this minifier is required automatically. Pass `--version YYYYMMDDhhmm` to embed the same timestamp used by the release tag in About; local builds default to `local`. The app build adds the embedded firmware's canonical 64 KiB SHA-256 to its compatibility list. **Quick flash** is an accordion item before **Flash firmware** and contains a duplicate **Backup FLASH** dump button plus the embedded firmware action. The backup button uses the same verified FLASH dump flow as the Dumps section. Quick flash runs the same image validation, verification, and startup flow as a selected image. The containing item opens by default when the image is embedded; otherwise **Flash firmware** opens. Web Serial still requires a supported browser context; if direct `file://` access is blocked, serve the single HTML file from localhost or HTTPS. Set `ARM_GCC_BIN` or pass `--toolchain` to select ARM GCC on a CI runner. The GitHub release workflow installs the same GCC 7.2.1 toolchain used for local builds, creates a stable release tagged `YYYYMMDDhhmm` and titled `APP-YYYYMMDDhhmm`, attaches `Dosimeter-App.html` and `firmware.bin`, includes raw BIN and canonical-image SHA-256 hashes in the release notes, and uploads the files as workflow artifacts.
+From the repository root, run `python tools/build_release.py`. The script builds the current firmware with the installed ARM GCC toolchain, then packages the app, firmware image, and all manual SVG illustrations into `dist/Dosimeter-App.html`. If Node.js/`npx` is installed, Terser compresses and mangles the bundled JavaScript; on CI this minifier is required automatically. Pass `--version YYYYMMDDhhmm` to embed the same timestamp used by the release tag in About; local builds default to `local`. The app build adds the embedded firmware's canonical 64 KiB SHA-256 to its compatibility list. **Quick flash** is an accordion item before **Flash firmware** and contains a duplicate **Backup FLASH** dump button plus the embedded firmware action. The backup button uses the same verified FLASH dump flow as the Dumps section. Quick flash runs the same image validation, verification, and startup flow as a selected image. The containing item opens by default when the image is embedded; otherwise **Flash firmware** opens. Web Serial still requires a supported browser context; if direct `file://` access is blocked, serve the single HTML file from localhost or HTTPS. Set `ARM_GCC_BIN` or pass `--toolchain` to select ARM GCC on a CI runner. The GitHub release workflow builds the HTML, firmware BIN, and Windows desktop EXE from the same commit, verifies that the EXE embeds the release BIN, creates a stable release tagged `YYYYMMDDhhmm` and titled `APP-YYYYMMDDhhmm`, and includes hashes for the BIN and EXE in the release notes. The portal provides direct download links to the HTML, EXE, and BIN assets.
 
 The firmware currently speaks USART1 at 115200 8N1 over the board's USB-UART bridge. Select its serial port in the browser prompt. The session line displays the USB VID:PID to help identify the bridge. Opening the port may affect DTR/RTS on some bridges and can reset the device; the app waits for startup and retries `HELLO` automatically.
 

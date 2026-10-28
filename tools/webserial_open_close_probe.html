@@ -1,0 +1,69 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Web Serial open/close probe</title>
+<style>
+  body { max-width: 44rem; margin: 2rem auto; padding: 0 1rem; font: 16px system-ui; background: #0b1114; color: #e7edf2; }
+  button { margin: 0 .5rem .75rem 0; padding: .7rem 1rem; }
+  pre { min-height: 12rem; padding: 1rem; overflow: auto; white-space: pre-wrap; background: #111b20; border: 1px solid #29363c; }
+  #state { color: #00e89a; }
+</style>
+<h1>Web Serial open/close probe</h1>
+<p>This probe opens the selected serial port at 115200 8N1. It sends and receives no bytes and does not call <code>setSignals()</code>. Observe the device after opening, then close it manually.</p>
+<p id="state">Port closed</p>
+<button id="open">Open port</button>
+<button id="close" disabled>Close port</button>
+<pre id="log"></pre>
+<script>
+  const state = document.querySelector('#state');
+  const output = document.querySelector('#log');
+  const openButton = document.querySelector('#open');
+  const closeButton = document.querySelector('#close');
+  let port = null;
+  function log(message) {
+    output.textContent += `[${new Date().toLocaleTimeString()}] ${message}\n`;
+    output.scrollTop = output.scrollHeight;
+  }
+  if (!('serial' in navigator)) {
+    state.textContent = 'Web Serial unavailable. Use desktop Chrome/Edge on HTTPS or localhost.';
+    openButton.disabled = true;
+  }
+  openButton.addEventListener('click', async () => {
+    openButton.disabled = true;
+    try {
+      port = await navigator.serial.requestPort();
+      const info = port.getInfo?.() || {};
+      log(`Selected USB ${Number(info.usbVendorId || 0).toString(16).padStart(4, '0')}:${Number(info.usbProductId || 0).toString(16).padStart(4, '0')}. Opening without reader/writer or UART traffic.`);
+      await port.open({ baudRate: 115200, dataBits: 8, parity: 'none', stopBits: 1, flowControl: 'none' });
+      state.textContent = 'Port open — no bytes sent. Observe the device, then press Close port.';
+      closeButton.disabled = false;
+      log('OPEN completed.');
+    } catch (error) {
+      log(`Open failed: ${error.name}: ${error.message}`);
+      port = null;
+      openButton.disabled = false;
+    }
+  });
+  closeButton.addEventListener('click', async () => {
+    closeButton.disabled = true;
+    try {
+      await port?.close();
+      log('CLOSE completed.');
+    } catch (error) {
+      log(`Close failed: ${error.name}: ${error.message}`);
+    } finally {
+      port = null;
+      state.textContent = 'Port closed';
+      openButton.disabled = false;
+    }
+  });
+  navigator.serial?.addEventListener('disconnect', (event) => {
+    log('USB serial device disconnected while the probe page was open.');
+    if (port === event.target) {
+      port = null;
+      closeButton.disabled = true;
+      openButton.disabled = false;
+      state.textContent = 'Device disconnected';
+    }
+  });
+</script>

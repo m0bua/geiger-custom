@@ -1,0 +1,55 @@
+name: Build Windows desktop app
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version label shown in About
+        required: false
+        default: local
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js for Terser
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install ARM toolchain
+        shell: pwsh
+        run: |
+          python -m pip install platformio==6.1.18
+          pio pkg install --global --tool platformio/toolchain-gccarmnoneeabi@1.70201.0
+
+      - name: Install desktop packaging dependencies
+        run: python -m pip install -r tools/windows_app_requirements.txt
+
+      - name: Build single-file desktop app
+        run: python tools/build_windows_app.py --version "${{ inputs.version }}" --require-minifier
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dosimeter-App-Windows
+          path: dist/windows/Dosimeter-App.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
