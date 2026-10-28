@@ -2168,7 +2168,11 @@ async function writeSetting(settingId, value, control) {
   elements.settingsStatus.textContent = 'Saving…';
   try {
     const result = await serial.request(OP_SET_SETTING, Uint8Array.of(settingId, value), settingId === 13 ? 120000 : 5000);
-    if (result.length !== 1 || result[0] !== 0) throw new ProtocolError('Device rejected this setting.');
+    if (result.length !== 1 || result[0] !== 0) {
+      throw new ProtocolError(settingId === 13 ?
+        'Log memory change failed; the device kept the previous mode. Check SPI status on the Debug page.' :
+        'Device rejected this setting.');
+    }
     if (settingId === 9) {
       rateHistory.length = 0;
       drawRateChart();

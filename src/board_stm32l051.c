@@ -350,6 +350,7 @@ static uint8_t lcd_cleanup_status;
 static uint32_t lcd_cleanup_status_deadline;
 static bool lcd_settings_editing;
 static uint8_t lcd_settings_edit_value;
+static bool lcd_settings_spi_failed;
 static bool rtc_ready;
 static bool rtc_time_valid;
 static uint8_t rtc_init_error;
@@ -2149,6 +2150,7 @@ static __attribute__((noinline)) uint8_t lcd_settings_value_count(uint8_t item)
 static const char *lcd_settings_value_text(uint8_t item)
 {
     uint8_t value_index = lcd_settings_value_index[item];
+    if (item == SETTING_USE_SPI && lcd_settings_spi_failed) return "FAILED";
     if (lcd_settings_editing && item == lcd_settings_selected) {
         value_index = lcd_settings_edit_value;
     }
@@ -3207,7 +3209,7 @@ static __attribute__((noinline)) bool lcd_text_prepare_glyph(void)
                     (LCD_CLEANUP_MENU_ACTIVE ? item == lcd_cleanup_selected :
                      item == lcd_settings_selected);
                 const bool reset_selected_row = selected_row &&
-                    item == SETTING_RESET;
+                    (item == SETTING_RESET || item == SETTING_USE_SPI);
                 const bool action_item = !LCD_CLEANUP_MENU_ACTIVE &&
                     (item == LCD_SETTINGS_POWER_OFF_ITEM ||
                      item == LCD_SETTINGS_REBOOT_ITEM);
@@ -3229,7 +3231,8 @@ static __attribute__((noinline)) bool lcd_text_prepare_glyph(void)
                             "")) : lcd_settings_value_text(item);
                 const bool value_edit_row = !LCD_CLEANUP_MENU_ACTIVE &&
                     selected_row &&
-                    lcd_settings_value_count(item) > 3u;
+                    (lcd_settings_value_count(item) > 3u ||
+                     item == SETTING_USE_SPI);
                 uint8_t label_length = 0u;
                 uint8_t value_length = 0u;
                 uint8_t value_start;
@@ -5503,6 +5506,7 @@ static void board_display_settings_redraw(void)
 void board_display_settings_move(bool forward)
 {
     if (!board_display_settings_list_active()) return;
+    if (lcd_settings_spi_failed) lcd_settings_spi_failed = false;
     if (LCD_CLEANUP_MENU_ACTIVE) {
         lcd_cleanup_dismiss_success();
         lcd_cleanup_selected = forward ?
@@ -5554,11 +5558,15 @@ void board_display_settings_change(void)
         board_reboot();
         return;
     }
-    if (lcd_settings_value_count(lcd_settings_selected) > 3u) {
+    if (lcd_settings_value_count(lcd_settings_selected) > 3u ||
+        lcd_settings_selected == SETTING_USE_SPI) {
         if (!lcd_settings_editing) {
             lcd_settings_edit_value =
                 lcd_settings_value_index[lcd_settings_selected];
             lcd_settings_editing = true;
+            if (lcd_settings_selected == SETTING_USE_SPI) {
+                lcd_settings_spi_failed = false;
+            }
             if (lcd_settings_selected == SETTING_RESET) {
                 lcd_cleanup_status = 0u;
             }
@@ -5568,10 +5576,14 @@ void board_display_settings_change(void)
             lcd_cleanup_status = 3u;
             lcd_settings_editing = false;
         } else {
+            const uint8_t requested_value = lcd_settings_edit_value;
             lcd_settings_value_index[lcd_settings_selected] =
-                lcd_settings_edit_value;
+                requested_value;
             lcd_settings_editing = false;
             lcd_settings_apply_current();
+            lcd_settings_spi_failed =
+                lcd_settings_selected == SETTING_USE_SPI &&
+                lcd_settings_value_index[SETTING_USE_SPI] != requested_value;
         }
         board_display_settings_redraw();
         return;
@@ -5589,6 +5601,9 @@ void board_display_settings_list_exit(void)
 {
     if (!board_display_settings_list_active()) return;
     if (lcd_settings_editing) {
+        if (lcd_settings_selected == SETTING_USE_SPI) {
+            lcd_settings_spi_failed = false;
+        }
         if (lcd_settings_selected == SETTING_RESET) {
             lcd_cleanup_working_pending = false;
             lcd_cleanup_dismiss_success();

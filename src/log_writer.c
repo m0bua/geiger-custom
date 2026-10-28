@@ -541,43 +541,6 @@ bool log_writer_live(log_record_kind_t kind, log_stored_t *item)
     return false;
 }
 
-static bool copy_to_eeprom(uint8_t type, uint8_t capacity)
-{
-    log_cursor_t *saved = board_log_workspace(70u * sizeof(log_cursor_t));
-    if (saved == NULL) return false;
-    log_cursor_t cursor;
-    log_point_t point;
-    uint8_t count = 0u;
-    uint32_t period = type == LOG_RECORD_ALERT ? 60u :
-        log_record_period_seconds((log_record_kind_t)type);
-    log_history_begin(&cursor);
-    while (count < capacity) {
-        log_cursor_t before = cursor;
-        if (!log_history_next_from(BOARD_LOG_MEMORY_SPI, type, period, &cursor, 0u, false, &point)) break;
-        if (!point.available || point.live) continue;
-        saved[count++] = before;
-    }
-    while (count != 0u) {
-        cursor = saved[--count];
-        if (!log_history_next_from(BOARD_LOG_MEMORY_SPI, type, period, &cursor, 0u, false, &point)) return false;
-        log_record_t record, existing;
-        uint8_t year;
-        bool live = false;
-        log_query_time_context_t context = {point.calendar_valid};
-        if (type == LOG_RECORD_DAY && log_eeprom_query_read(&context, LOG_RECORD_DAY,
-                point.epoch, point.period_start, &existing, &live)) continue;
-        if (!log_record_location((log_record_kind_t)type, point.period_start,
-                point.calendar_valid, &record.period_index, &year)) return false;
-        record.count = point.count;
-        record.maximum_cpm = point.maximum_cpm;
-        record.duration_seconds = type == LOG_RECORD_ALERT ? (uint16_t)point.covered_seconds : 0u;
-        record.segment_id = (uint8_t)(point.epoch % LOG_SEGMENT_ID_COUNT);
-        record.covered_seconds = type == LOG_RECORD_ALERT ? 0u : point.covered_seconds;
-        if (!log_eeprom_append((log_record_kind_t)type, point.epoch, &record, year)) return false;
-    }
-    return true;
-}
-
 bool log_writer_change_memory(uint8_t target)
 {
     uint8_t source = board_display_log_source();
@@ -589,44 +552,23 @@ bool log_writer_change_memory(uint8_t target)
             return (spi_nor_is_ready() || spi_nor_init()) && spi_log_init();
         return true;
     }
-    if (!spi_nor_is_ready() && !spi_nor_init()) return false;
     if (target == BOARD_LOG_MEMORY_SPI) {
-        if (!spi_log_clear()) return false;
-        for (uint8_t kind = 0u; kind <= LOG_RECORD_ALERT; ++kind) {
-            if (kind == LOG_RECORD_DAY) continue;
-            uint8_t count = log_eeprom_count((log_record_kind_t)kind);
-            while (count != 0u) {
-                log_record_t record;
-                uint8_t year;
-                spi_log_sector_info_t oldest;
-                if (!log_eeprom_read((log_record_kind_t)kind, --count, &record) ||
-                    !log_eeprom_segment_year(record.segment_id, &year)) return false;
-                uint16_t epoch = log_eeprom_record_epoch(record.segment_id);
-                if (spi_log_prepare((log_record_kind_t)kind, epoch, year, &oldest) != SPI_LOG_READY ||
-                    !spi_log_append((log_record_kind_t)kind, epoch, &record)) return false;
-            }
-        }
-        return true;
+        return (spi_nor_is_ready() || spi_nor_init()) && spi_log_clear() &&
+            log_eeprom_reset(true);
     }
-    if (!spi_log_init() || !copy_to_eeprom(LOG_RECORD_DAY, log_eeprom_capacity(LOG_RECORD_DAY)) ||
-        !log_eeprom_reset(true)) return false;
-    return copy_to_eeprom(LOG_RECORD_MINUTE, log_eeprom_capacity(LOG_RECORD_MINUTE)) &&
-        copy_to_eeprom(LOG_RECORD_HOUR, log_eeprom_capacity(LOG_RECORD_HOUR)) &&
-        copy_to_eeprom(LOG_RECORD_ALERT, log_eeprom_capacity(LOG_RECORD_ALERT));
+    /* Each backend starts a fresh min/hour/alert history; daily EEPROM logs stay shared. */
+    return log_eeprom_reset(true);
 }
 
 void log_writer_memory_committed(uint8_t target)
 {
-    bool was_off = active_log_memory == BOARD_LOG_MEMORY_OFF;
     active_log_memory = target;
     writer_ready = target != BOARD_LOG_MEMORY_OFF;
-    if (target == BOARD_LOG_MEMORY_OFF || was_off) {
-        minute_accumulator.active = false;
-        alert_accumulator.active = false;
-        hour_accumulator.active = false;
-        day_accumulator.active = false;
-        have_clock_sample = false;
-    }
+    minute_accumulator.active = false;
+    alert_accumulator.active = false;
+    hour_accumulator.active = false;
+    have_clock_sample = false;
+    if (target == BOARD_LOG_MEMORY_OFF) day_accumulator.active = false;
 }
 
 bool log_writer_fault(void) { return writer_fault; }

@@ -1,8 +1,8 @@
 FEAT: battery life improve (speep: 82-85%)
 
-FEAT: кольори тем
-FEAT: refactor long setting items
-
 BUG: після бутлодеру в додатку початок прошивки через platformio перезапускає в прошивку
     docs\docs\USB_UART_REENUMERATION_RECOVERY.md
 Після будь-якої комунікації з додатком команда STM32_Programmer_CLI -c port=COM br=115200 p=even rts=high dtr=high перестає бутати в бутлодер, натомість простий ребут прошивки. І так покі фізично не відключиш кабель.
+
+FEAT: кольори тем
+FEAT: refactor long setting items
