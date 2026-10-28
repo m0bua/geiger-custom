@@ -2982,15 +2982,36 @@ static void lcd_graph_prepare_header(void)
             rtc_calendar_t calendar;
             (void)rtc_calendar_from_seconds_since_2000(
                 lcd_graph_selected_time, &calendar);
-            const uint8_t left = lcd_graph_log_type == 3u ?
-                calendar.day : calendar.hour;
-            const uint8_t right = lcd_graph_log_type == 3u ?
-                calendar.month : calendar.minute;
-            line[0] = (char)('0' + left / 10u);
-            line[1] = (char)('0' + left % 10u);
-            line[2] = lcd_graph_log_type == 3u ? '.' : ':';
-            line[3] = (char)('0' + right / 10u);
-            line[4] = (char)('0' + right % 10u);
+            if (lcd_graph_log_type == 1u) {
+                /* MIN: DD hh:mm */
+                line[0] = (char)('0' + calendar.day / 10u);
+                line[1] = (char)('0' + calendar.day % 10u);
+                line[3] = (char)('0' + calendar.hour / 10u);
+                line[4] = (char)('0' + calendar.hour % 10u);
+                line[5] = ':';
+                line[6] = (char)('0' + calendar.minute / 10u);
+                line[7] = (char)('0' + calendar.minute % 10u);
+            } else if (lcd_graph_log_type == 2u) {
+                /* HOUR: MM-DD hh */
+                line[0] = (char)('0' + calendar.month / 10u);
+                line[1] = (char)('0' + calendar.month % 10u);
+                line[2] = '-';
+                line[3] = (char)('0' + calendar.day / 10u);
+                line[4] = (char)('0' + calendar.day % 10u);
+                line[6] = (char)('0' + calendar.hour / 10u);
+                line[7] = (char)('0' + calendar.hour % 10u);
+            } else {
+                /* DAY: YY-MM-DD */
+                const uint8_t year = (uint8_t)(calendar.year % 100u);
+                line[0] = (char)('0' + year / 10u);
+                line[1] = (char)('0' + year % 10u);
+                line[2] = '-';
+                line[3] = (char)('0' + calendar.month / 10u);
+                line[4] = (char)('0' + calendar.month % 10u);
+                line[5] = '-';
+                line[6] = (char)('0' + calendar.day / 10u);
+                line[7] = (char)('0' + calendar.day % 10u);
+            }
         } else {
             memcpy(line, "UP   ", 5u);
         }
