@@ -152,6 +152,19 @@ class Stm32Bootloader {
     await this.expectAck('Write Memory data');
   }
 
+  async goToAddress(address) {
+    await this.command(0x21, 0xde, 'Go');
+    const bytes = [
+      (address >>> 24) & 0xff,
+      (address >>> 16) & 0xff,
+      (address >>> 8) & 0xff,
+      address & 0xff,
+    ];
+    bytes.push(bytes.reduce((checksum, byte) => checksum ^ byte, 0));
+    await this.write(bytes);
+    await this.expectAck('Go address');
+  }
+
   async readMemory(address, length) {
     await this.command(0x11, 0xee, 'Read Memory');
     const addr = [
@@ -3111,6 +3124,7 @@ async function flashSelectedFirmware() {
   let session = null;
   let success = false;
   let startupResult = 'not-checked';
+  let startedByRomGo = false;
   const imageIdentity = selectedFirmwareImage.identity;
   try {
     session = await openBootloaderForImage(selectedFirmwareImage.extension);
@@ -3171,7 +3185,25 @@ async function flashSelectedFirmware() {
   } finally {
     const port = session?.port || selectedUsbPort || selectedSerialPort;
     if (session) {
+      if (success && session.info.commands.includes(0x21) &&
+          selectedFirmwareImage.pages.some((page) => page.address === STM32_FLASH_BASE)) {
+        try {
+          appendFirmwareLog('Starting the application with ROM GO at 0x08000000.');
+          await session.client.goToAddress(STM32_FLASH_BASE);
+          startedByRomGo = true;
+          appendFirmwareLog('ROM GO acknowledged; closing the bootloader session.', 'success');
+        } catch (error) {
+          appendFirmwareLog(`ROM GO failed: ${error.message}; falling back to the start signal.`, 'warning');
+        }
+      }
       await session.client.close(false);
+      if (startedByRomGo) {
+        try { await port.close(); portMayBeOpen = false; }
+        catch (error) {
+          portMayBeOpen = true;
+          appendFirmwareLog(`Could not close the bootloader port after GO: ${error.message}`, 'warning');
+        }
+      }
       if (success) {
         try {
           elements.flashFirmware.disabled = true;
@@ -3181,11 +3213,11 @@ async function flashSelectedFirmware() {
             appendFirmwareLog(imageIdentity === 'ours-partial'
               ? 'Starting partially compatible firmware and checking HELLO only…'
               : 'Starting our firmware and checking for HELLO…');
-            await startFirmwareAndVerify(port);
+            await startFirmwareAndVerify(port, startedByRomGo);
             startupResult = imageIdentity === 'ours-partial' ? 'partial-app-verified' : 'app-verified';
           } else if (imageIdentity === 'stock') {
             appendFirmwareLog('Starting stock firmware and checking fwid in 115200 8E1…');
-            const version = await startStockFirmwareAndVerify(port);
+            const version = await startStockFirmwareAndVerify(port, startedByRomGo);
             appendFirmwareLog(`Stock firmware answered fwid: ${version}.`, 'success');
             startupResult = 'stock-verified';
           } else {
@@ -3193,7 +3225,7 @@ async function flashSelectedFirmware() {
               ? 'project image is not on the JS-compatible checksum list'
               : 'image type is unknown';
             appendFirmwareLog(`Skipping the app protocol check because the ${skipReason}; sending the firmware-start signal only.`);
-            await sendFirmwareStartSignal(port);
+            if (!startedByRomGo) await sendFirmwareStartSignal(port);
             startupResult = 'unverified';
           }
         } catch (error) {
@@ -3388,14 +3420,49 @@ async function sendFirmwareStartSignal(port) {
     await port.open({ baudRate: 115200, dataBits: 8, parity: 'none', stopBits: 1, flowControl: 'none', bufferSize: 256 });
     portMayBeOpen = true;
   }
+  appendFirmwareLog('Application-start signal: DTR low, RTS high for 1 s, then close.');
   await port.setSignals({ dataTerminalReady: false, requestToSend: true });
   await delay(1000);
   await port.close();
   portMayBeOpen = false;
 }
 
-async function startFirmwareAndVerify(port) {
-  await sendFirmwareStartSignal(port);
+async function tryBootloaderGoToApplication(port) {
+  let client = null;
+  try {
+    if (!portMayBeOpen) {
+      await port.open({ baudRate: 115200, dataBits: 8, parity: 'even', stopBits: 1,
+        flowControl: 'none', bufferSize: 256 });
+      portMayBeOpen = true;
+    }
+    client = new Stm32Bootloader(port);
+    await client.write([0x7f]);
+    await client.expectAck('ROM synchronization', 800);
+    const info = await client.getCommands();
+    if (!info.commands.includes(0x21)) {
+      appendFirmwareLog('ROM bootloader does not advertise GO; using the signal-based start.');
+      return false;
+    }
+    const deviceId = await client.getDeviceId();
+    if (deviceId !== STM32_DEVICE_ID) throw new Error(`Unexpected STM32 ID 0x${deviceId.toString(16)}.`);
+    appendFirmwareLog('ROM bootloader detected; sending GO to 0x08000000.');
+    await client.goToAddress(STM32_FLASH_BASE);
+    appendFirmwareLog('ROM bootloader accepted GO; application should now be running.', 'success');
+    return true;
+  } catch (error) {
+    appendFirmwareLog(`ROM GO unavailable (${error.message}); trying the signal-based start.`);
+    return false;
+  } finally {
+    if (client) await client.close(false);
+    if (portMayBeOpen) {
+      try { await port.close(); portMayBeOpen = false; }
+      catch { portMayBeOpen = true; }
+    }
+  }
+}
+
+async function startFirmwareAndVerify(port, alreadyStarted = false) {
+  if (!alreadyStarted) await sendFirmwareStartSignal(port);
   let probe = null;
   try {
     probe = new SerialProtocol((frame) => probe?.dispatch(frame), () => {});
@@ -3406,8 +3473,8 @@ async function startFirmwareAndVerify(port) {
   }
 }
 
-async function startStockFirmwareAndVerify(port) {
-  await sendFirmwareStartSignal(port);
+async function startStockFirmwareAndVerify(port, alreadyStarted = false) {
+  if (!alreadyStarted) await sendFirmwareStartSignal(port);
   await port.open({ baudRate: 115200, dataBits: 8, parity: 'even', stopBits: 1, flowControl: 'none', bufferSize: 256 });
   portMayBeOpen = true;
   await delay(2000);
@@ -3453,8 +3520,12 @@ async function rebootToFirmware() {
   let actionError = null;
   try {
     ({ port } = await selectFirmwarePort());
-
-    await startFirmwareAndVerify(port);
+    if (serial) {
+      await serial.disconnect();
+      serial = null;
+    }
+    const startedByRomGo = await tryBootloaderGoToApplication(port);
+    await startFirmwareAndVerify(port, startedByRomGo);
     setRebootStatus('Firmware is running. Serial port disconnected.', 'success');
     appendFirmwareLog('Firmware responded to HELLO; serial port disconnected.', 'success');
     showNotice('Firmware responded to HELLO. Serial port disconnected.', 'success');
