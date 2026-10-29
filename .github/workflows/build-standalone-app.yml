@@ -178,11 +178,12 @@ jobs:
           The HTML and EXE include a recovery-backed SPI NOR dump flow and the matching temporary SPI service firmware.
 
           ## Changes
-          - Improved parallel minute, hour, and day logging and faster log retrieval.
-          - Improved minute, hour, and day graph navigation, cursor behavior, and redraw performance.
-          - Expanded EEPROM and SPI NOR dump, flash, restore, and erase controls.
-          - Improved Windows COM-port selection and the settings layout.
-          - Centralized the firmware display palette for easier theme changes.
+          - Reduced power use with low-frequency operation while the display is off.
+          - Stabilized the battery percentage using linear ADC mapping and hysteresis.
+          - Added LED TIME: full-brightness pulses with adjustable duration and solar-controlled AUTO; in AUTO, SOLAR is sampled every minute while the display is off.
+          - Adjusted the sound timer for low-frequency operation so clicks and alarms can sound with the display off.
+          - Reordered settings and added a two-column picker for longer option lists.
+          - Refreshed the manual and screen illustrations; identified known older firmware images with different LED settings as partially compatible.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded; used for app compatibility checks): ${canonical_sha256}

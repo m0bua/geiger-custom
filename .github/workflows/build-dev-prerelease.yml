@@ -198,8 +198,10 @@ jobs:
           ## Changes
           - Improved sleep behavior while the display is off.
           - Reduced battery percentage fluctuations with linear ADC mapping and hysteresis.
+          - Added LED TIME with adjustable full-brightness pulses and solar-controlled AUTO; in AUTO, SOLAR is sampled every minute while the display is off.
+          - Adjusted the sound timer for low-frequency operation while the display is off.
           - Reordered the settings menu, added a two-column option picker, and updated selection and action colors.
-          - Refreshed manual illustrations and clarified settings, log storage, and reset behavior.
+          - Refreshed the manual and illustrations; identified known older firmware images with different LED settings as partially compatible.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded): ${canonical_sha256}
