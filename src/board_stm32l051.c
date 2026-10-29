@@ -2342,9 +2342,9 @@ static bool lcd_graph_stat_icon_pixel(uint8_t stat, uint8_t x, uint8_t y)
 
 static bool lcd_graph_stat_value_pixel(uint8_t stat, uint8_t x, uint8_t y)
 {
-    if (stat == 3u && lcd_graph_log_type && lcd_graph_stat_min >= 36000000u) {
+    if (stat == 3u && lcd_graph_log_type && lcd_graph_stat_min >= 864000000u) {
         const uint8_t digit = x / 8u;
-        return font_small_pixel(digit < 5u ? lcd_graph_stat_values[stat][digit] : 'h',
+        return font_small_pixel(digit < 5u ? lcd_graph_stat_values[stat][digit] : 'd',
                                 (uint8_t)(x % 8u), y);
     }
     if (x < 8u) return lcd_graph_stat_icon_pixel(stat, x, y);
@@ -2534,12 +2534,21 @@ static void lcd_graph_format_duration(uint32_t seconds, char text[5])
     uint32_t value = seconds;
     char suffix = 's';
     if (seconds >= 10000u) {
-        value = seconds / 3600u;
-        suffix = value < 10000u ? 'h' : ' ';
+        value = seconds / 60u;
+        suffix = 'm';
+        if (value >= 1000u) {
+            value = seconds / 3600u;
+            suffix = 'h';
+            if (value >= 1000u) {
+                value = seconds / 86400u;
+                suffix = 'd';
+            }
+        }
     }
+    const bool wide = value >= 10000u;
     text[0] = text[1] = text[2] = text[3] = ' ';
-    text[4] = suffix;
-    for (uint8_t i = suffix == ' ' ? 5u : 4u;
+    text[4] = wide ? ' ' : suffix;
+    for (uint8_t i = wide ? 5u : 4u;
          value != 0u && i != 0u; ) {
         text[--i] = (char)('0' + value % 10u);
         value /= 10u;
