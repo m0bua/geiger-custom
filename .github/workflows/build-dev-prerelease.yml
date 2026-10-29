@@ -13,14 +13,17 @@ concurrency:
 
 jobs:
   build-app:
-    if: github.ref == 'refs/heads/dev'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
       tag: ${{ steps.release.outputs.tag }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
     steps:
       - name: Check out dev
         uses: actions/checkout@v4
+        with:
+          ref: dev
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -40,7 +43,10 @@ jobs:
       - name: Set pre-release tag
         id: release
         shell: bash
-        run: echo "tag=$(date -u +%Y%m%d%H%M)-dev-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+        run: |
+          source_sha="$(git rev-parse HEAD)"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "tag=$(date -u +%Y%m%d%H%M)-dev-${source_sha:0:7}" >> "$GITHUB_OUTPUT"
 
       - name: Build firmware and standalone app
         run: |
@@ -76,12 +82,14 @@ jobs:
 
   build-windows:
     needs: build-app
-    if: github.ref == 'refs/heads/dev'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
       - name: Check out dev
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build-app.outputs.source_sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -129,11 +137,13 @@ jobs:
 
   publish-prerelease:
     needs: [build-app, build-windows]
-    if: github.ref == 'refs/heads/dev'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     steps:
       - name: Check out dev
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build-app.outputs.source_sha }}
 
       - name: Download standalone HTML
         uses: actions/download-artifact@v4
@@ -163,6 +173,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.build-app.outputs.tag }}
+          SOURCE_SHA: ${{ needs.build-app.outputs.source_sha }}
         run: |
           cp spi-mini-staging/firmware.bin dist/spi-service-firmware.bin
           firmware="firmware-staging/firmware.bin"
@@ -185,7 +196,7 @@ jobs:
           Canonical 64 KiB flash image SHA-256 (0xFF padded): ${canonical_sha256}
           Windows app SHA-256: ${windows_sha256}
 
-          Built from commit ${GITHUB_SHA}. Tag timestamp is UTC.
+          Built from commit ${SOURCE_SHA}. Tag timestamp is UTC.
           EOF
           gh release create "$RELEASE_TAG" \
             dist/Dosimeter-App.html \
@@ -193,6 +204,6 @@ jobs:
             dist/spi-service-firmware.bin \
             dist/windows/Dosimeter-App.exe \
             --title "DEV-$RELEASE_TAG" \
-            --target "$GITHUB_SHA" \
+            --target "$SOURCE_SHA" \
             --prerelease \
             --notes-file /tmp/prerelease-notes.md

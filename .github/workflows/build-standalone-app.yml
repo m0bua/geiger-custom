@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   build-app:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -74,6 +75,7 @@ jobs:
 
   build-windows:
     needs: build-app
+    if: github.ref == 'refs/heads/main'
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
@@ -126,6 +128,7 @@ jobs:
 
   publish-release:
     needs: [build-app, build-windows]
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
