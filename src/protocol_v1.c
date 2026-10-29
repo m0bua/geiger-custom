@@ -4,6 +4,7 @@
 #include "log_history.h"
 #include "log_writer.h"
 #include "spi_nor.h"
+#include "spi_log.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -313,7 +314,9 @@ static void handle_frame(uint8_t *frame, uint8_t length)
             }
             log_cursor_t peek = cursor;
             response[1] = type; response[2] = count;
+            spi_log_freeze_find_cache(true);
             response[3] = count == requested && log_history_next(type, period, &peek, limit, &point) ? 1u : 0u;
+            spi_log_freeze_find_cache(false);
             write_u32(&response[4], cursor.time);
             write_u16(&response[8], cursor.epoch);
             write_u16(&response[10], cursor.skip);

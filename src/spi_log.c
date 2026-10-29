@@ -73,6 +73,9 @@ typedef struct {
 } query_cache_t;
 static query_cache_t query_cache;
 static spi_find_cache_t find_cache;
+static bool find_cache_frozen;
+
+void spi_log_freeze_find_cache(bool freeze) { find_cache_frozen = freeze; }
 
 static uint16_t count_erased_headers(spi_log_stream_t *stream,
                                     uint32_t *first_address);
@@ -820,20 +823,23 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
     uint16_t ceiling_slot = UINT16_MAX;
     if (!log_ready || index == 0xFFu || item == NULL) return false;
 
-    /* History is read newest-first. Reuse the previous slot and search only
-     * its older prefix while the cursor remains in the same SPI sector. */
-    if (skip == 0u && !inclusive && find_cache.valid &&
+    /* History is read newest-first. For alerts, the slot before the cached
+     * one also preserves distinct events with the same minute timestamp. */
+    bool alert_cache_step = kind == LOG_RECORD_ALERT && inclusive && skip != 0u;
+    if (((skip == 0u && !inclusive) || alert_cache_step) && find_cache.valid &&
         find_cache.kind == (uint8_t)kind &&
         find_cache.revision == query_revision &&
         find_cache.epoch == before_epoch &&
         find_cache.date_limit == date_limit &&
-        before_time <= find_cache.time) {
+        (alert_cache_step ? before_time == find_cache.time :
+            before_time <= find_cache.time)) {
         spi_find_cache_t *cache = &find_cache;
         spi_log_header_t header;
         if (read_header(cache->address, &header) == 1 &&
             header.kind == kind && header.epoch == cache->epoch &&
             header.generation == cache->generation && cache->slot != 0u) {
-            uint16_t low = 0u, high = cache->slot;
+            uint16_t low = alert_cache_step ? cache->slot : 0u;
+            uint16_t high = cache->slot;
             while (low < high) {
                 const uint16_t mid = (uint16_t)(low + (high - low) / 2u);
                 log_record_t record;
@@ -842,7 +848,8 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
                     !log_record_time(kind, record.period_index,
                         header.year_descriptor, reference, &time)) {
                     high = mid;
-                } else if (time < before_time) {
+                } else if (time < before_time ||
+                    (alert_cache_step && time == before_time)) {
                     low = (uint16_t)(mid + 1u);
                 } else {
                     high = mid;
@@ -855,12 +862,15 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
                 if (read_slot(kind, &header, cache->address, slot, &record) == 1 &&
                     log_record_time(kind, record.period_index,
                         header.year_descriptor, reference, &time) &&
-                    time < before_time) {
+                    (time < before_time ||
+                     (alert_cache_step && time == before_time))) {
                     *item = (log_stored_t){record, time, header.epoch,
                         header.year_descriptor,
                         (uint16_t)(header.generation * 512u + slot)};
-                    cache->time = time;
-                    cache->slot = slot;
+                    if (!find_cache_frozen) {
+                        cache->time = time;
+                        cache->slot = slot;
+                    }
                     return true;
                 }
             }
@@ -923,7 +933,8 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
             --skip; ceiling_generation = chosen_generation; ceiling_slot = chosen_slot; continue;
         }
         *item = best;
-        if (!inclusive && skip == 0u) {
+        if (!find_cache_frozen &&
+            ((!inclusive && skip == 0u) || kind == LOG_RECORD_ALERT)) {
             find_cache = (spi_find_cache_t){
                 .address = chosen_address,
                 .time = best.time,
@@ -935,7 +946,7 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
                 .kind = (uint8_t)kind,
                 .valid = true
             };
-        } else {
+        } else if (!find_cache_frozen) {
             find_cache.valid = false;
         }
         return true;

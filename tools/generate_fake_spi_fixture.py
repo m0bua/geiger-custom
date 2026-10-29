@@ -88,10 +88,10 @@ def generate(output: Path, counts: tuple[int, int, int, int]) -> tuple[int, int,
 
     for index in range(alert_count):
         moment = NOW - timedelta(hours=(alert_count - index) * 12)
-        alert_count = 36 + (index * 37) % 900
+        pulses = 36 + (index * 37) % 900
         maximum = min(262144, 63 + (index * 17) % 480)
         duration = 42 + (index * 53) % 1800
-        append(firmware, 3, moment, alert_count, maximum, 0, duration)
+        append(firmware, 3, moment, pulses, maximum, 0, duration)
 
     expected_counts = counts
     for kind, expected in enumerate(expected_counts):
@@ -99,15 +99,21 @@ def generate(output: Path, counts: tuple[int, int, int, int]) -> tuple[int, int,
         if actual != expected:
             raise RuntimeError(f"kind={kind}: expected {expected} records, got {actual}")
 
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(firmware.nor)
-
     firmware.reset()
     if not firmware.call("spi_log_init"):
         raise RuntimeError("Generated image did not pass the SPI log scan after reboot")
     actual_counts = tuple(firmware.call("spi_log_count", kind) for kind in range(4))
     if actual_counts != expected_counts:
         raise RuntimeError(f"Reboot scan returned unexpected counts: {actual_counts}")
+
+    alerts = firmware.points(3, 60, limit=alert_count)
+    if len(alerts) != alert_count or any(
+        left["time"] <= right["time"] for left, right in zip(alerts, alerts[1:])
+    ):
+        raise RuntimeError("Alert history is incomplete or not in newest-first order")
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(firmware.nor)
 
     print(f"Wrote {output.relative_to(ROOT)} ({output.stat().st_size:,} bytes)")
     print("Recovered log counts MIN/HOUR/DAY/ALERT:", *actual_counts)

@@ -47,6 +47,7 @@ def main():
     print(f'Toolchain: {toolchain}', flush=True)
     flags = ['-std=gnu11', '-mcpu=cortex-m0plus', '-mthumb', '-Os', '-g2',
              '-ffunction-sections', '-fdata-sections', '-fstack-usage', '-Wall', '-Wextra', '-Werror',
+             '-fno-inline-small-functions', '-fno-tree-switch-conversion',
              '-I', str(ROOT / 'include')]
     sources = sorted(source for source in (ROOT / 'src').glob('*.c')
                      if not source.name.startswith('spi_mini_'))

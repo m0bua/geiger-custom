@@ -38,6 +38,8 @@ uint32_t spi_log_count(log_record_kind_t kind);
 bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
                    uint32_t before_time, uint16_t skip, bool inclusive,
                    uint32_t date_limit, uint32_t reference, log_stored_t *item);
+/* Preserve the current sequential-read cursor during protocol lookahead. */
+void spi_log_freeze_find_cache(bool freeze);
 uint32_t spi_log_free_records(log_record_kind_t kind);
 
 /* Ensure an append sector exists for this segment. If the reserved sector is
