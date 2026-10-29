@@ -1,8 +1,6 @@
 name: Build dev pre-release
 
 on:
-  push:
-    branches: [dev]
   workflow_dispatch:
 
 permissions:
@@ -113,15 +111,12 @@ jobs:
       - name: Build Windows executable
         run: python tools/build_windows_app.py --version local --firmware-bin expected-firmware\firmware.bin --spi-mini-bin expected-spi-mini\firmware.bin --require-minifier
 
-      - name: Verify embedded firmware images
-        shell: pwsh
-        run: |
-          $expected = (Get-FileHash expected-firmware\firmware.bin -Algorithm SHA256).Hash
-          $built = (Get-FileHash .pio\scratch\geiger2_manual\firmware.bin -Algorithm SHA256).Hash
-          if ($expected -ne $built) { throw "Windows EXE firmware differs from the pre-release BIN" }
-          $expected = (Get-FileHash expected-spi-mini\firmware.bin -Algorithm SHA256).Hash
-          $built = (Get-FileHash .pio\build\geiger2_spi_mini\firmware.bin -Algorithm SHA256).Hash
-          if ($expected -ne $built) { throw "Windows EXE SPI image differs from the pre-release BIN" }
+      - name: Verify firmware embedded in the Windows app
+        run: >-
+          python tools/verify_embedded_images.py
+          --html .pio/scratch/windows-app/bundle/app/index.html
+          --firmware-bin expected-firmware/firmware.bin
+          --spi-mini-bin expected-spi-mini/firmware.bin
 
       - name: Upload Windows executable
         uses: actions/upload-artifact@v4

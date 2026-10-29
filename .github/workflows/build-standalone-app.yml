@@ -108,19 +108,12 @@ jobs:
       - name: Build Windows executable
         run: python tools/build_windows_app.py --version "${{ needs.build-app.outputs.tag }}" --firmware-bin expected-firmware\firmware.bin --spi-mini-bin expected-spi-mini\firmware.bin --require-minifier
 
-      - name: Verify the embedded firmware matches the release BIN
-        shell: pwsh
-        run: |
-          $expected = (Get-FileHash expected-firmware\firmware.bin -Algorithm SHA256).Hash
-          $built = (Get-FileHash .pio\scratch\geiger2_manual\firmware.bin -Algorithm SHA256).Hash
-          if ($expected -ne $built) { throw "Windows EXE firmware differs from release BIN: $built != $expected" }
-
-      - name: Verify the embedded SPI service image matches the release BIN
-        shell: pwsh
-        run: |
-          $expected = (Get-FileHash expected-spi-mini\firmware.bin -Algorithm SHA256).Hash
-          $built = (Get-FileHash .pio\build\geiger2_spi_mini\firmware.bin -Algorithm SHA256).Hash
-          if ($expected -ne $built) { throw "Windows EXE SPI service image differs from release BIN: $built != $expected" }
+      - name: Verify firmware embedded in the Windows app
+        run: >-
+          python tools/verify_embedded_images.py
+          --html .pio/scratch/windows-app/bundle/app/index.html
+          --firmware-bin expected-firmware/firmware.bin
+          --spi-mini-bin expected-spi-mini/firmware.bin
 
       - name: Upload Windows executable
         uses: actions/upload-artifact@v4
