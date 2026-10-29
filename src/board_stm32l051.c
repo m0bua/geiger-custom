@@ -2617,6 +2617,9 @@ static void lcd_graph_build_series(uint8_t requested)
     if (visible == 0u) return;
 
     {
+        /* Preserve the time scale while the requested history window fills.
+         * Stretching a short startup history across the whole plot fabricates
+         * a jump/valley that is not present in the samples. */
         const uint16_t data_start = visible >= requested ? 0u :
             (uint16_t)(LCD_GRAPH_PLOT_WIDTH - 1u -
                 (((uint32_t)(visible - 1u) * (LCD_GRAPH_PLOT_WIDTH - 1u)) /

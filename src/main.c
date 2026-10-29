@@ -92,7 +92,6 @@ int main(void)
     uint16_t calendar_day_key = UINT16_MAX;
     bool calendar_day_valid = false;
     uint32_t next_minute_tick;
-    uint32_t next_cpm_history_tick;
     uint32_t next_rate_display_tick;
     uint32_t latest_cpm = 23u;
     uint32_t latest_display_cpm = 23u;
@@ -198,7 +197,6 @@ int main(void)
     next_rate_display_tick = board_millis + 500u;
     next_total_checkpoint = board_millis + TOTAL_PULSE_CHECKPOINT_MS;
     cpm_history_init();
-    next_cpm_history_tick = board_millis + 500u;
     screen_timeout_ms = board_display_screen_timeout_ms();
     inactivity_deadline = board_millis + screen_timeout_ms;
     debug_usage_last_uptime = board_uptime_seconds_get();
@@ -639,15 +637,9 @@ int main(void)
                 board_display_set_rate(display_rate_thousandths,
                     display_cpm, pulses_since_start,
                     pulses_since_start >= 30u);
-                next_rate_display_tick = now + 500u;
-            }
-
-            if ((int32_t)(now - next_cpm_history_tick) >= 0) {
-                cpm_history_push(latest_cpm);
+                cpm_history_push(display_cpm);
                 board_display_history_updated();
-                /* Do not fabricate a burst of old samples after a delayed
-                 * service pass; resume the regular 500 ms cadence from now. */
-                next_cpm_history_tick = now + 500u;
+                next_rate_display_tick = now + 500u;
             }
 
             if (backlight_on && !screen_alarm_active &&
