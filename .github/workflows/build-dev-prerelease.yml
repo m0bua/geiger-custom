@@ -18,6 +18,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       tag: ${{ steps.release.outputs.tag }}
+      release_title: ${{ steps.release.outputs.release_title }}
       version: ${{ steps.release.outputs.version }}
       source_sha: ${{ steps.release.outputs.source_sha }}
     steps:
@@ -47,9 +48,11 @@ jobs:
         run: |
           source_sha="$(git rev-parse HEAD)"
           version="$(date -u +%Y%m%d%H%M)-dev"
+          release_title="DEV-${version%-dev}-${source_sha:0:7}"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=${version}-${source_sha:0:7}" >> "$GITHUB_OUTPUT"
+          echo "release_title=$release_title" >> "$GITHUB_OUTPUT"
 
       - name: Build firmware and standalone app
         run: |
@@ -178,6 +181,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.build-app.outputs.tag }}
+          RELEASE_TITLE: ${{ needs.build-app.outputs.release_title }}
           RELEASE_VERSION: ${{ needs.build-app.outputs.version }}
           SOURCE_SHA: ${{ needs.build-app.outputs.source_sha }}
         run: |
@@ -209,7 +213,7 @@ jobs:
             "$firmware" \
             dist/spi-service-firmware.bin \
             dist/windows/Dosimeter-App.exe \
-            --title "DEV-$RELEASE_TAG" \
+            --title "$RELEASE_TITLE" \
             --target "$SOURCE_SHA" \
             --prerelease \
             --notes-file /tmp/prerelease-notes.md
