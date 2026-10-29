@@ -4,3 +4,4 @@ BUG: battery % up-down
 
 FEAT: кольори тем
 FEAT: refactor long setting items
+FEAT: partial EEPROM/SPI img flash/read: start/end address selector.
