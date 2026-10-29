@@ -3,8 +3,10 @@
 #include "spi_nor.h"
 
 #include <stddef.h>
+#include <string.h>
 
 #define SPI_LOG_SECTOR_SIZE 4096u
+#define SPI_LOG_PAGE_SIZE 256u
 #define SPI_LOG_HEADER_SIZE 32u
 #define SPI_LOG_HEADER_COMMIT_OFFSET 16u
 #define SPI_LOG_HEADER_RETIRE_OFFSET 17u
@@ -45,6 +47,7 @@ typedef struct {
     uint32_t generation;
     uint16_t epoch;
     uint16_t slot;
+    uint8_t kind;
     bool valid;
 } spi_find_cache_t;
 
@@ -57,20 +60,37 @@ typedef struct {
     uint16_t epoch;
 } spi_log_header_t;
 
-static spi_log_stream_t streams[3];
+static spi_log_stream_t streams[4];
 static bool log_ready;
+static bool log_read_fault;
 static uint32_t query_revision;
 typedef struct {
     uint32_t revision, lower, upper, sector, first, last;
     uint16_t epoch;
     uint8_t year;
+    uint8_t kind;
     bool bounds, cached;
 } query_cache_t;
-static query_cache_t query_cache[3];
-static spi_find_cache_t find_cache[3];
+static query_cache_t query_cache;
+static spi_find_cache_t find_cache;
 
 static uint16_t count_erased_headers(spi_log_stream_t *stream,
                                     uint32_t *first_address);
+
+static void note_read_fault(void)
+{
+    log_read_fault = true;
+    ++query_revision;
+}
+
+static bool read_bytes(uint32_t address, uint8_t *data, size_t length)
+{
+    if (spi_nor_read(address, data, length)) return true;
+    note_read_fault();
+    return false;
+}
+
+bool spi_log_read_fault(void) { return log_read_fault; }
 
 static uint16_t read_u16_le(const uint8_t *data)
 {
@@ -104,17 +124,18 @@ static uint8_t stream_index(log_record_kind_t kind)
     switch (kind) {
     case LOG_RECORD_MINUTE: return 0u;
     case LOG_RECORD_HOUR: return 1u;
-    case LOG_RECORD_ALERT: return 2u;
+    case LOG_RECORD_DAY: return 2u;
+    case LOG_RECORD_ALERT: return 3u;
     default: return 0xFFu;
     }
 }
 
 static uint8_t stream_kind(uint8_t index)
 {
-    static const uint8_t kinds[3] = {
-        LOG_RECORD_MINUTE, LOG_RECORD_HOUR, LOG_RECORD_ALERT
+    static const uint8_t kinds[4] = {
+        LOG_RECORD_MINUTE, LOG_RECORD_HOUR, LOG_RECORD_DAY, LOG_RECORD_ALERT
     };
-    return index < 3u ? kinds[index] : 0xFFu;
+    return index < 4u ? kinds[index] : 0xFFu;
 }
 
 static uint16_t slot_size(log_record_kind_t kind, uint8_t version)
@@ -137,15 +158,14 @@ static uint32_t sector_address(const spi_log_stream_t *stream, uint16_t index)
     return stream->base_address + (uint32_t)index * SPI_LOG_SECTOR_SIZE;
 }
 
-/* Returns 1 for a committed valid header, 0 for erased, -1 for corrupt,
- * and -2 for a sector retired before erasure. */
+/* Returns 1 for valid, 0 for erased, -1 for uncommitted, -2 for retired,
+ * and -3 for a failed transfer or corrupt committed header. */
 static int8_t read_header(uint32_t address, spi_log_header_t *header)
 {
     uint8_t bytes[SPI_LOG_HEADER_SIZE];
     bool erased = true;
-    if (header == NULL || !spi_nor_read(address, bytes, sizeof(bytes))) {
-        return -1;
-    }
+    if (header == NULL) return -1;
+    if (!read_bytes(address, bytes, sizeof(bytes))) return -3;
     for (uint8_t i = 0u; i < sizeof(bytes); ++i) {
         if (bytes[i] != 0xFFu) erased = false;
     }
@@ -159,7 +179,13 @@ static int8_t read_header(uint32_t address, spi_log_header_t *header)
         (bytes[4] != SPI_LOG_VERSION &&
          bytes[4] != SPI_LOG_LEGACY_VERSION) ||
         bytes[SPI_LOG_HEADER_COMMIT_OFFSET] != SPI_LOG_HEADER_COMMIT ||
-        read_u16_le(&bytes[14]) != crc16(bytes, 14u)) return -1;
+        read_u16_le(&bytes[14]) != crc16(bytes, 14u)) {
+        if (bytes[SPI_LOG_HEADER_COMMIT_OFFSET] == SPI_LOG_HEADER_COMMIT) {
+            note_read_fault();
+            return -3;
+        }
+        return -1;
+    }
 
     header->kind = (log_record_kind_t)bytes[5];
     header->version = bytes[4];
@@ -169,7 +195,10 @@ static int8_t read_header(uint32_t address, spi_log_header_t *header)
     header->epoch = read_u16_le(&bytes[12]);
     if (stream_index(header->kind) == 0xFFu ||
         header->segment_id >= LOG_SEGMENT_ID_COUNT ||
-        (header->year_descriptor & 0xC0u) != 0u) return -1;
+        (header->year_descriptor & 0xC0u) != 0u) {
+        note_read_fault();
+        return -3;
+    }
     return 1;
 }
 
@@ -178,7 +207,7 @@ static bool sector_fully_erased(uint32_t address)
     uint8_t buffer[64];
     for (uint16_t offset = 0u; offset < SPI_LOG_SECTOR_SIZE;
          offset = (uint16_t)(offset + sizeof(buffer))) {
-        if (!spi_nor_read(address + offset, buffer, sizeof(buffer))) return false;
+        if (!read_bytes(address + offset, buffer, sizeof(buffer))) return false;
         for (uint8_t i = 0u; i < sizeof(buffer); ++i) {
             if (buffer[i] != 0xFFu) return false;
         }
@@ -207,7 +236,8 @@ static uint16_t slot_crc(log_record_kind_t kind,
     return log_crc16(data, (uint16_t)length, crc);
 }
 
-/* Returns 1 for valid, 0 for erased, and -1 for an incomplete/corrupt slot. */
+/* Returns 1 for valid, 0 for erased, -1 for an incomplete slot,
+ * and -2 for a failed transfer or corrupt committed slot. */
 static int8_t read_slot(log_record_kind_t kind,
                         const spi_log_header_t *header, uint32_t sector,
                         uint16_t index,
@@ -223,7 +253,7 @@ static int8_t read_slot(log_record_kind_t kind,
         index >= slot_capacity(kind, header->version)) return -1;
     const uint32_t address = sector + SPI_LOG_HEADER_SIZE +
         (uint32_t)index * size;
-    if (!spi_nor_read(address, bytes, size)) return -1;
+    if (!read_bytes(address, bytes, size)) return -2;
 
     {
         bool erased = true;
@@ -237,7 +267,13 @@ static int8_t read_slot(log_record_kind_t kind,
         read_u16_le(&bytes[data_size]) != slot_crc(kind, header, index,
             bytes, data_size) ||
         !log_record_decode(kind, bytes, data_size, record) ||
-        record->segment_id != header->segment_id) return -1;
+        record->segment_id != header->segment_id) {
+        if (bytes[data_size + 2u] == SPI_LOG_RECORD_COMMIT) {
+            note_read_fault();
+            return -2;
+        }
+        return -1;
+    }
     return 1;
 }
 
@@ -250,7 +286,9 @@ static uint16_t count_sector_records(log_record_kind_t kind,
     log_record_t record;
     while (low < high) {
         uint16_t mid = (uint16_t)(low + (high - low) / 2u);
-        if (read_slot(kind, header, address, mid, &record) == 1) low = (uint16_t)(mid + 1u);
+        int8_t status = read_slot(kind, header, address, mid, &record);
+        if (status == -2) return UINT16_MAX;
+        if (status == 1) low = (uint16_t)(mid + 1u);
         else high = mid;
     }
     return low;
@@ -300,7 +338,7 @@ static bool sector_info_at(spi_log_stream_t *stream, uint16_t sector_index,
     info->segment_id = header.segment_id;
     info->year_descriptor = header.year_descriptor;
     info->record_count = count_sector_records(header.kind, &header, address);
-    return true;
+    return info->record_count != UINT16_MAX;
 }
 
 static bool spi_log_scan(bool recover)
@@ -308,21 +346,23 @@ static bool spi_log_scan(bool recover)
     const uint32_t capacity = spi_nor_size_bytes();
     const uint32_t sector_count = capacity / SPI_LOG_SECTOR_SIZE;
     uint32_t base = 0u;
-    uint32_t partition_base_count;
-    uint32_t remainder;
+    const uint32_t partition_counts[3] = {
+        (sector_count * 90u) / 256u,
+        (sector_count * 30u) / 256u,
+        (sector_count * 50u) / 256u
+    };
 
     log_ready = false;
+    log_read_fault = false;
     ++query_revision;
-    if (!spi_nor_is_ready() || sector_count < 6u ||
+    if (!spi_nor_is_ready() || sector_count < 18u ||
         capacity % SPI_LOG_SECTOR_SIZE != 0u) return false;
-    partition_base_count = sector_count / 3u;
-    remainder = sector_count % 3u;
 
-    for (uint8_t index = 0u; index < 3u; ++index) {
+    for (uint8_t index = 0u; index < 4u; ++index) {
         spi_log_stream_t *stream = &streams[index];
         stream->base_address = base;
-        stream->sector_count = (uint16_t)(partition_base_count +
-            (index == 2u ? remainder : 0u));
+        stream->sector_count = (uint16_t)(index < 3u ?
+            partition_counts[index] : sector_count - base / SPI_LOG_SECTOR_SIZE);
         stream->active_address = 0u;
         stream->active_generation = 0u;
         stream->newest_generation = 0u;
@@ -344,9 +384,10 @@ static bool spi_log_scan(bool recover)
             spi_log_header_t header;
             const int8_t status = read_header(address, &header);
             if (status == 0) continue;
+            if (status == -3) return false;
             if (status < 0) {
                 uint8_t prefix[SPI_LOG_HEADER_COMMIT_OFFSET + 1u];
-                if (!spi_nor_read(address, prefix, sizeof(prefix))) return false;
+                if (!read_bytes(address, prefix, sizeof(prefix))) return false;
                 /* The header commit byte is always programmed before records.
                  * An uncommitted sector is safe to reclaim after a reset. */
                 if (recover && (status == -2 ||
@@ -387,6 +428,7 @@ static bool spi_log_scan(bool recover)
                     (log_record_kind_t)stream_kind(index), &active_header,
                     stream->active_address, stream->next_slot, &record);
                 if (status == 0) break;
+                if (status == -2) return false;
                 if (status < 0) {
                     stream->next_slot = stream->slot_capacity;
                     stream->appendable = false;
@@ -418,7 +460,7 @@ bool spi_log_latest_epoch(uint16_t *epoch)
     bool found = false;
     uint16_t newest = 0u;
     if (!log_ready || epoch == NULL) return false;
-    for (uint8_t i = 0u; i < 3u; ++i) {
+    for (uint8_t i = 0u; i < 4u; ++i) {
         if (!streams[i].has_active) continue;
         if (!found || streams[i].active_epoch > newest) {
             newest = streams[i].active_epoch;
@@ -439,6 +481,7 @@ uint32_t spi_log_free_records(log_record_kind_t kind)
     if (!log_ready || index == 0xFFu) return 0u;
     stream = &streams[index];
     erased_count = count_erased_headers(stream, &first_address);
+    if (erased_count == UINT16_MAX) return 0u;
     free_records = (uint32_t)erased_count * stream->slot_capacity;
     if (stream->has_active && stream->appendable) {
         free_records += stream->slot_capacity - stream->next_slot;
@@ -458,11 +501,14 @@ bool spi_log_find_oldest(log_record_kind_t kind,
     bool found = false;
     spi_log_sector_info_t oldest = {0u, 0u, 0u, 0u, 0u, 0u};
 
-    if (!log_ready || index == 0xFFu || sector == NULL) return false;
+    if (!log_ready || log_read_fault || index == 0xFFu || sector == NULL) return false;
     stream = &streams[index];
     for (uint16_t i = 0u; i < stream->sector_count; ++i) {
         spi_log_sector_info_t candidate;
-        if (!sector_info_at(stream, i, &candidate)) continue;
+        if (!sector_info_at(stream, i, &candidate)) {
+            if (log_read_fault) return false;
+            continue;
+        }
         if (!found || candidate.generation < oldest.generation) {
             oldest = candidate;
             found = true;
@@ -480,13 +526,18 @@ static uint16_t count_erased_headers(spi_log_stream_t *stream,
         spi_log_header_t header;
         const uint32_t address = sector_address(stream, i);
         int8_t status = read_header(address, &header);
+        if (status == -3) return UINT16_MAX;
         if (status == -2) {
-            if (erase_and_verify(address)) status = 0;
+            if (!erase_and_verify(address)) return UINT16_MAX;
+            status = 0;
         } else if (status < 0) {
             uint8_t marker = SPI_LOG_HEADER_COMMIT;
-            if (spi_nor_read(address + SPI_LOG_HEADER_COMMIT_OFFSET,
-                    &marker, 1u) && marker != SPI_LOG_HEADER_COMMIT &&
-                erase_and_verify(address)) status = 0;
+            if (!read_bytes(address + SPI_LOG_HEADER_COMMIT_OFFSET,
+                    &marker, 1u)) return UINT16_MAX;
+            if (marker != SPI_LOG_HEADER_COMMIT) {
+                if (!erase_and_verify(address)) return UINT16_MAX;
+                status = 0;
+            }
         }
         if (status == 0) {
             if (erased_count == 0u && first_address != NULL) {
@@ -523,12 +574,13 @@ spi_log_prepare_result_t spi_log_prepare(log_record_kind_t kind,
     }
 
     erased_count = count_erased_headers(stream, &free_address);
+    if (erased_count == UINT16_MAX) return SPI_LOG_ERROR;
     if (erased_count <= 1u) {
         return spi_log_find_oldest(kind, oldest) ?
             SPI_LOG_NEEDS_EVICTION : SPI_LOG_ERROR;
     }
     if (!sector_fully_erased(free_address) &&
-        !erase_and_verify(free_address)) return SPI_LOG_ERROR;
+        (log_read_fault || !erase_and_verify(free_address))) return SPI_LOG_ERROR;
 
     generation = stream->has_generation ? stream->newest_generation + 1u : 0u;
     if (!write_header(free_address, kind, epoch, year_descriptor,
@@ -583,18 +635,16 @@ bool spi_log_append(log_record_kind_t kind, uint16_t epoch,
     crc = slot_crc(kind, &header, stream->next_slot, data, data_size);
     for (size_t i = 0u; i < data_size; ++i) payload[i] = data[i];
     write_u16_le(&payload[data_size], crc);
-    if (!spi_nor_program_page(address, payload, data_size + 2u) ||
+    const size_t payload_size = data_size + 2u;
+    size_t first = SPI_LOG_PAGE_SIZE - (address % SPI_LOG_PAGE_SIZE);
+    if (first > payload_size) first = payload_size;
+    if (!spi_nor_program_page(address, payload, first) ||
+        (first < payload_size && !spi_nor_program_page(address + (uint32_t)first,
+            payload + first, payload_size - first)) ||
         !spi_nor_program_page(address + data_size + 2u, &marker, 1u) ||
-        !spi_nor_read(address, verify_bytes, size) ||
+        !read_bytes(address, verify_bytes, size) ||
         verify_bytes[data_size + 2u] != SPI_LOG_RECORD_COMMIT ||
-        read_u16_le(&verify_bytes[data_size]) != crc ||
-        !log_record_decode(kind, verify_bytes, data_size, &decoded) ||
-        decoded.segment_id != record->segment_id ||
-        decoded.period_index != record->period_index ||
-        decoded.count != record->count ||
-        decoded.maximum_cpm != record->maximum_cpm ||
-        decoded.duration_seconds != record->duration_seconds ||
-        decoded.covered_seconds != record->covered_seconds) {
+        memcmp(verify_bytes, payload, payload_size) != 0) {
         stream->appendable = false;
         return false;
     }
@@ -643,7 +693,7 @@ bool spi_log_erase_oldest(log_record_kind_t kind,
         streams[index].appendable = false;
         streams[index].next_slot = 0u;
     }
-    if (!spi_nor_read(sector->address + SPI_LOG_HEADER_RETIRE_OFFSET,
+    if (!read_bytes(sector->address + SPI_LOG_HEADER_RETIRE_OFFSET,
             &verify_retired, 1u) || verify_retired != retired) return false;
     ++query_revision;
     if (!erase_and_verify(sector->address)) return false;
@@ -661,6 +711,7 @@ static bool query_sector(log_record_kind_t kind, uint32_t address,
                           log_record_t *record)
 {
     uint16_t low = 0u, high = count_sector_records(kind, header, address);
+    if (high == UINT16_MAX) return false;
     while (low < high) {
         uint16_t mid = (uint16_t)(low + (high - low) / 2u);
         log_record_t part;
@@ -682,9 +733,11 @@ bool spi_log_query_read(void *context, log_record_kind_t kind,
     uint32_t period;
     if (!log_ready || index == 0xFFu || record == NULL || live == NULL ||
         !log_record_location(kind, period_start, calendar, &period, &year)) return false;
-    query_cache_t *cache = &query_cache[index];
-    if (cache->revision != query_revision || cache->epoch != epoch || cache->year != year) {
-        *cache = (query_cache_t){.revision=query_revision, .epoch=epoch, .year=year, .lower=UINT32_MAX};
+    query_cache_t *cache = &query_cache;
+    if (cache->revision != query_revision || cache->epoch != epoch ||
+        cache->year != year || cache->kind != (uint8_t)kind) {
+        *cache = (query_cache_t){.revision=query_revision, .epoch=epoch,
+            .year=year, .kind=(uint8_t)kind, .lower=UINT32_MAX};
     }
     if (cache->bounds && (period < cache->lower || period > cache->upper)) return false;
     if (cache->cached && period > cache->first + 1u && period + 1u < cache->last) {
@@ -700,9 +753,12 @@ bool spi_log_query_read(void *context, log_record_kind_t kind,
         uint32_t address = sector_address(&streams[index], sector);
         spi_log_header_t header;
         log_record_t first, last, candidate;
-        if (read_header(address, &header) != 1 || header.kind != kind ||
+        int8_t status = read_header(address, &header);
+        if (status == -3) return false;
+        if (status != 1 || header.kind != kind ||
             header.epoch != epoch || header.year_descriptor != year) continue;
         uint16_t count = count_sector_records(kind, &header, address);
+        if (count == UINT16_MAX) return false;
         if (!count || read_slot(kind, &header, address, 0u, &first) != 1 ||
             read_slot(kind, &header, address, (uint16_t)(count - 1u), &last) != 1) continue;
         if (first.period_index < cache->lower) cache->lower = first.period_index;
@@ -730,8 +786,13 @@ uint32_t spi_log_count(log_record_kind_t kind)
         for (uint16_t sector = 0u; sector < stream->sector_count; ++sector) {
             spi_log_header_t header;
             uint32_t address = sector_address(stream, sector);
-            if (read_header(address, &header) == 1 && header.kind == kind)
-                count += count_sector_records(kind, &header, address);
+            int8_t status = read_header(address, &header);
+            if (status == -3) return 0u;
+            if (status == 1 && header.kind == kind) {
+                uint16_t records = count_sector_records(kind, &header, address);
+                if (records == UINT16_MAX) return 0u;
+                count += records;
+            }
         }
         stream->record_count = count;
         stream->record_count_valid = true;
@@ -742,8 +803,10 @@ uint32_t spi_log_count(log_record_kind_t kind)
 bool spi_log_clear(void)
 {
     if (!spi_nor_is_ready()) return false;
+    log_read_fault = false;
     for (uint32_t address = 0u; address < spi_nor_size_bytes(); address += SPI_LOG_SECTOR_SIZE) {
-        if (!sector_fully_erased(address) && !erase_and_verify(address)) return false;
+        if (!sector_fully_erased(address) &&
+            (log_read_fault || !erase_and_verify(address))) return false;
     }
     return spi_log_init();
 }
@@ -759,12 +822,13 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
 
     /* History is read newest-first. Reuse the previous slot and search only
      * its older prefix while the cursor remains in the same SPI sector. */
-    if (skip == 0u && !inclusive && find_cache[index].valid &&
-        find_cache[index].revision == query_revision &&
-        find_cache[index].epoch == before_epoch &&
-        find_cache[index].date_limit == date_limit &&
-        before_time <= find_cache[index].time) {
-        spi_find_cache_t *cache = &find_cache[index];
+    if (skip == 0u && !inclusive && find_cache.valid &&
+        find_cache.kind == (uint8_t)kind &&
+        find_cache.revision == query_revision &&
+        find_cache.epoch == before_epoch &&
+        find_cache.date_limit == date_limit &&
+        before_time <= find_cache.time) {
+        spi_find_cache_t *cache = &find_cache;
         spi_log_header_t header;
         if (read_header(cache->address, &header) == 1 &&
             header.kind == kind && header.epoch == cache->epoch &&
@@ -812,9 +876,12 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
         for (uint16_t sector = 0u; sector < streams[index].sector_count; ++sector) {
             spi_log_header_t header;
             uint32_t address = sector_address(&streams[index], sector);
-            if (read_header(address, &header) != 1 || header.kind != kind ||
+            int8_t status = read_header(address, &header);
+            if (status == -3) return false;
+            if (status != 1 || header.kind != kind ||
                 header.epoch > before_epoch || (found && header.epoch < best.epoch)) continue;
             uint16_t high = count_sector_records(kind, &header, address);
+            if (high == UINT16_MAX) return false;
             uint16_t low = 0u;
             /* Monotonic dates within a calendar epoch; find the newest eligible slot. */
             while (low < high) {
@@ -857,7 +924,7 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
         }
         *item = best;
         if (!inclusive && skip == 0u) {
-            find_cache[index] = (spi_find_cache_t){
+            find_cache = (spi_find_cache_t){
                 .address = chosen_address,
                 .time = best.time,
                 .date_limit = date_limit,
@@ -865,10 +932,11 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
                 .generation = chosen_generation,
                 .epoch = best.epoch,
                 .slot = chosen_slot,
+                .kind = (uint8_t)kind,
                 .valid = true
             };
         } else {
-            find_cache[index].valid = false;
+            find_cache.valid = false;
         }
         return true;
     }
@@ -877,15 +945,18 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
 bool spi_log_expire_alerts(uint8_t year)
 {
     if (!log_ready) return false;
-    spi_log_stream_t *stream = &streams[2];
+    spi_log_stream_t *stream = &streams[3];
     for (uint16_t sector = 0u; sector < stream->sector_count; ++sector) {
         uint32_t address = sector_address(stream, sector);
         spi_log_header_t header;
-        if (read_header(address, &header) != 1 || !(header.year_descriptor & LOG_YEAR_VALID) ||
+        int8_t status = read_header(address, &header);
+        if (status == -3) return false;
+        if (status != 1 || !(header.year_descriptor & LOG_YEAR_VALID) ||
             ((year - header.year_descriptor) & LOG_YEAR_MASK) < 15u) continue;
         uint8_t retired = SPI_LOG_HEADER_RETIRED;
         uint16_t count = stream->record_count_valid ?
             count_sector_records(LOG_RECORD_ALERT, &header, address) : 0u;
+        if (count == UINT16_MAX) return false;
         if (!spi_nor_program_page(address + SPI_LOG_HEADER_RETIRE_OFFSET, &retired, 1u) ||
             !erase_and_verify(address)) return false;
         if (stream->record_count_valid) {

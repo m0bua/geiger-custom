@@ -30,6 +30,7 @@ typedef struct {
 /* Initializes the SPI log partitions and recovers each newest append sector. */
 bool spi_log_init(void);
 bool spi_log_open_readonly(void);
+bool spi_log_read_fault(void);
 bool spi_log_latest_epoch(uint16_t *epoch);
 bool spi_log_clear(void);
 bool spi_log_expire_alerts(uint8_t year);

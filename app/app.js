@@ -35,6 +35,7 @@ const KNOWN_STOCK_IMAGE_SHA256 = 'cee27644cccea4023118f97d1a990be3bf6acb44748d61
 // SHA-256 of the canonical 64 KiB flash image (gaps filled with 0xFF), not the source file.
 // Maintain these lists for this JS protocol; clear/review them when the protocol changes.
 const COMPATIBLE_PROJECT_IMAGE_SHA256 = new Set([
+  'a18769eb3937e0bdd7ca1c3e263f8e2ad3ece6b60795c81ac13c6a6ecd71da20',
   'ca1447612d433d5dfdfcb7d2c7f14d9a4a98fde337fbb9160b896aa1b77fbe81',
 ]);
 // Known project builds with a non-breaking protocol/settings difference (for example,

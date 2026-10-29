@@ -33,7 +33,7 @@ static bool read_record(void *context, log_record_kind_t kind, uint16_t epoch,
         ((current.year & LOG_YEAR_VALID) != 0u) == reader->time.calendar_valid) {
         *record = current.record; *live = true; return true;
     }
-    if (reader->memory == BOARD_LOG_MEMORY_SPI && kind != LOG_RECORD_DAY)
+    if (reader->memory == BOARD_LOG_MEMORY_SPI)
         return spi_log_query_read(&reader->time, kind, epoch, start, record, live);
     return log_eeprom_query_read(&reader->time, kind, epoch, start, record, live);
 }
@@ -61,7 +61,7 @@ bool log_history_next_from(uint8_t memory, uint8_t type, uint32_t period,
          (period >= 3600u ? LOG_RECORD_HOUR : LOG_RECORD_MINUTE));
     uint8_t last_kind = first_kind;
     for (uint8_t kind = first_kind; kind <= last_kind; ++kind) {
-        bool got = memory == BOARD_LOG_MEMORY_SPI && kind != LOG_RECORD_DAY ?
+        bool got = memory == BOARD_LOG_MEMORY_SPI ?
             spi_log_find((log_record_kind_t)kind, cursor->epoch, cursor->time,
                 backend_skip, type == LOG_RECORD_ALERT, date_limit, reference, &candidate) :
             log_eeprom_find((log_record_kind_t)kind, cursor->epoch, cursor->time,
@@ -142,7 +142,7 @@ uint32_t log_history_count(uint8_t type)
 {
     if (type > 3u) return 0u;
     uint8_t memory = board_display_log_source();
-    uint32_t count = memory == BOARD_LOG_MEMORY_SPI && type != LOG_RECORD_DAY ?
+    uint32_t count = memory == BOARD_LOG_MEMORY_SPI ?
         spi_log_count((log_record_kind_t)type) : log_eeprom_count((log_record_kind_t)type);
     return count;
 }

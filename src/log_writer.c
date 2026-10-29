@@ -2,6 +2,7 @@
 
 #include "board.h"
 #include "log_eeprom.h"
+#include "log_eeprom_layout.h"
 #include "log_record.h"
 #include "spi_log.h"
 #include "spi_nor.h"
@@ -80,6 +81,25 @@ static bool append_record(log_record_kind_t kind, uint16_t epoch,
                           uint8_t year_descriptor,
                           const log_record_t *record);
 
+#define SPI_LAYOUT_TAG_0 0xD4u
+#define SPI_LAYOUT_TAG_1 0x2Bu
+
+static bool format_spi_log_layout(void)
+{
+    return spi_log_clear() && log_eeprom_reset(false) &&
+        board_eeprom_write(LOG_EEPROM_SPI_LAYOUT_TAG_BASE, SPI_LAYOUT_TAG_0) &&
+        board_eeprom_write(LOG_EEPROM_SPI_LAYOUT_TAG_BASE + 1u, SPI_LAYOUT_TAG_1);
+}
+
+static bool prepare_spi_log_layout(void)
+{
+    uint8_t tag0, tag1;
+    if (!board_eeprom_read(LOG_EEPROM_SPI_LAYOUT_TAG_BASE, &tag0) ||
+        !board_eeprom_read(LOG_EEPROM_SPI_LAYOUT_TAG_BASE + 1u, &tag1)) return false;
+    if (tag0 == SPI_LAYOUT_TAG_0 && tag1 == SPI_LAYOUT_TAG_1) return spi_log_init();
+    return format_spi_log_layout();
+}
+
 static bool should_persist_period(log_record_kind_t kind)
 {
     return kind == LOG_RECORD_HOUR || kind == LOG_RECORD_DAY;
@@ -94,9 +114,6 @@ static bool append_record(log_record_kind_t kind, uint16_t epoch,
         return log_eeprom_append(kind, epoch, record, year_descriptor);
     }
     if (active_log_memory != BOARD_LOG_MEMORY_SPI) return false;
-    if (kind == LOG_RECORD_DAY) {
-        return log_eeprom_append(kind, epoch, record, year_descriptor);
-    }
     spi_log_sector_info_t oldest;
     spi_log_prepare_result_t prepared = spi_log_prepare(kind, epoch,
         year_descriptor, &oldest);
@@ -124,10 +141,7 @@ static void close_period(log_record_kind_t kind,
         (accumulator->year_descriptor & SPI_LOG_YEAR_VALID) != 0u;
     read_record = active_log_memory == BOARD_LOG_MEMORY_EEPROM ?
         log_eeprom_query_read : spi_log_query_read;
-    if (kind == LOG_RECORD_DAY && active_log_memory == BOARD_LOG_MEMORY_SPI) {
-        if (log_eeprom_query_read(&time_context, kind, accumulator->epoch,
-                accumulator->period_start, &existing, &live)) return;
-    } else if (read_record(&time_context, kind, accumulator->epoch,
+    if (read_record(&time_context, kind, accumulator->epoch,
             accumulator->period_start, &existing, &live)) return;
     if (!log_query_aggregate(read_record, &time_context,
             accumulator->epoch, accumulator->period_start, period_seconds,
@@ -198,6 +212,7 @@ static void close_alert(void)
     record.maximum_cpm = alert_accumulator.maximum_cpm;
     record.duration_seconds = alert_accumulator.duration;
     record.segment_id = alert_accumulator.segment_id;
+    record.covered_seconds = 0u;
     if (!append_record(LOG_RECORD_ALERT, alert_accumulator.epoch,
         alert_accumulator.year_descriptor, &record)) writer_fault = true;
     alert_accumulator.active = false;
@@ -254,7 +269,8 @@ bool log_writer_init(void)
     if (!log_eeprom_init()) goto failed;
     if (log_memory == BOARD_LOG_MEMORY_OFF) {
         if (board_display_log_source() == BOARD_LOG_MEMORY_SPI &&
-            (!spi_nor_is_ready() || !spi_log_open_readonly())) goto failed;
+            (!(spi_nor_is_ready() || spi_nor_init()) ||
+             !prepare_spi_log_layout())) goto failed;
         return true;
     }
     if (log_memory == BOARD_LOG_MEMORY_EEPROM) {
@@ -264,7 +280,7 @@ bool log_writer_init(void)
         return true;
     }
     if (log_memory != BOARD_LOG_MEMORY_SPI) goto failed;
-    if (!spi_log_init()) goto failed;
+    if (!prepare_spi_log_layout()) goto failed;
     have_epoch = spi_log_latest_epoch(&latest_epoch);
     current_epoch = have_epoch ? latest_epoch : 0u;
     writer_ready = true;
@@ -455,15 +471,15 @@ bool log_writer_change_memory(uint8_t target)
     if (!log_eeprom_init()) return false;
     if (target == source) {
         if (target == BOARD_LOG_MEMORY_SPI)
-            return (spi_nor_is_ready() || spi_nor_init()) && spi_log_init();
+            return (spi_nor_is_ready() || spi_nor_init()) &&
+                prepare_spi_log_layout();
         return true;
     }
     if (target == BOARD_LOG_MEMORY_SPI) {
-        return (spi_nor_is_ready() || spi_nor_init()) && spi_log_clear() &&
-            log_eeprom_reset(true);
+        return (spi_nor_is_ready() || spi_nor_init()) &&
+            format_spi_log_layout();
     }
-    /* Each backend starts a fresh min/hour/alert history; daily EEPROM logs stay shared. */
-    return log_eeprom_reset(true);
+    return log_eeprom_reset(false);
 }
 
 void log_writer_memory_committed(uint8_t target)
@@ -474,7 +490,11 @@ void log_writer_memory_committed(uint8_t target)
     alert_accumulator.active = false;
     hour_accumulator.active = false;
     have_clock_sample = false;
-    if (target == BOARD_LOG_MEMORY_OFF) day_accumulator.active = false;
+    day_accumulator.active = false;
 }
 
-bool log_writer_fault(void) { return writer_fault; }
+bool log_writer_fault(void)
+{
+    return writer_fault || (board_display_log_source() == BOARD_LOG_MEMORY_SPI &&
+        spi_log_read_fault());
+}

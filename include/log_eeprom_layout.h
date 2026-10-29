@@ -53,6 +53,9 @@
 #define LOG_EEPROM_METADATA_END \
     (LOG_EEPROM_TABLE_CRC_BASE + LOG_EEPROM_TABLE_CRC_SIZE)
 
+/* Two bytes kept outside the EEPROM logger metadata identify the SPI layout. */
+#define LOG_EEPROM_SPI_LAYOUT_TAG_BASE LOG_EEPROM_METADATA_END
+
 _Static_assert(LOG_EEPROM_SERVICE_BASE >=
         LOG_EEPROM_ALERT_BASE + LOG_EEPROM_ALERT_SIZE_BYTES,
     "EEPROM logger records overlap the metadata area");

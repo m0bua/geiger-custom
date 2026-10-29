@@ -66,7 +66,6 @@ class Engine:
             'board_eeprom_read': self.read_eeprom,
             'board_eeprom_write': self.write_eeprom,
             'board_rtc_log_time': self.clock,
-            'board_log_workspace': lambda a: self.symbols['lcd_text_glyph'],
             'spi_nor_is_ready': lambda a: int(self.ready),
             'spi_nor_size_bytes': lambda a: len(self.nor),
             'spi_nor_init': self.init_spi,
@@ -120,6 +119,8 @@ class Engine:
     def program_spi(self, a):
         address, ptr, length = a[:3]
         assert address + length <= len(self.nor)
+        if length == 0 or length > 256 or address // 256 != (address + length - 1) // 256:
+            return 0
         data = bytes(self.cpu.mem_read(ptr, length))
         for i, value in enumerate(data):
             if self.spi_cut == self.spi_writes: raise PowerCut()

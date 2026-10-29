@@ -141,6 +141,13 @@ bool spi_nor_init(void)
         while ((int32_t)(board_millis - ready_at) < 0) { }
     }
 
+    /* A controller reset can leave the flash finishing an earlier erase or
+     * program operation. Wait before reading JEDEC or scanning log headers. */
+    if (!nor_wait_ready(500u)) {
+        REG32(SPI1_BASE + SPI_CR1) &= ~(1u << 6u);
+        return false;
+    }
+
     nor_cs(true);
     const bool id_read = spi_transfer(0x9Fu, NULL) &&
         spi_transfer(0u, &nor_id.manufacturer) &&
