@@ -166,7 +166,8 @@ static uint32_t lcd_search_mode_started;
 #define LCD_GRAPH_PARTIAL_LIVE 3u
 #define LCD_GRAPH_TOP (FONT_SMALL_CELL_HEIGHT + \
     (FONT_SMALL_CELL_HEIGHT / 2u))
-#define LCD_GRAPH_HEIGHT (LCD_HEIGHT - LCD_GRAPH_TOP)
+#define LCD_GRAPH_BASELINE (LCD_HEIGHT - 10u)
+#define LCD_GRAPH_HEIGHT (LCD_GRAPH_BASELINE - LCD_GRAPH_TOP + 1u)
 #define LCD_GRAPH_STATS_WIDTH ((7u * 7u) + 4u)
 #define LCD_GRAPH_PLOT_WIDTH (LCD_WIDTH - LCD_GRAPH_STATS_WIDTH)
 #define LCD_GRAPH_YELLOW_THRESHOLD_CPM 61u
@@ -2871,7 +2872,7 @@ static void lcd_graph_build_logs(void)
         uint32_t packed;
         memcpy(&packed, &values[(uint16_t)age * sizeof(packed)], sizeof(packed));
         const uint32_t count = packed & 0x7FFFFFFFu;
-        const uint8_t y = (uint8_t)(LCD_HEIGHT - 1u -
+        const uint8_t y = (uint8_t)(LCD_GRAPH_BASELINE -
             ((uint64_t)count * (LCD_GRAPH_HEIGHT - 1u)) / maximum);
         const uint16_t x = (uint16_t)(LCD_GRAPH_STATS_WIDTH +
             (uint16_t)age * LCD_GRAPH_BAR_STEP);
@@ -2931,17 +2932,25 @@ static uint16_t lcd_graph_log_pixel(uint16_t x, uint16_t y)
     }
     if (x == LCD_GRAPH_STATS_WIDTH - 1u) return 0x7BEFu;
     if (lcd_graph_loading) return LCD_TEXT_BACKGROUND;
+    if (gy > LCD_GRAPH_BASELINE) {
+        const uint16_t left = LCD_GRAPH_STATS_WIDTH +
+            (uint16_t)lcd_graph_selected * LCD_GRAPH_BAR_STEP;
+        return lcd_graph_cursor_mode && gy >= LCD_GRAPH_BASELINE + 3u &&
+            x >= left && x < left + FONT_SMALL_CELL_WIDTH ?
+                LCD_SETTINGS_SELECTED_COLOR : LCD_TEXT_BACKGROUND;
+    }
     const uint8_t column = lcd_graph_column_y[x];
-    const bool fill = column != UINT8_MAX && gy >= (column & 0x7Fu);
-    if (gy == lcd_graph_red_threshold_y) return LCD_COUNTER_RED;
-    if (gy == lcd_graph_yellow_threshold_y) return LCD_COUNTER_YELLOW;
-    if (!fill) return LCD_TEXT_BACKGROUND;
-    if (lcd_graph_cursor_mode &&
+    const bool selected = lcd_graph_cursor_mode &&
         x >= LCD_GRAPH_STATS_WIDTH +
             (uint16_t)lcd_graph_selected * LCD_GRAPH_BAR_STEP &&
         x < LCD_GRAPH_STATS_WIDTH +
             (uint16_t)lcd_graph_selected * LCD_GRAPH_BAR_STEP +
-            FONT_SMALL_CELL_WIDTH) return LCD_SETTINGS_SELECTED_COLOR;
+            FONT_SMALL_CELL_WIDTH;
+    const bool fill = column != UINT8_MAX && gy >= (column & 0x7Fu);
+    if (gy == lcd_graph_red_threshold_y) return LCD_COUNTER_RED;
+    if (gy == lcd_graph_yellow_threshold_y) return LCD_COUNTER_YELLOW;
+    if (!fill) return LCD_TEXT_BACKGROUND;
+    if (selected) return LCD_SETTINGS_SELECTED_COLOR;
     return (column & 0x80u) ? 0x7BEFu : 0xBDF7u;
 }
 
