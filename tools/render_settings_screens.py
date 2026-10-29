@@ -84,10 +84,10 @@ render("1.2.1-settings-simple.svg", "Settings - DOSE PERIOD selected",
 
 option_colors = [TEXT] * 20
 option_colors[:9] = [ACCENT] * 9
-render("1.2.2-settings-many-options.svg", "Settings - LED BRIGHT options",
-       "LED BRIGHT opens a separate screen with options in two columns, ordered down the left column and then down the right. AUTO is selected in the accent color.",
-       ["LED BRIGHT", option_line("AUTO", "25%", 0), option_line("1%", "50%"),
-        option_line("3%", "80%"), option_line("5%", "100%"), option_line("10%")],
+render("1.2.2-settings-many-options.svg", "Settings - LED TIME options",
+       "LED TIME opens a separate screen with options in two columns, ordered down the left column and then down the right. AUTO is selected in the accent color.",
+       ["LED TIME", option_line("AUTO", "25ms", 0), option_line("1ms", "50ms"),
+        option_line("3ms", "80ms"), option_line("5ms", "100ms"), option_line("10ms")],
        [TEXT, option_colors, TEXT, TEXT, TEXT, TEXT])
 
 render("1.2.3-settings-actions.svg", "Settings - bottom of list",

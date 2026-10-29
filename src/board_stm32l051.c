@@ -365,13 +365,14 @@ static uint8_t click_sound_profile;
 static uint32_t click_sound_deadline;
 static bool sound_alarm_mode;
 static uint8_t sound_alarm_phase;
+static bool rgb_flash_active;
 
 static uint32_t board_rgb_tim2_compare(void)
 {
-    const uint32_t period = click_sound_active ? 311u : PWM_PERIOD;
-    uint32_t compare = ((uint32_t)rgb_brightness_percent * period) / 100u;
-    if (click_sound_active && compare > 310u) compare = 310u;
-    return compare;
+    const uint32_t period = click_sound_active ?
+        REG32(TIM2_BASE + TIM_ARR) + 1u : PWM_PERIOD;
+    return rgb_flash_active ? period :
+        ((uint32_t)rgb_brightness_percent * period) / 100u;
 }
 
 static uint32_t board_rgb_channel_compare(uint8_t channel)
@@ -386,7 +387,9 @@ static void board_rgb_apply(void)
     const uint32_t green_compare = (rgb_channels & 2u) ?
         board_rgb_channel_compare(1u) : 0u;
     const uint32_t blue_compare = (rgb_channels & 4u) ?
-        board_rgb_channel_compare(2u) : 0u;
+        ((rgb_flash_active ? PWM_PERIOD :
+          ((uint32_t)rgb_brightness_percent * PWM_PERIOD) / 100u) *
+         rgb_level[2]) / 255u : 0u;
     const bool tim2_active = click_sound_active || red_compare != 0u ||
         green_compare != 0u;
 
@@ -2026,7 +2029,7 @@ static const char *const lcd_cleanup_labels[LCD_CLEANUP_COUNT] = {
 };
 
 static const char *const lcd_settings_labels[LCD_SETTINGS_COUNT] = {
-    "LED", "CLICKS", "RATE SCREEN", "RATE LIGHT", "RATE SOUND", "LED BRIGHT",
+    "LED", "CLICKS", "RATE SCREEN", "RATE LIGHT", "RATE SOUND", "LED TIME",
     "SCREEN BRIGHT", "SCREEN TIMER", "LEAD ZERO", "UNIT", "RATE PREFIX",
     "DOSE PREF", "RATE ROW 2", "LOG MEMORY", "RESET", "HV", "RATE CUSTOM",
     "ALARM STOP", "POWER OFF", "REBOOT", "TONE", "LONG PRESS",
@@ -2041,6 +2044,9 @@ static const char *const indication_values[] = {
 static const char *const alarm_values[] = { "OFF", "YELLOW", "RED", "CUSTOM" };
 static const char *const brightness_values[] = {
     "AUTO", "1%", "3%", "5%", "10%", "25%", "50%", "80%", "100%"
+};
+static const char *const led_pulse_values[] = {
+    "AUTO", "1ms", "3ms", "5ms", "10ms", "25ms", "50ms", "80ms", "100ms"
 };
 static const char *const timer_values[] = { "1", "5", "10", "30", "60", "90" };
 static const char *const zero_values[] = { "SHOW", "HIDE" };
@@ -2109,7 +2115,7 @@ static uint8_t lcd_dose_row_option_count(void)
 
 static const char *const *const lcd_settings_values[LCD_SETTINGS_COUNT] = {
     indication_values, indication_values, alarm_values, alarm_values,
-    alarm_values, brightness_values, brightness_values, timer_values,
+    alarm_values, led_pulse_values, brightness_values, timer_values,
     zero_values, unit_values, prefix_values, prefix_values, rate_row_values,
     log_memory_values, reset_values, on_off_values, rate_custom_values, stop_values,
     empty_values, empty_values, tone_values, long_press_values,
@@ -5341,9 +5347,29 @@ bool board_display_led_flash_enabled(bool screen_on)
     return indication_enabled(lcd_settings_value_index[SETTING_LED], screen_on);
 }
 
+bool board_display_led_auto(void)
+{
+    return lcd_settings_value_index[SETTING_LED_BRIGHT] == 0u;
+}
+
 bool board_display_click_sound_enabled(bool screen_on)
 {
     return indication_enabled(lcd_settings_value_index[SETTING_CLICKS], screen_on);
+}
+
+static void board_sound_timer_config(void)
+{
+    const bool lower_tone = sound_alarm_mode &&
+        ((sound_alarm_phase == 0u) == (click_sound_profile == 1u));
+    /* Keep roughly the same audible frequencies at 131 kHz and 32 MHz. */
+    REG32(TIM2_BASE + TIM_PSC) = idle_clock_active ? 0u :
+        (lower_tone ? 31u : 22u);
+    REG32(TIM2_BASE + TIM_ARR) = idle_clock_active ?
+        (lower_tone ? 40u : 29u) : 310u;
+    REG32(TIM2_BASE + TIM_CCR4) = idle_clock_active ?
+        (lower_tone ? 7u : 5u) : 50u;
+    REG32(TIM2_BASE + TIM_CNT) = 0u;
+    board_rgb_apply();
 }
 
 static void board_click_sound_stop(void)
@@ -5360,8 +5386,6 @@ static void board_click_sound_stop(void)
 
 void board_click_sound_start(void)
 {
-    uint32_t compare = ((uint32_t)rgb_brightness_percent * 311u) / 100u;
-    if (compare > 310u) compare = 310u;
     REG32(GPIOA_BASE + GPIO_PUPDR) &= ~(3u << 6u);
     REG32(GPIOA_BASE + GPIO_OTYPER) &= ~(1u << 3u);
     REG32(GPIOA_BASE + GPIO_OSPEEDR) &= ~(3u << 6u);
@@ -5375,29 +5399,18 @@ void board_click_sound_start(void)
     sound_alarm_mode = false;
     click_sound_profile = lcd_settings_value_index[SETTING_TONE];
     if (click_sound_profile == 1u && click_sound_active) return;
-    REG32(TIM2_BASE + TIM_PSC) = 22u;
-    REG32(TIM2_BASE + TIM_ARR) = 310u;
-    REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) ?
-        (compare * rgb_level[0]) / 255u : 0u;
-    REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) ?
-        (compare * rgb_level[1]) / 255u : 0u;
     REG32(TIM2_BASE + TIM_CCMR2) =
         (REG32(TIM2_BASE + TIM_CCMR2) & ~(0xFFu << 8u)) |
         (6u << 12u) | (1u << 11u); /* CH4 PWM1, preload enabled. */
-    REG32(TIM2_BASE + TIM_CCR4) = 50u;
-    REG32(TIM2_BASE + TIM_EGR) = 1u;
-    REG32(TIM2_BASE + TIM_CNT) = 0u;
     REG32(TIM2_BASE + TIM_CCER) |= 1u << 12u;
-    REG32(TIM2_BASE + TIM_CR1) |= 1u;
+    click_sound_active = true;
+    board_sound_timer_config();
     click_sound_deadline = board_millis +
         (click_sound_profile == 1u ? 2u : 38u);
-    click_sound_active = true;
 }
 
 void board_sound_alarm_set(bool active)
 {
-    uint32_t compare = ((uint32_t)rgb_brightness_percent * 311u) / 100u;
-    if (compare > 310u) compare = 310u;
     if (!active) {
         if (sound_alarm_mode) board_click_sound_stop();
         sound_alarm_mode = false;
@@ -5418,20 +5431,11 @@ void board_sound_alarm_set(bool active)
         (REG32(GPIOA_BASE + GPIO_MODER) & ~(3u << 6u)) | (2u << 6u);
     RCC_APB1ENR |= 1u; /* TIM2 may be clock-gated while RGB is off. */
     (void)RCC_APB1ENR;
-    REG32(TIM2_BASE + TIM_ARR) = 310u;
-    REG32(TIM2_BASE + TIM_CCR1) = (rgb_channels & 1u) ?
-        (compare * rgb_level[0]) / 255u : 0u;
-    REG32(TIM2_BASE + TIM_CCR2) = (rgb_channels & 2u) ?
-        (compare * rgb_level[1]) / 255u : 0u;
     REG32(TIM2_BASE + TIM_CCMR2) =
         (REG32(TIM2_BASE + TIM_CCMR2) & ~(0xFFu << 8u)) |
         (6u << 12u) | (1u << 11u);
-    REG32(TIM2_BASE + TIM_CCR4) = 50u;
-    REG32(TIM2_BASE + TIM_PSC) = click_sound_profile == 1u ? 31u : 22u;
-    REG32(TIM2_BASE + TIM_EGR) = 1u;
-    REG32(TIM2_BASE + TIM_CNT) = 0u;
     REG32(TIM2_BASE + TIM_CCER) |= 1u << 12u;
-    REG32(TIM2_BASE + TIM_CR1) |= 1u;
+    board_sound_timer_config();
     click_sound_deadline = board_millis +
         (click_sound_profile == 1u ? 240u : 400u);
 }
@@ -5441,17 +5445,17 @@ void board_click_sound_service(void)
     if (sound_alarm_mode &&
         (int32_t)(board_millis - click_sound_deadline) >= 0) {
         sound_alarm_phase ^= 1u;
-        REG32(TIM2_BASE + TIM_PSC) =
-            (sound_alarm_phase == 0u) ?
-            (click_sound_profile == 1u ? 31u : 22u) :
-            (click_sound_profile == 1u ? 22u : 31u);
         click_sound_deadline += click_sound_profile == 1u ? 240u : 400u;
-        REG32(TIM2_BASE + TIM_EGR) = 1u;
-        REG32(TIM2_BASE + TIM_CNT) = 0u;
+        board_sound_timer_config();
     } else if (click_sound_active && !sound_alarm_mode &&
         (int32_t)(board_millis - click_sound_deadline) >= 0) {
         board_click_sound_stop();
     }
+}
+
+bool board_click_sound_busy(void)
+{
+    return click_sound_active && !sound_alarm_mode;
 }
 
 static bool rate_alarm_for_mode(uint8_t mode)
@@ -6924,6 +6928,7 @@ bool board_set_idle_clock(bool idle)
 
     SYST_RVR = (((idle_clock_active ? 131072u : 32000000u) *
         systick_period_ms) / 1000u) - 1u;
+    if (click_sound_active) board_sound_timer_config();
     SYST_CVR = 0u;
     SYST_CSR = 7u;
     if ((primask & 1u) == 0u) __asm volatile ("cpsie i" ::: "memory");
@@ -7000,10 +7005,17 @@ uint8_t board_take_button_wakeup_request(void)
 void board_rgb_set(uint8_t logical_rgb_mask)
 {
     rgb_channels = logical_rgb_mask & 7u;
+    if (rgb_channels == 0u) rgb_flash_active = false;
     rgb_level[0] = (rgb_channels & 1u) ? 255u : 0u;
     rgb_level[1] = (rgb_channels & 2u) ? 255u : 0u;
     rgb_level[2] = (rgb_channels & 4u) ? 255u : 0u;
     board_rgb_apply();
+}
+
+uint8_t board_rgb_begin_flash(void)
+{
+    rgb_flash_active = true;
+    return rgb_brightness_percent;
 }
 
 void board_rgb_set_color(uint8_t red, uint8_t green, uint8_t blue)

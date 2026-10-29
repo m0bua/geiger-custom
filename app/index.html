@@ -340,8 +340,8 @@
           <li><strong>ALARM STOP — CLEAR / BUTTON:</strong> controls when the siren stops. CLEAR stops it when its condition clears; BUTTON keeps it sounding until a button is pressed. During an active alarm, the first button press acknowledges the alarm, silences the siren, stops alarm flashlight flashes, and lets the screen time out without navigating. It can trigger again after the conditions clear and recur.</li>
           <li><strong>RATE ROW 2:</strong> for Sv/R, show CPM, CPS, OFF, or the opposite radiation unit. For CNT, show Sv, R, OFF, or CPS.</li>
           <li><strong>DOSE ROW 2:</strong> show another unit, another dose period, TIME, CPM, or OFF. The current unit and current period are unavailable choices.</li>
-          <li><strong>LED BRIGHT — AUTO / 1% / 3% / 5% / 10% / 25% / 50% / 80% / 100%:</strong> AUTO follows solar level, with a 5% minimum and full brightness at 30% solar.</li>
-          <li><strong>SCREEN BRIGHT:</strong> AUTO or the same fixed percentages. AUTO uses an average of solar readings and changes brightness gradually, with a 1% minimum.</li>
+          <li><strong>LED TIME — AUTO / 1 / 3 / 5 / 10 / 25 / 50 / 80 / 100 ms:</strong> pulse flashes use full brightness. AUTO follows SOLAR, from 5 ms in darkness to 100 ms at 30% solar and above. With the screen off, SOLAR is sampled once per minute while AUTO is selected.</li>
+          <li><strong>SCREEN BRIGHT — AUTO / 1% / 3% / 5% / 10% / 25% / 50% / 80% / 100%:</strong> AUTO uses an average of solar readings and changes brightness gradually, with a 1% minimum.</li>
           <li><strong>SCREEN TIMER — 1 / 5 / 10 / 30 / 60 / 90 seconds:</strong> inactivity time before the display turns off. SEARCH keeps the display on; INVISIBLE uses a one-second timeout.</li>
           <li><strong>TONE — STOCK / CLASSIC:</strong> selects the sound character for pulse clicks and the siren.</li>
           <li><strong>LONG PRESS — 300 / 500 / 700 / 900 / 1100 / 1300 ms:</strong> sets the time required to trigger a long button press.</li>
@@ -402,7 +402,7 @@
         <p>Long Right opens the settings list at its first visible item. Short Left/Right moves the highlight. Long Right activates the highlighted item. Options with up to three choices change immediately, except LOG MEMORY. For LOG MEMORY and options with more choices, a separate screen lists all values down the left column and then the right; short Left/Right moves the selection, long Right saves, and long Left cancels. RESET runs the selected action on long Right without an additional on-device confirmation; the app still asks before executing a reset. The list includes indication and alarm behavior, tone, brightness and screen timeout, units and prefixes, secondary rows, dose period, log memory, long-press timing, reset actions, Power Off, and Reboot. RESET and REBOOT are hidden by default and can be shown from the app. Some items depend on the selected unit. Set the device clock on the app's Settings page.</p>
         <div class="manual-screen-grid">
           <figure><figcaption>1.1.1 - Settings with DOSE PERIOD selected</figcaption><img src="../docs/renders/screens/1.2.1-settings-simple.svg" alt="Settings list starting with DOSE PERIOD selected in the accent color" loading="lazy"></figure>
-          <figure><figcaption>1.1.2 - Choosing LED BRIGHT</figcaption><img src="../docs/renders/screens/1.2.2-settings-many-options.svg" alt="LED BRIGHT options in two columns with AUTO selected" loading="lazy"></figure>
+          <figure><figcaption>1.1.2 - Choosing LED TIME</figcaption><img src="../docs/renders/screens/1.2.2-settings-many-options.svg" alt="LED TIME options in two columns with AUTO selected" loading="lazy"></figure>
           <figure><figcaption>1.1.3 - Bottom of the settings list</figcaption><img src="../docs/renders/screens/1.2.3-settings-actions.svg" alt="Settings with normally hidden items enabled, RESET selected in the accent color, LOG MEMORY red, and POWER OFF and REBOOT yellow" loading="lazy"></figure>
         </div>
         </section>
@@ -503,6 +503,7 @@
         <h3>Known limitations</h3>
         <ul>
           <li>Only firmware images on the compatibility checksum list receive the normal application <code>HELLO</code> startup check. Unlisted project builds are started without that check.</li>
+          <li>Older firmware may interpret LED TIME as LED brightness in percent. Known older images are marked partially compatible when selected for flashing; the connected device cannot currently be identified by firmware version.</li>
           <li>Battery and solar percentages, dose calibration, RTC behavior after full power loss, and SPI logging reliability still need physical verification.</li>
           <li>SPI dump requires compatible running firmware with SPI logging enabled and a ready SPI memory chip.</li>
         </ul>

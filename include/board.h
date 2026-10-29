@@ -46,6 +46,7 @@ void board_adc_read_selected(bool read_battery, bool read_usb, bool read_solar,
 void board_rgb_set(uint8_t logical_rgb_mask);
 void board_rgb_set_color(uint8_t red, uint8_t green, uint8_t blue);
 void board_rgb_set_brightness(uint8_t percent);
+uint8_t board_rgb_begin_flash(void);
 void board_display_init(void);
 void board_display_service(void);
 void board_display_left_short(void);
@@ -100,6 +101,7 @@ uint32_t board_display_screen_timeout_ms(void);
 bool board_display_cleanup_feedback_active(void);
 bool board_display_take_cleanup_feedback_dismissed(void);
 bool board_display_led_flash_enabled(bool screen_on);
+bool board_display_led_auto(void);
 bool board_display_click_sound_enabled(bool screen_on);
 bool board_display_search_mode(void);
 bool board_display_invisible_mode(void);
@@ -109,6 +111,7 @@ uint8_t board_display_log_source(void);
 bool board_display_usb_connected(void);
 void board_click_sound_start(void);
 void board_click_sound_service(void);
+bool board_click_sound_busy(void);
 void board_sound_alarm_set(bool active);
 bool board_display_screen_alarm_active(void);
 void board_display_set_adc(uint16_t channel2, uint16_t channel8,

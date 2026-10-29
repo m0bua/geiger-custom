@@ -53,12 +53,13 @@ const KNOWN_STOCK_IMAGE_SHA256 = 'cee27644cccea4023118f97d1a990be3bf6acb44748d61
 // SHA-256 of the canonical 64 KiB flash image (gaps filled with 0xFF), not the source file.
 // Maintain these lists for this JS protocol; clear/review them when the protocol changes.
 const COMPATIBLE_PROJECT_IMAGE_SHA256 = new Set([
+]);
+// Known builds with compatible core operations but different settings semantics.
+// These images use LED BRIGHT as PWM percentage rather than LED TIME in milliseconds.
+const PARTIALLY_COMPATIBLE_PROJECT_IMAGE_SHA256 = new Set([
   'a18769eb3937e0bdd7ca1c3e263f8e2ad3ece6b60795c81ac13c6a6ecd71da20',
   'ca1447612d433d5dfdfcb7d2c7f14d9a4a98fde337fbb9160b896aa1b77fbe81',
 ]);
-// Known project builds with a non-breaking protocol/settings difference (for example,
-// a changed settings list) while core operations remain usable. Add hashes only after review.
-const PARTIALLY_COMPATIBLE_PROJECT_IMAGE_SHA256 = new Set([]);
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -971,7 +972,7 @@ const remoteSettings = [
   { id: 17, label: 'ALARM STOP', options: ['CLEAR', 'BUTTON'] },
   { id: 12, label: 'RATE ROW 2', options: [] },
   { id: 22, label: 'DOSE ROW 2', options: [] },
-  { id: 5, label: 'LED BRIGHT', options: ['AUTO', '1%', '3%', '5%', '10%', '25%', '50%', '80%', '100%'] },
+  { id: 5, label: 'LED TIME', options: ['AUTO', '1 ms', '3 ms', '5 ms', '10 ms', '25 ms', '50 ms', '80 ms', '100 ms'] },
   { id: 6, label: 'SCREEN BRIGHT', options: ['AUTO', '1%', '3%', '5%', '10%', '25%', '50%', '80%', '100%'] },
   { id: 7, label: 'SCREEN TIMER', options: ['1 s', '5 s', '10 s', '30 s', '60 s', '90 s'] },
   { id: 20, label: 'TONE', options: ['STOCK', 'CLASSIC'] },

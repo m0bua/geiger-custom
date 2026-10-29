@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #define SOLAR_SAMPLE_INTERVAL_MS 300u
+#define SOLAR_IDLE_SAMPLE_INTERVAL_MS 60000u
 #define BATTERY_ACTIVE_SAMPLE_INTERVAL_MS 30000u
 #define BATTERY_IDLE_SAMPLE_INTERVAL_MS 1800000u
 #define BATTERY_CRITICAL_SAMPLE_INTERVAL_MS 30000u
@@ -477,9 +478,9 @@ int main(void)
                 }
                 if (!startup_led_active &&
                     board_display_led_flash_enabled(backlight_on)) {
+                    led_blink_deadline = now + board_rgb_begin_flash();
                     board_display_set_rate_led();
                     event_led_on = true;
-                    led_blink_deadline = now + 100u;
                 }
             }
 
@@ -633,11 +634,12 @@ int main(void)
                 board_lcd_backlight_set(false);
             }
 
-            if (event_led_on &&
-                (int32_t)(now - led_blink_deadline) >= 0) {
-                board_rgb_set(0u);
-                event_led_on = false;
-            }
+        }
+
+        if (event_led_on &&
+            (int32_t)(board_millis - led_blink_deadline) >= 0) {
+            board_rgb_set(0u);
+            event_led_on = false;
         }
 
         if (idle_clock_active && board_display_busy()) {
@@ -683,18 +685,26 @@ int main(void)
                     board_display_battery_below_3_percent() ?
                         BATTERY_CRITICAL_SAMPLE_INTERVAL_MS :
                         BATTERY_IDLE_SAMPLE_INTERVAL_MS;
+                next_solar_sample = now + SOLAR_IDLE_SAMPLE_INTERVAL_MS;
                 next_battery_sample = now + idle_battery_interval;
             }
         }
 
         {
-            const bool read_solar = backlight_on &&
+            const bool read_solar = (backlight_on || board_display_led_auto()) &&
                 (int32_t)(now - next_solar_sample) >= 0;
             const bool battery_due =
                 (int32_t)(now - next_battery_sample) >= 0;
             const bool read_usb = battery_due ||
                 (int32_t)(now - next_usb_sample) >= 0;
-            if (read_solar || battery_due || read_usb) {
+            /* Defer routine reads during short pulses, but bound the delay
+             * when detector events arrive continuously. */
+            if ((read_solar || read_usb) &&
+                ((!event_led_on && !board_click_sound_busy()) || battery_due ||
+                 (read_solar &&
+                  (int32_t)(now - next_solar_sample) >= 1000) ||
+                 (read_usb &&
+                  (int32_t)(now - next_usb_sample) >= 1000))) {
                 uint16_t channel2;
                 uint16_t channel8;
                 uint16_t channel9;
@@ -708,7 +718,8 @@ int main(void)
                 const uint32_t sampled_at = board_millis;
                 if (read_solar) {
                     next_solar_sample = sampled_at +
-                        SOLAR_SAMPLE_INTERVAL_MS;
+                        (backlight_on ? SOLAR_SAMPLE_INTERVAL_MS :
+                         SOLAR_IDLE_SAMPLE_INTERVAL_MS);
                 }
                 if (battery_due) {
                     const uint32_t battery_interval = backlight_on ?
@@ -724,11 +735,11 @@ int main(void)
             }
         }
 
-        /* Use a 10 ms tick only after the LCD work queue has drained. This
-         * cuts idle wakeups tenfold while preserving 1 ms service when active. */
+        /* Short flashes and clicks need a 1 ms tick even at the idle clock. */
         {
             const bool should_use_idle_tick =
-                !backlight_on && !board_display_busy();
+                !backlight_on && !board_display_busy() && !event_led_on &&
+                !board_click_sound_busy();
             if (should_use_idle_tick != idle_tick_active) {
                 board_set_idle_tick(should_use_idle_tick);
                 idle_tick_active = should_use_idle_tick;
