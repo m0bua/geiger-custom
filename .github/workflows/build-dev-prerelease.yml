@@ -138,6 +138,8 @@ jobs:
   publish-prerelease:
     needs: [build-app, build-windows]
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - name: Check out dev
