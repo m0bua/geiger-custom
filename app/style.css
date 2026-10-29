@@ -158,9 +158,8 @@ button { font: inherit; }
 .firmware-log .log-partial { color: #b8d94c; }
 .firmware-log .log-warning { color: #f2c94c; }
 .firmware-log .log-error { color: #ff7474; }
-.firmware-dumps { display: grid; gap: 10px; }
-.firmware-dumps p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .dump-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.firmware-dump-actions { margin-bottom: 2px; }
 .dump-status[data-level="success"] { color: var(--green); }
 .dump-status[data-level="warning"] { color: #f2c94c; }
 .dump-status[data-level="error"] { color: #ff7474; }

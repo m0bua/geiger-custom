@@ -18,6 +18,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "app"
 DEFAULT_FIRMWARE = ROOT / ".pio/scratch/geiger2_manual/firmware.bin"
+DEFAULT_SPI_MINI = ROOT / ".pio/build/geiger2_spi_mini/firmware.bin"
 DEFAULT_OUTPUT = ROOT / "dist/Dosimeter-App.html"
 TERSER_VERSION = "5.44.0"
 
@@ -131,6 +132,8 @@ def main() -> int:
                         help=f"output HTML path (default: {DEFAULT_OUTPUT.relative_to(ROOT)})")
     parser.add_argument("--firmware-bin", type=Path,
                         help="use this existing BIN instead of rebuilding firmware")
+    parser.add_argument("--spi-mini-bin", type=Path,
+                        help="use this existing SPI service firmware BIN")
     parser.add_argument("--toolchain", type=Path,
                         help="optional ARM GCC bin directory passed to build_firmware.py")
     parser.add_argument("--version", default="local",
@@ -157,6 +160,26 @@ def main() -> int:
         raise ValueError(f"Firmware image has invalid size: {len(firmware)} bytes")
     canonical_hash = hashlib.sha256(firmware.ljust(65536, b"\xff")).hexdigest()
 
+    if args.spi_mini_bin:
+        spi_mini_path = args.spi_mini_bin.resolve()
+        if not spi_mini_path.is_file():
+            raise FileNotFoundError(f"SPI service firmware BIN does not exist: {spi_mini_path}")
+    else:
+        spi_mini_path = DEFAULT_SPI_MINI
+        pio = shutil.which("pio") or shutil.which("platformio")
+        if not pio:
+            candidates = [
+                Path.home() / ".platformio/penv/Scripts/platformio.exe",
+                Path.home() / ".platformio/penv/bin/platformio",
+            ]
+            pio = next((str(path) for path in candidates if path.is_file()), None)
+        if not pio:
+            raise RuntimeError("PlatformIO is required to build the embedded SPI service image.")
+        subprocess.run([pio, "run", "-e", "geiger2_spi_mini"], cwd=ROOT, check=True)
+    spi_mini = spi_mini_path.read_bytes()
+    if not spi_mini or len(spi_mini) >= 65536:
+        raise ValueError(f"SPI service image has invalid size: {len(spi_mini)} bytes")
+
     document = (APP / "index.html").read_text(encoding="utf-8")
     document, version_count = re.subn(
         r'(<strong id="app-version">).*?(</strong>)',
@@ -181,10 +204,16 @@ def main() -> int:
         lambda _: f"<style>\n{css}\n</style>", document, count=1,
     )
     document = inline_manual_images(document)
+    document = re.sub(
+        r'<script\s+id="embedded-spi-mini">.*?</script>',
+        "", document, count=1, flags=re.DOTALL,
+    )
 
     app_script = (
         "window.EMBEDDED_FIRMWARE_B64 = \""
         + base64.b64encode(firmware).decode("ascii")
+        + "\";\nwindow.EMBEDDED_SPI_MINI_B64 = \""
+        + base64.b64encode(spi_mini).decode("ascii")
         + "\";\n"
         + js
     )
@@ -205,6 +234,7 @@ def main() -> int:
         stream.write(document)
     print(f"Standalone app: {output}")
     print(f"Embedded firmware: {len(firmware)} / 65536 bytes")
+    print(f"Embedded SPI service firmware: {len(spi_mini)} bytes ({spi_mini_path})")
     print(f"Firmware SHA-256: {hashlib.sha256(firmware).hexdigest()}")
     print(f"Canonical 64 KiB SHA-256: {canonical_hash}")
     print(f"JavaScript minification: {'Terser with identifier mangling' if js_minified else 'unavailable; whitespace-safe HTML/CSS compaction only'}")

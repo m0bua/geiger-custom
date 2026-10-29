@@ -8,6 +8,9 @@ const OP_SET_SETTING = 4;
 const OP_GET_LOG_INFO = 5;
 const OP_GET_LOG_PAGE = 6;
 const OP_GET_SPI_DUMP_PAGE = 7;
+const OP_SPI_PROGRAM_PAGE = 10;
+const OP_SPI_ERASE_SECTOR = 11;
+const CAP_GET_STATUS = 1 << 0;
 const OP_SET_RTC = 8;
 const OP_DEVICE_ACTION = 9;
 const CAP_GET_SETTINGS = 1 << 1;
@@ -24,6 +27,7 @@ const STM32_FLASH_PAGE_SIZE = 128;
 const STM32_EEPROM_BASE = 0x08080000;
 const STM32_EEPROM_SIZE = 2 * 1024;
 const SPI_DUMP_CHUNK_SIZE = 58;
+const SPI_RECOVERY_DB = 'dosimeter-spi-recovery';
 const STM32_DEVICE_ID = 0x0417;
 const STM32_FLASH_PAGE_COUNT = STM32_FLASH_SIZE / STM32_FLASH_PAGE_SIZE;
 const PROJECT_IMAGE_MARKER = Uint8Array.of(0x4d, 0x47, 0x32, 0x46, 0x57, 0x49, 0x44, 0x31); // MG2FWID1
@@ -242,6 +246,7 @@ const elements = {
   embeddedQuickFlash: document.querySelector('#embedded-quick-flash'),
   firmwareTools: document.querySelector('#firmware-tools'),
   quickBackupFlash: document.querySelector('#quick-backup-flash'),
+  quickRestoreFlash: document.querySelector('#quick-restore-flash'),
   quickFlashFirmware: document.querySelector('#quick-flash-firmware'),
   localBuildFlash: document.querySelector('#local-build-flash'),
   flashLocalBuild: document.querySelector('#flash-local-build'),
@@ -254,15 +259,25 @@ const elements = {
   clearFirmwareLog: document.querySelector('#clear-firmware-log'),
   firmwareVerify: document.querySelector('#firmware-verify'),
   flashFirmware: document.querySelector('#flash-firmware'),
+  firmwareRestoreFlash: document.querySelector('#firmware-restore-flash'),
   firmwareLog: document.querySelector('#firmware-log'),
   dumpFlash: document.querySelector('#dump-flash'),
   dumpEeprom: document.querySelector('#dump-eeprom'),
   dumpSpi: document.querySelector('#dump-spi'),
   dumpStatus: document.querySelector('#dump-status'),
+  spiNorSection: document.querySelector('#spi-nor-section'),
+  spiRecoveryControls: document.querySelector('#spi-recovery-controls'),
+  downloadSpiBackup: document.querySelector('#download-spi-backup'),
   eepromImageFile: document.querySelector('#eeprom-image-file'),
+  clearEepromImage: document.querySelector('#clear-eeprom-image'),
   writeEepromImage: document.querySelector('#write-eeprom-image'),
   eepromImageStatus: document.querySelector('#eeprom-image-status'),
   eepromWriteStatus: document.querySelector('#eeprom-write-status'),
+  spiImageFile: document.querySelector('#spi-image-file'),
+  clearSpiImage: document.querySelector('#clear-spi-image'),
+  writeSpiImage: document.querySelector('#write-spi-image'),
+  spiImageStatus: document.querySelector('#spi-image-status'),
+  spiWriteStatus: document.querySelector('#spi-write-status'),
   manualPage: document.querySelector('#manual-page'),
   aboutPage: document.querySelector('#about-page'),
   settingsStatus: document.querySelector('#settings-status'),
@@ -862,7 +877,11 @@ const androidUsbAvailable = webUsbAvailable && /Android/i.test(navigator.userAge
 let bootloaderPortOpen = false;
 let portMayBeOpen = false;
 let selectedFirmwareImage = null;
+let spiRecoveryBackup = null;
+let latestFlashBackup = null;
+let spiMiniImageCache = null;
 let selectedEepromImage = null;
+let selectedSpiImage = null;
 let firmwareFlashBusy = false;
 let firmwareStopRequested = false;
 let dumpBusy = false;
@@ -2123,9 +2142,7 @@ function handleHello(payload) {
 
 function updateSpiDumpAvailability() {
   if (!elements.dumpSpi) return;
-  const supported = !!serial && (protocolCapabilities & CAP_GET_SPI_DUMP) !== 0 &&
-    !!logInfo?.spi && !!logInfo?.spiReady && (logInfo.spiSizeMb || 0) > 0;
-  elements.dumpSpi.disabled = dumpBusy || !supported;
+  elements.dumpSpi.disabled = dumpBusy || !!spiRecoveryBackup;
 }
 
 function settingsOptions(setting, currentSettings = deviceSettings) {
@@ -2884,11 +2901,18 @@ elements.flashFirmware.addEventListener('click', flashSelectedFirmware);
 elements.dumpFlash.addEventListener('click', () => dumpRomMemory(
   'FLASH', STM32_FLASH_BASE, STM32_FLASH_SIZE, 'flash'));
 elements.quickBackupFlash?.addEventListener('click', () => elements.dumpFlash.click());
+elements.quickRestoreFlash?.addEventListener('click', restoreLatestFlashBackup);
+elements.firmwareRestoreFlash?.addEventListener('click', restoreLatestFlashBackup);
 elements.dumpEeprom.addEventListener('click', () => dumpRomMemory(
   'EEPROM', STM32_EEPROM_BASE, STM32_EEPROM_SIZE, 'eeprom'));
 elements.dumpSpi.addEventListener('click', dumpSpiMemory);
+elements.downloadSpiBackup?.addEventListener('click', downloadSpiRecoveryBackup);
 elements.eepromImageFile.addEventListener('change', loadEepromImage);
+elements.clearEepromImage.addEventListener('click', clearEepromImageSelection);
 elements.writeEepromImage.addEventListener('click', writeEepromImage);
+elements.spiImageFile.addEventListener('change', loadSpiImage);
+elements.clearSpiImage.addEventListener('click', clearSpiImageSelection);
+elements.writeSpiImage.addEventListener('click', writeSpiImage);
 elements.manualTab.addEventListener('click', () => selectPage('manual'));
 elements.aboutTab.addEventListener('click', () => selectPage('about'));
 elements.clearFirmwareLog.addEventListener('click', () => { elements.firmwareLog.textContent = ''; });
@@ -2899,6 +2923,7 @@ window.addEventListener('hashchange', () => {
 selectPage(window.location.hash.slice(1) || 'overview');
 window.addEventListener('resize', drawRateChart);
 detectLocalBuild();
+loadLatestFlashBackup();
 if (typeof globalThis.EMBEDDED_FIRMWARE_B64 === 'string' && elements.embeddedQuickFlash) {
   elements.embeddedQuickFlash.hidden = false;
   elements.embeddedQuickFlash.open = true;
@@ -3184,14 +3209,78 @@ function setDumpBusy(busy) {
   dumpBusy = busy;
   elements.dumpFlash.disabled = busy;
   if (elements.quickBackupFlash) elements.quickBackupFlash.disabled = busy;
+  if (elements.quickRestoreFlash) elements.quickRestoreFlash.disabled = busy || firmwareFlashBusy || !latestFlashBackup;
   elements.dumpEeprom.disabled = busy;
   elements.eepromImageFile.disabled = busy;
+  elements.clearEepromImage.disabled = busy;
+  elements.spiImageFile.disabled = busy;
+  elements.clearSpiImage.disabled = busy;
+  elements.rebootFirmware.disabled = busy;
+  elements.rebootBootloader.disabled = busy;
+  elements.flashFirmware.disabled = busy || firmwareFlashBusy || !selectedFirmwareImage;
+  if (elements.quickFlashFirmware) elements.quickFlashFirmware.disabled = busy;
+  if (elements.flashLocalBuild) elements.flashLocalBuild.disabled = busy;
+  if (elements.firmwareRestoreFlash) elements.firmwareRestoreFlash.disabled = busy || firmwareFlashBusy || !latestFlashBackup;
+  if (elements.downloadSpiBackup) elements.downloadSpiBackup.disabled = busy;
   updateEepromWriteButton();
+  updateSpiWriteButton();
   updateSpiDumpAvailability();
 }
 
 function updateEepromWriteButton() {
   elements.writeEepromImage.disabled = dumpBusy || firmwareFlashBusy || !selectedEepromImage;
+}
+
+function updateSpiWriteButton() {
+  elements.writeSpiImage.disabled = dumpBusy || firmwareFlashBusy || !selectedSpiImage || !!spiRecoveryBackup;
+}
+
+function clearEepromImageSelection() {
+  selectedEepromImage = null;
+  elements.eepromImageFile.value = '';
+  elements.eepromImageStatus.textContent = 'No image selected.';
+  elements.eepromImageStatus.dataset.kind = 'unknown';
+  elements.eepromWriteStatus.textContent = 'Select a 2 KB EEPROM dump to enable writing. Read-back verification is always enabled.';
+  elements.eepromWriteStatus.dataset.level = '';
+  updateEepromWriteButton();
+}
+
+function clearSpiImageSelection() {
+  selectedSpiImage = null;
+  elements.spiImageFile.value = '';
+  elements.spiImageStatus.textContent = 'No image selected.';
+  elements.spiImageStatus.dataset.kind = 'unknown';
+  elements.spiWriteStatus.textContent = 'Select a 1 MB SPI image to enable writing. The entire SPI NOR chip will be erased and programmed.';
+  elements.spiWriteStatus.dataset.level = '';
+  updateSpiWriteButton();
+}
+
+async function loadSpiImage() {
+  selectedSpiImage = null;
+  elements.writeSpiImage.disabled = true;
+  const file = elements.spiImageFile.files?.[0];
+  if (!file) {
+    clearSpiImageSelection();
+    return;
+  }
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const expected = 1024 * 1024;
+    if (bytes.length !== expected) {
+      throw new Error(`Expected exactly ${expected.toLocaleString()} bytes; selected file has ${bytes.length.toLocaleString()}.`);
+    }
+    selectedSpiImage = {name: file.name, bytes};
+    elements.spiImageStatus.textContent = `${file.name} (${bytes.length.toLocaleString()} bytes)`;
+    elements.spiImageStatus.dataset.kind = 'unknown';
+    elements.spiWriteStatus.textContent = 'Image ready. Flashing erases and replaces the entire SPI NOR chip.';
+    elements.spiWriteStatus.dataset.level = 'warning';
+    updateSpiWriteButton();
+  } catch (error) {
+    elements.spiImageStatus.textContent = error.message;
+    elements.spiImageStatus.dataset.kind = 'invalid';
+    elements.spiWriteStatus.textContent = 'SPI image is invalid and cannot be written.';
+    elements.spiWriteStatus.dataset.level = 'error';
+  }
 }
 
 async function loadEepromImage() {
@@ -3336,10 +3425,21 @@ async function dumpRomMemory(label, address, length, filename) {
     return;
   }
   downloadDump(bytes, dumpFilename);
+  let backupWarning = '';
+  if (label === 'FLASH') {
+    try {
+      await saveLatestFlashBackup(bytes, dumpFilename, false);
+      setSpiRecoveryBackup(null, '');
+    }
+    catch (error) {
+      backupWarning = ` IndexedDB backup failed: ${error.message}`;
+      appendFirmwareLog(`FLASH dump downloaded but could not be saved in IndexedDB: ${error.message}`, 'warning');
+    }
+  }
   setDumpStatus(restartFailure
-    ? `${label} dump saved as ${dumpFilename}, but firmware restart failed: ${restartFailure.message}`
-    : `${label} dump saved as ${dumpFilename} (${length.toLocaleString()} bytes).`,
-  restartFailure ? 'warning' : 'success');
+    ? `${label} dump saved as ${dumpFilename}, but firmware restart failed: ${restartFailure.message}${backupWarning}`
+    : `${label} dump saved as ${dumpFilename} (${length.toLocaleString()} bytes).${backupWarning}`,
+  restartFailure || backupWarning ? 'warning' : 'success');
 }
 
 async function writeEepromImage() {
@@ -3443,49 +3543,439 @@ async function writeEepromImage() {
   }
 }
 
-async function dumpSpiMemory() {
-  if (dumpBusy || firmwareFlashBusy) return;
-  if (!serial || (protocolCapabilities & CAP_GET_SPI_DUMP) === 0 ||
-      !logInfo?.spi || !logInfo?.spiReady || !logInfo.spiSizeMb) {
-    setDumpStatus('SPI dump requires connected compatible firmware with SPI logging enabled and ready.', 'warning');
-    updateSpiDumpAvailability();
-    return;
-  }
-  const length = logInfo.spiSizeMb * 1024 * 1024;
-  const filename = makeDumpFilename('spi');
+async function readSpiThroughProtocol(connection, length) {
   const bytes = new Uint8Array(length);
-  setDumpBusy(true);
-  setDumpStatus(`Reading SPI flash (${length.toLocaleString()} bytes)…`);
-  appendFirmwareLog(`SPI dump requested (${length.toLocaleString()} bytes).`);
+  let nextProgress = 10;
+  for (let offset = 0; offset < length; offset += SPI_DUMP_CHUNK_SIZE) {
+    const count = Math.min(SPI_DUMP_CHUNK_SIZE, length - offset);
+    const request = new Uint8Array(5);
+    new DataView(request.buffer).setUint32(0, offset, true);
+    request[4] = count;
+    const response = await connection.request(OP_GET_SPI_DUMP_PAGE, request, 10000);
+    if (response.length !== count + 6 || response[0] !== 0 ||
+        new DataView(response.buffer, response.byteOffset, response.byteLength).getUint32(1, true) !== offset ||
+        response[5] !== count) throw new ProtocolError(`Invalid SPI dump response at offset 0x${offset.toString(16)}.`);
+    bytes.set(response.subarray(6), offset);
+    const percent = Math.floor(((offset + count) * 100) / length);
+    if (percent >= nextProgress) {
+      appendFirmwareLog(`SPI read ${percent}%.`);
+      nextProgress = Math.floor(percent / 10 + 1) * 10;
+    }
+  }
+  return bytes;
+}
+
+function getEmbeddedSpiMiniImage() {
+  if (spiMiniImageCache) return spiMiniImageCache;
+  if (typeof globalThis.EMBEDDED_SPI_MINI_B64 !== 'string') {
+    throw new Error('This app build does not include the SPI service firmware. Download the latest standalone app.');
+  }
+  const binary = atob(globalThis.EMBEDDED_SPI_MINI_B64);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  if (!bytes.length || bytes.length >= STM32_FLASH_SIZE) throw new Error('The embedded SPI service image has an invalid size.');
+  const image = new Uint8Array(STM32_FLASH_SIZE).fill(0xff);
+  const present = new Uint8Array(STM32_FLASH_SIZE);
+  image.set(bytes);
+  present.fill(1, 0, bytes.length);
+  spiMiniImageCache = { bytes, pages: validateFirmwareImage(image, present) };
+  return spiMiniImageCache;
+}
+
+function openSpiRecoveryDatabase() {
+  return new Promise((resolve, reject) => {
+    if (!globalThis.indexedDB) return reject(new Error('Persistent browser storage is unavailable.'));
+    const request = indexedDB.open(SPI_RECOVERY_DB, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains('backup')) request.result.createObjectStore('backup');
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Could not open backup storage.'));
+  });
+}
+
+function setSpiRecoveryBackup(bytes, name) {
+  spiRecoveryBackup = bytes ? {bytes, name} : null;
+  if (elements.spiRecoveryControls) elements.spiRecoveryControls.hidden = !spiRecoveryBackup;
+  if (elements.downloadSpiBackup) elements.downloadSpiBackup.hidden = !spiRecoveryBackup;
+  if (spiRecoveryBackup && elements.firmwareTools) elements.firmwareTools.open = true;
+  updateSpiWriteButton();
+  updateSpiDumpAvailability();
+}
+
+function setLatestFlashBackup(bytes, name) {
+  latestFlashBackup = bytes ? {bytes, name} : null;
+  const available = !!latestFlashBackup;
+  if (elements.quickRestoreFlash) elements.quickRestoreFlash.hidden = !available;
+  if (elements.firmwareRestoreFlash) elements.firmwareRestoreFlash.hidden = !available;
+}
+
+async function saveLatestFlashBackup(bytes, name, pendingRecovery = false) {
+  const db = await openSpiRecoveryDatabase();
   try {
-    let nextProgress = 10;
-    for (let offset = 0; offset < length; offset += SPI_DUMP_CHUNK_SIZE) {
-      const count = Math.min(SPI_DUMP_CHUNK_SIZE, length - offset);
-      const request = new Uint8Array(5);
-      const requestView = new DataView(request.buffer);
-      requestView.setUint32(0, offset, true);
-      request[4] = count;
-      const response = await serial.request(OP_GET_SPI_DUMP_PAGE, request, 5000);
-      if (response.length !== count + 6 || response[0] !== 0 ||
-          new DataView(response.buffer, response.byteOffset, response.byteLength).getUint32(1, true) !== offset ||
-          response[5] !== count) {
-        throw new ProtocolError(`Invalid SPI dump response at offset 0x${offset.toString(16)}.`);
-      }
-      bytes.set(response.subarray(6), offset);
-      const percent = Math.floor(((offset + count) * 100) / length);
-      if (percent >= nextProgress) {
-        appendFirmwareLog(`SPI read ${percent}%.`);
-        nextProgress = Math.floor(percent / 10 + 1) * 10;
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction('backup', 'readwrite');
+      transaction.objectStore('backup').put({bytes: bytes.slice().buffer, name, pendingRecovery}, 'latest');
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error || new Error('Could not save FLASH backup.'));
+      transaction.onabort = () => reject(transaction.error || new Error('FLASH backup save was aborted.'));
+    });
+  } finally { db.close(); }
+  setLatestFlashBackup(bytes, name);
+}
+
+async function loadLatestFlashBackup() {
+  try {
+    const db = await openSpiRecoveryDatabase();
+    const item = await new Promise((resolve, reject) => {
+      const request = db.transaction('backup', 'readonly').objectStore('backup').get('latest');
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    if (item?.bytes?.byteLength === STM32_FLASH_SIZE) {
+      const bytes = new Uint8Array(item.bytes);
+      const name = item.name || 'flash-backup.bin';
+      setLatestFlashBackup(bytes, name);
+      if (item.pendingRecovery !== false) {
+        setSpiRecoveryBackup(bytes, name);
+        setDumpStatus('A pending FLASH recovery backup is available. Restore it before using the device.', 'warning');
       }
     }
-    downloadDump(bytes, filename);
-    appendFirmwareLog(`SPI dump complete and saved as ${filename}.`, 'success');
-    setDumpStatus(`SPI dump saved as ${filename} (${length.toLocaleString()} bytes).`, 'success');
+  } catch { /* In-memory recovery remains available during this page session. */ }
+}
+
+async function clearSpiRecoveryBackup() {
+  setSpiRecoveryBackup(null, '');
+  try {
+    const db = await openSpiRecoveryDatabase();
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction('backup', 'readwrite');
+      const store = transaction.objectStore('backup');
+      const request = store.get('latest');
+      request.onsuccess = () => {
+        if (request.result?.bytes) store.put({...request.result, pendingRecovery: false}, 'latest');
+      };
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+    });
+    db.close();
+    if (latestFlashBackup?.bytes) setLatestFlashBackup(latestFlashBackup.bytes, latestFlashBackup.name);
+  } catch { /* The verified restore is complete. */ }
+}
+
+function downloadSpiRecoveryBackup() {
+  if (spiRecoveryBackup?.bytes) downloadDump(spiRecoveryBackup.bytes,
+    spiRecoveryBackup.name || makeDumpFilename('flash-recovery'));
+}
+
+async function readFullFlashBackup(port) {
+  let session = null;
+  let backup = null;
+  try {
+    session = await openBootloaderForImage('hex');
+    const deviceId = await session.client.getDeviceId();
+    if (deviceId !== STM32_DEVICE_ID) throw new Error(`Unexpected STM32 ID 0x${deviceId.toString(16)}.`);
+    if (!session.info.commands.includes(0x11) || !session.info.commands.includes(0x31) ||
+        (!session.info.commands.includes(0x44) && !session.info.commands.includes(0x43))) {
+      throw new Error('The ROM bootloader must support FLASH read, erase, and write for safe recovery.');
+    }
+    backup = new Uint8Array(STM32_FLASH_SIZE);
+    for (let offset = 0; offset < STM32_FLASH_SIZE; offset += 256) {
+      backup.set(await session.client.readMemory(STM32_FLASH_BASE + offset, 256), offset);
+      if ((offset & 4095) === 3840) appendFirmwareLog(`Recovery FLASH backup read ${offset + 256}/${STM32_FLASH_SIZE} bytes.`);
+    }
+    validateFirmwareImage(backup, new Uint8Array(STM32_FLASH_SIZE).fill(1));
+    const name = makeDumpFilename('flash-recovery');
+    setLatestFlashBackup(backup, name);
+    setSpiRecoveryBackup(backup, name);
+    downloadDump(backup, name);
+    try {
+      await saveLatestFlashBackup(backup, name, true);
+      setSpiRecoveryBackup(backup, name);
+    }
+    catch (error) {
+      appendFirmwareLog(`Persistent backup unavailable (${error.message}); requesting an external backup confirmation.`, 'warning');
+      if (!window.confirm('This browser cannot retain a recovery backup after the page closes. Confirm that the downloaded 64 KB FLASH backup is saved somewhere safe before continuing.')) {
+        throw new Error('SPI service was cancelled because a persistent or externally saved FLASH backup is required.');
+      }
+    }
+    appendFirmwareLog(`Verified full FLASH recovery backup captured (${STM32_FLASH_SIZE.toLocaleString()} bytes).`, 'success');
+  } finally {
+    if (session) {
+      await session.client.close(false);
+      bootloaderPortOpen = false;
+      if (portMayBeOpen) {
+        try { await port.close(); portMayBeOpen = false; } catch { portMayBeOpen = true; }
+      }
+      if (!portMayBeOpen) await sendFirmwareStartSignal(port);
+    }
+  }
+  if (!backup) throw new Error('Could not capture a FLASH recovery backup.');
+  return backup;
+}
+
+async function programFlashImage(port, pages, label, fullImage = false) {
+  let session = null;
+  let programmed = false;
+  let startedByGo = false;
+  try {
+    session = await openBootloaderForImage('bin');
+    const deviceId = await session.client.getDeviceId();
+    if (deviceId !== STM32_DEVICE_ID) throw new Error(`Unexpected STM32 ID 0x${deviceId.toString(16)}.`);
+    if (!session.info.commands.includes(0x31) || !session.info.commands.includes(0x11) ||
+        (!session.info.commands.includes(0x44) && !session.info.commands.includes(0x43))) {
+      throw new Error('ROM bootloader lacks erase, write, or read-back verification support.');
+    }
+    await applyBinSignalModeOrFallback(session);
+    const pageList = fullImage ? Array.from({length: STM32_FLASH_PAGE_COUNT}, (_, i) => i) : pages.map((page) => page.number);
+    await session.client.erasePages(pageList, session.info.commands);
+    appendFirmwareLog(`${label}: erased ${pageList.length} FLASH page(s).`, 'success');
+    for (let i = 0; i < pages.length; ++i) {
+      const page = pages[i];
+      await session.client.writePage(page.address, page.data);
+      const actual = await session.client.readMemory(page.address, page.data.length);
+      for (let j = 0; j < actual.length; ++j) {
+        if (actual[j] !== page.data[j]) throw new Error(`${label} verification mismatch at 0x${(page.address + j).toString(16)}.`);
+      }
+      if (i === pages.length - 1 || (i + 1) % Math.max(1, Math.floor(pages.length / 10)) === 0) {
+        appendFirmwareLog(`${label}: programmed and verified ${i + 1}/${pages.length} page(s).`);
+      }
+    }
+    programmed = true;
+    try {
+      await session.client.goToAddress(STM32_FLASH_BASE);
+      startedByGo = true;
+      appendFirmwareLog(`${label}: ROM GO accepted.`, 'success');
+    } catch (error) {
+      appendFirmwareLog(`${label}: ROM GO failed (${error.message}); sending firmware-start signal.`, 'warning');
+    }
+  } finally {
+    if (session) await session.client.close(false);
+    bootloaderPortOpen = false;
+    if (portMayBeOpen) {
+      try { await port.close(); portMayBeOpen = false; } catch { portMayBeOpen = true; }
+    }
+    if (programmed && !startedByGo && !portMayBeOpen) await sendFirmwareStartSignal(port);
+  }
+}
+
+async function reconnectAndCheckFirmware(port, transport, expectSpi = false) {
+  await connectDevice(port, transport);
+  if (!serial || !(protocolCapabilities & CAP_GET_STATUS)) throw new Error('Firmware did not answer HELLO after restart.');
+  if (expectSpi && (!logInfo?.spiReady || !logInfo?.spiSizeMb)) throw new Error('SPI service started, but no ready SPI NOR chip was detected.');
+}
+
+async function restoreSpiRecoveryBackup(port, transport, showStatus = true) {
+  const backup = spiRecoveryBackup;
+  if (!backup?.bytes || backup.bytes.length !== STM32_FLASH_SIZE) throw new Error('No complete FLASH recovery backup is available.');
+  setDumpStatus('Restoring and verifying the original 64 KB FLASH imageвЂ¦', 'warning');
+  appendFirmwareLog('Restoring the saved original FLASH image.');
+  const pages = validateFirmwareImage(backup.bytes, new Uint8Array(STM32_FLASH_SIZE).fill(1));
+  await programFlashImage(port, pages, 'Original firmware restore', true);
+  let applicationOnline = true;
+  try { await reconnectAndCheckFirmware(port, transport, false); }
+  catch (error) {
+    applicationOnline = false;
+    appendFirmwareLog(`FLASH read-back verification passed, but restored firmware did not answer HELLO: ${error.message}`, 'warning');
+  }
+  await clearSpiRecoveryBackup();
+  if (applicationOnline) {
+    appendFirmwareLog('Original firmware restored, read-back verified, and HELLO confirmed.', 'success');
+    if (showStatus) setDumpStatus('Original firmware restored and verified. Device is running normally.', 'success');
+  } else {
+    appendFirmwareLog('FLASH image restored and verified; the saved backup remains available in IndexedDB.', 'success');
+    if (showStatus) setDumpStatus('Original 64 KB FLASH was restored and verified, but HELLO was not confirmed. The backup remains available in IndexedDB.', 'warning');
+  }
+  return applicationOnline;
+}
+
+async function runMiniSpiDump(port, transport) {
+  const mini = getEmbeddedSpiMiniImage();
+  if (!window.confirm('The app will stop counting, capture and save a full FLASH backup, temporarily replace the firmware with the SPI service image, read SPI, then restore and verify the original FLASH. Keep the device connected throughout. Continue?')) return;
+  let backup = null;
+  let spiBytes = null;
+  let operationError = null;
+  let originalApplicationOnline = true;
+  try {
+    setDumpStatus('Reading and saving the full FLASH recovery backupвЂ¦', 'warning');
+    backup = await readFullFlashBackup(port);
+    setDumpStatus('Programming temporary SPI service firmwareвЂ¦', 'warning');
+    await programFlashImage(port, mini.pages, 'SPI service firmware');
+    await reconnectAndCheckFirmware(port, transport, true);
+    setDumpStatus('Reading SPI NOR through the temporary service firmwareвЂ¦');
+    spiBytes = await readSpiThroughProtocol(serial, logInfo.spiSizeMb * 1024 * 1024);
+  } catch (error) {
+    operationError = error;
+    appendFirmwareLog(`SPI service operation failed: ${error.message}`, 'error');
+  }
+  if (backup) {
+    try { originalApplicationOnline = await restoreSpiRecoveryBackup(port, transport, false); }
+    catch (error) {
+      appendFirmwareLog(`CRITICAL: automatic FLASH recovery failed: ${error.message}`, 'error');
+      setDumpStatus(`CRITICAL: firmware recovery failed. Keep the device connected and use Restore FLASH backup. Download a backup below. ${error.message}`, 'error');
+      return;
+    }
+  }
+  if (operationError) {
+    setDumpStatus(`SPI dump failed; original firmware was restored and verified. ${operationError.message}`, 'error');
+    return;
+  }
+  const filename = makeDumpFilename('spi');
+  downloadDump(spiBytes, filename);
+  appendFirmwareLog(`SPI dump saved as ${filename}; original firmware restored.`, 'success');
+  setDumpStatus(originalApplicationOnline
+    ? `SPI dump saved as ${filename} (${spiBytes.length.toLocaleString()} bytes). Original firmware was restored and verified.`
+    : `SPI dump saved as ${filename} (${spiBytes.length.toLocaleString()} bytes). Original FLASH was restored and verified, but HELLO was not confirmed; recovery backup is retained.`
+  , originalApplicationOnline ? 'success' : 'warning');
+}
+
+async function restoreLatestFlashBackup() {
+  if (dumpBusy || firmwareFlashBusy || !latestFlashBackup?.bytes) return;
+  if (!window.confirm('Restore the saved 64 KB FLASH image? This erases the current firmware.')) return;
+  try {
+    const {port, transport} = await selectFirmwarePort();
+    setDumpBusy(true);
+    setSpiRecoveryBackup(latestFlashBackup.bytes, latestFlashBackup.name);
+    await saveLatestFlashBackup(latestFlashBackup.bytes, latestFlashBackup.name, true);
+    await restoreSpiRecoveryBackup(port, transport);
+  } catch (error) {
+    appendFirmwareLog(`FLASH restore failed: ${error.message}`, 'error');
+    setDumpStatus(`FLASH restore failed. The saved backup remains available: ${error.message}`, 'error');
+  } finally { setDumpBusy(false); }
+}
+
+async function dumpSpiMemory() {
+  if (dumpBusy || firmwareFlashBusy) return;
+  if (spiRecoveryBackup) {
+    setDumpStatus('A pending FLASH recovery backup must be restored before starting another SPI operation.', 'error');
+    return;
+  }
+  setDumpBusy(true);
+  appendFirmwareLog('SPI dump requested.');
+  try {
+    if (serial && (protocolCapabilities & CAP_GET_SPI_DUMP) !== 0 &&
+        logInfo?.spiReady && logInfo.spiSizeMb) {
+      try {
+        const bytes = await readSpiThroughProtocol(serial, logInfo.spiSizeMb * 1024 * 1024);
+        const filename = makeDumpFilename('spi');
+        downloadDump(bytes, filename);
+        appendFirmwareLog(`Direct SPI dump saved as ${filename}.`, 'success');
+        setDumpStatus(`SPI dump saved as ${filename} (${bytes.length.toLocaleString()} bytes).`, 'success');
+        return;
+      } catch (error) {
+        appendFirmwareLog(`Direct SPI read unavailable (${error.message}); trying the recovery-backed service firmware.`, 'warning');
+      }
+    }
+    const {port, transport} = await selectFirmwarePort();
+    await runMiniSpiDump(port, transport);
   } catch (error) {
     appendFirmwareLog(`SPI dump failed: ${error.message}`, 'error');
     setDumpStatus(`SPI dump failed: ${error.message}`, 'error');
-  } finally {
-    setDumpBusy(false);
+  } finally { setDumpBusy(false); }
+}
+
+async function writeSpiImage() {
+  if (dumpBusy || firmwareFlashBusy || !selectedSpiImage) return;
+  const image = selectedSpiImage;
+  const capacity = 1024 * 1024;
+  if (image.bytes.length !== capacity) {
+    elements.spiWriteStatus.textContent = 'SPI image size changed; select the file again.';
+    elements.spiWriteStatus.dataset.level = 'error';
+    return;
+  }
+  let mini;
+  try { mini = getEmbeddedSpiMiniImage(); }
+  catch (error) {
+    elements.spiWriteStatus.textContent = error.message;
+    elements.spiWriteStatus.dataset.level = 'error';
+    return;
+  }
+  if (!window.confirm(
+    `Flash ${image.name} to SPI NOR? This erases and replaces the entire 1 MB chip, including all existing logs and assets. The app will save the device FLASH, run the SPI service, then restore the original firmware. Keep the device connected until the operation finishes.`)) return;
+
+  setDumpBusy(true);
+  let port = null;
+  let transport = activeTransport;
+  let backup = null;
+  let operationError = null;
+  let firmwareOnline = false;
+  try {
+    ({port, transport} = await selectFirmwarePort());
+    appendFirmwareLog(`SPI NOR flash requested from ${image.name} (${image.bytes.length.toLocaleString()} bytes).`);
+    elements.spiWriteStatus.textContent = 'Saving a verified FLASH recovery image…';
+    elements.spiWriteStatus.dataset.level = 'warning';
+    backup = await readFullFlashBackup(port);
+
+    elements.spiWriteStatus.textContent = 'Starting the temporary SPI service…';
+    await programFlashImage(port, mini.pages, 'SPI service firmware');
+    await reconnectAndCheckFirmware(port, transport, true);
+    if (!serial || !logInfo?.spiReady || logInfo.spiSizeMb !== 1) {
+      throw new Error('SPI service did not detect a ready 1 MB NOR chip.');
+    }
+
+    elements.spiWriteStatus.textContent = 'Erasing SPI NOR…';
+    appendFirmwareLog('Erasing all 256 SPI NOR sectors.');
+    for (let address = 0; address < capacity; address += 4096) {
+      const request = new Uint8Array(4);
+      new DataView(request.buffer).setUint32(0, address, true);
+      const response = await serial.request(OP_SPI_ERASE_SECTOR, request, 5000);
+      if (response.length !== 1 || response[0] !== 0) {
+        throw new Error(`SPI sector erase failed at 0x${address.toString(16)}.`);
+      }
+      if ((address & 0xffff) === 0xf000 || address + 4096 === capacity) {
+        const percent = Math.floor(((address + 4096) * 100) / capacity);
+        elements.spiWriteStatus.textContent = `Erasing SPI NOR… ${percent}%`;
+        appendFirmwareLog(`SPI sectors erased ${address + 4096}/${capacity} bytes.`);
+      }
+    }
+
+    elements.spiWriteStatus.textContent = 'Programming and verifying SPI NOR…';
+    for (let offset = 0; offset < capacity; offset += 128) {
+      const amount = Math.min(128, capacity - offset);
+      const request = new Uint8Array(5 + amount);
+      new DataView(request.buffer).setUint32(0, offset, true);
+      request[4] = amount;
+      request.set(image.bytes.subarray(offset, offset + amount), 5);
+      const response = await serial.request(OP_SPI_PROGRAM_PAGE, request, 5000);
+      if (response.length !== 1 || response[0] !== 0) {
+        throw new Error(`SPI write/read-back verification failed at 0x${offset.toString(16)}.`);
+      }
+      if ((offset & 0x7fff) === 0x7f80 || offset + amount === capacity) {
+        const percent = Math.floor(((offset + amount) * 100) / capacity);
+        elements.spiWriteStatus.textContent = `Programming and verifying SPI NOR… ${percent}%`;
+        appendFirmwareLog(`SPI programmed and verified ${offset + amount}/${capacity} bytes.`);
+      }
+    }
+    appendFirmwareLog('SPI NOR image programmed and verified.', 'success');
+  } catch (error) {
+    operationError = error;
+    appendFirmwareLog(`SPI NOR flash failed: ${error.message}`, 'error');
+  }
+
+  if (backup) {
+    elements.spiWriteStatus.textContent = 'Restoring original device firmware…';
+    try { firmwareOnline = await restoreSpiRecoveryBackup(port, transport, false); }
+    catch (error) {
+      appendFirmwareLog(`CRITICAL: automatic firmware recovery failed: ${error.message}`, 'error');
+      elements.spiWriteStatus.textContent = `CRITICAL: device firmware recovery failed. Use Restore FLASH in Firmware; download the recovery backup before disconnecting. ${error.message}`;
+      elements.spiWriteStatus.dataset.level = 'error';
+      setDumpStatus('Critical recovery failure. The FLASH recovery backup is available in Firmware.', 'error');
+      setDumpBusy(false);
+      return;
+    }
+  }
+  setDumpBusy(false);
+  if (operationError) {
+    elements.spiWriteStatus.textContent = backup
+      ? `SPI write failed; original firmware was restored. ${operationError.message}`
+      : `SPI write failed before a FLASH recovery image was captured. ${operationError.message}`;
+    elements.spiWriteStatus.dataset.level = 'error';
+  } else if (firmwareOnline) {
+    elements.spiWriteStatus.textContent = 'SPI image programmed and verified. Original firmware was restored.';
+    elements.spiWriteStatus.dataset.level = 'success';
+  } else {
+    elements.spiWriteStatus.textContent = 'SPI image programmed and verified; original FLASH was restored, but firmware HELLO was not confirmed.';
+    elements.spiWriteStatus.dataset.level = 'warning';
   }
 }
 
@@ -3628,6 +4118,9 @@ async function flashSelectedFirmware() {
     return;
   }
   firmwareFlashBusy = true;
+  updateSpiWriteButton();
+  if (elements.quickRestoreFlash) elements.quickRestoreFlash.disabled = true;
+  if (elements.firmwareRestoreFlash) elements.firmwareRestoreFlash.disabled = true;
   updateEepromWriteButton();
   firmwareStopRequested = false;
   elements.flashLocalBuild.disabled = false;
@@ -3758,6 +4251,9 @@ async function flashSelectedFirmware() {
     }
     const closed = await disconnectPortAfterAction(port);
     firmwareFlashBusy = false;
+    updateSpiWriteButton();
+    if (elements.quickRestoreFlash) elements.quickRestoreFlash.disabled = dumpBusy || !latestFlashBackup;
+    if (elements.firmwareRestoreFlash) elements.firmwareRestoreFlash.disabled = dumpBusy || !latestFlashBackup;
     firmwareStopRequested = false;
     updateEepromWriteButton();
     elements.firmwareFile.disabled = false;

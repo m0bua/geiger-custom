@@ -41,7 +41,9 @@ jobs:
         run: echo "tag=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
 
       - name: Build firmware and standalone app
-        run: python tools/build_release.py --version "${{ steps.release.outputs.tag }}" --require-minifier
+        run: |
+          pio run -e geiger2_spi_mini
+          python tools/build_release.py --version "${{ steps.release.outputs.tag }}" --spi-mini-bin .pio/build/geiger2_spi_mini/firmware.bin --require-minifier
 
       - name: Upload standalone HTML
         uses: actions/upload-artifact@v4
@@ -57,6 +59,15 @@ jobs:
         with:
           name: release-firmware
           path: .pio/scratch/geiger2_manual/firmware.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload SPI service firmware BIN
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-spi-mini
+          path: .pio/build/geiger2_spi_mini/firmware.bin
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
@@ -88,8 +99,14 @@ jobs:
           name: release-firmware
           path: expected-firmware
 
+      - name: Download SPI service firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: release-spi-mini
+          path: expected-spi-mini
+
       - name: Build Windows executable
-        run: python tools/build_windows_app.py --version "${{ needs.build-app.outputs.tag }}" --firmware-bin expected-firmware\firmware.bin --require-minifier
+        run: python tools/build_windows_app.py --version "${{ needs.build-app.outputs.tag }}" --firmware-bin expected-firmware\firmware.bin --spi-mini-bin expected-spi-mini\firmware.bin --require-minifier
 
       - name: Verify the embedded firmware matches the release BIN
         shell: pwsh
@@ -97,6 +114,13 @@ jobs:
           $expected = (Get-FileHash expected-firmware\firmware.bin -Algorithm SHA256).Hash
           $built = (Get-FileHash .pio\scratch\geiger2_manual\firmware.bin -Algorithm SHA256).Hash
           if ($expected -ne $built) { throw "Windows EXE firmware differs from release BIN: $built != $expected" }
+
+      - name: Verify the embedded SPI service image matches the release BIN
+        shell: pwsh
+        run: |
+          $expected = (Get-FileHash expected-spi-mini\firmware.bin -Algorithm SHA256).Hash
+          $built = (Get-FileHash .pio\build\geiger2_spi_mini\firmware.bin -Algorithm SHA256).Hash
+          if ($expected -ne $built) { throw "Windows EXE SPI service image differs from release BIN: $built != $expected" }
 
       - name: Upload Windows executable
         uses: actions/upload-artifact@v4
@@ -132,11 +156,18 @@ jobs:
           name: release-windows
           path: dist/windows
 
+      - name: Download SPI service firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: release-spi-mini
+          path: dist/spi-mini-staging
+
       - name: Publish all release assets
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.build-app.outputs.tag }}
         run: |
+          cp dist/spi-mini-staging/firmware.bin dist/spi-service-firmware.bin
           firmware=".pio/scratch/geiger2_manual/firmware.bin"
           firmware_sha256="$(sha256sum "$firmware" | cut -d ' ' -f1)"
           canonical_sha256="$(python -c 'from pathlib import Path; import hashlib; b=Path(".pio/scratch/geiger2_manual/firmware.bin").read_bytes(); print(hashlib.sha256(b.ljust(65536, bytes([255]))).hexdigest())')"
@@ -145,6 +176,8 @@ jobs:
           First production-ready app and firmware build.
 
           Includes the standalone Windows EXE with an integrated COM-port connection and firmware programming, alongside the single-file HTML app and firmware BIN.
+
+          The HTML and EXE include a recovery-backed SPI NOR dump flow and the matching temporary SPI service firmware.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded; used for app compatibility checks): ${canonical_sha256}
@@ -155,6 +188,7 @@ jobs:
           gh release create "$RELEASE_TAG" \
             dist/Dosimeter-App.html \
             "$firmware" \
+            dist/spi-service-firmware.bin \
             dist/windows/Dosimeter-App.exe \
             --title "APP-$RELEASE_TAG" \
             --target "$GITHUB_SHA" \

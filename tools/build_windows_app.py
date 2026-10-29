@@ -63,6 +63,8 @@ def main() -> int:
                         help="ARM GCC bin directory passed to firmware builder")
     parser.add_argument("--firmware-bin", type=Path,
                         help="reuse a prebuilt release BIN without recompiling it")
+    parser.add_argument("--spi-mini-bin", type=Path,
+                        help="reuse a prebuilt SPI service BIN")
     parser.add_argument("--require-minifier", action="store_true",
                         help="require Node.js/Terser when generating the embedded HTML")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist/windows",
@@ -100,6 +102,8 @@ def main() -> int:
         command.extend(["--toolchain", str(args.toolchain.resolve())])
     if args.firmware_bin:
         command.extend(["--firmware-bin", str(args.firmware_bin.resolve())])
+    if args.spi_mini_bin:
+        command.extend(["--spi-mini-bin", str(args.spi_mini_bin.resolve())])
     if args.require_minifier:
         command.append("--require-minifier")
     run(command)

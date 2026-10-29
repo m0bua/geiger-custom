@@ -32,12 +32,18 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Build SPI service firmware for the live app
+        run: |
+          python -m pip install platformio==6.1.18
+          pio pkg install --global --tool platformio/toolchain-gccarmnoneeabi@1.70201.0
+          pio run -e geiger2_spi_mini
+
       - name: Assemble portal
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > /tmp/releases.json
-          python tools/build_pages.py --releases-json /tmp/releases.json
+          python tools/build_pages.py --releases-json /tmp/releases.json --spi-mini-bin .pio/build/geiger2_spi_mini/firmware.bin
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

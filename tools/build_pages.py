@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import html
 import json
 import os
@@ -15,6 +16,7 @@ from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "dist/gh-pages"
+DEFAULT_SPI_MINI = ROOT / ".pio/build/geiger2_spi_mini/firmware.bin"
 
 
 def main() -> int:
@@ -23,11 +25,32 @@ def main() -> int:
                         help="site output directory (default: dist/gh-pages)")
     parser.add_argument("--releases-json", type=Path,
                         help="GitHub releases API response used to add versioned app snapshots")
+    parser.add_argument("--spi-mini-bin", type=Path, default=DEFAULT_SPI_MINI,
+                        help="SPI service firmware embedded in the live app")
     args = parser.parse_args()
     output = args.output if args.output.is_absolute() else ROOT / args.output
     output.mkdir(parents=True, exist_ok=True)
 
     shutil.copytree(ROOT / "app", output / "app", dirs_exist_ok=True)
+    mini_path = args.spi_mini_bin.resolve()
+    if not mini_path.is_file():
+        raise FileNotFoundError(f"SPI service firmware is missing: {mini_path}")
+    mini_bytes = mini_path.read_bytes()
+    if not mini_bytes or len(mini_bytes) >= 65536:
+        raise ValueError(f"SPI service firmware has invalid size: {len(mini_bytes)} bytes")
+    app_index = output / "app/index.html"
+    app_document = app_index.read_text(encoding="utf-8")
+    injection = ("<script id=\"embedded-spi-mini\">window.EMBEDDED_SPI_MINI_B64=\"" +
+                 base64.b64encode(mini_bytes).decode("ascii") + "\";</script>")
+    app_document, embedded_count = re.subn(
+        r'<script\s+id="embedded-spi-mini">.*?</script>',
+        lambda _: injection, app_document, count=1, flags=re.DOTALL,
+    )
+    if not embedded_count:
+        if "</head>" not in app_document:
+            raise ValueError("Could not find the app document head for the embedded SPI image")
+        app_document = app_document.replace("</head>", injection + "</head>", 1)
+    app_index.write_text(app_document, encoding="utf-8")
     shutil.copytree(ROOT / "docs/renders/screens",
                     output / "docs/renders/screens", dirs_exist_ok=True)
     template = (ROOT / "tools/pages-index.html").read_text(encoding="utf-8")
@@ -85,7 +108,8 @@ def main() -> int:
         downloads = [f'<a href="{url}">Open</a>']
         for asset_name, label in (("Dosimeter-App.html", "HTML"),
                                   ("Dosimeter-App.exe", "Windows EXE"),
-                                  ("firmware.bin", "BIN")):
+                                  ("firmware.bin", "BIN"),
+                                  ("spi-service-firmware.bin", "SPI service")):
             release_asset = assets.get(asset_name)
             download_url = release_asset.get("browser_download_url") if release_asset else None
             if download_url:
