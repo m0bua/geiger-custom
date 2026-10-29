@@ -2224,6 +2224,49 @@ static uint8_t lcd_settings_first_visible_item(void)
     return first > last_first ? last_first : first;
 }
 
+static const char *lcd_settings_choice_text(uint8_t option)
+{
+    const uint8_t previous = lcd_settings_edit_value;
+    lcd_settings_edit_value = option;
+    const char *text = lcd_settings_value_text(lcd_settings_selected);
+    lcd_settings_edit_value = previous;
+    return text;
+}
+
+static __attribute__((noinline)) void lcd_settings_choice_line(
+    uint8_t row, char line[20], uint8_t *selected_start,
+    uint8_t *selected_end)
+{
+    memset(line, ' ', 20u);
+    *selected_start = UINT8_MAX;
+    *selected_end = 0u;
+    if (row == 0u) {
+        const char *label = lcd_settings_labels[lcd_settings_selected];
+        for (uint8_t i = 0u; i < 18u && label[i] != '\0'; ++i) {
+            line[i] = label[i];
+        }
+        return;
+    }
+    const uint8_t count = lcd_settings_value_count(lcd_settings_selected);
+    const uint8_t split = (uint8_t)((count + 1u) / 2u);
+    for (uint8_t column = 0u; column < 2u; ++column) {
+        if (column == 0u && row > split) continue;
+        const uint8_t option = column == 0u ? (uint8_t)(row - 1u) :
+            (uint8_t)(split + row - 1u);
+        if (option >= count) continue;
+        const char *value = lcd_settings_choice_text(option);
+        const uint8_t start = (uint8_t)(column * 10u);
+        line[start] = option == lcd_settings_edit_value ? '>' : ' ';
+        for (uint8_t i = 0u; i < 8u && value[i] != '\0'; ++i) {
+            line[start + 1u + i] = value[i];
+        }
+        if (option == lcd_settings_edit_value) {
+            *selected_start = start;
+            *selected_end = (uint8_t)(start + 8u);
+        }
+    }
+}
+
 static uint8_t lcd_settings_make_line(uint8_t visible_row, char *line)
 {
     const uint8_t first = lcd_settings_first_visible_item();
@@ -2302,10 +2345,6 @@ static uint8_t lcd_settings_make_line(uint8_t visible_row, char *line)
     value_start = value_length < 20u ? (uint8_t)(20u - value_length) : 0u;
     if (value_start <= label_length + 1u) {
         value_start = (uint8_t)(label_length + 2u);
-    }
-    if (lcd_settings_list_active && item == lcd_settings_selected &&
-        lcd_settings_editing && value_start > 0u) {
-        line[value_start - 1u] = '>';
     }
     for (uint8_t i = 0u; i < value_length && value_start + i < 20u; ++i) {
         line[value_start + i] = value[i];
@@ -3207,18 +3246,23 @@ static __attribute__((noinline)) bool lcd_text_prepare_glyph(void)
             char line[20];
             uint8_t x_window[4] = { 0u, 0u, 0u, 158u };
             uint8_t y_window[4];
+            uint16_t text_color = LCD_TEXT_FOREGROUND;
+            uint8_t selected_start = UINT8_MAX;
+            uint8_t selected_end = 0u;
 
             if (lcd_text_glyph_index >= LCD_SETTINGS_VISIBLE_ROWS) {
                 lcd_text_active = false;
                 return false;
             }
+            if (!LCD_CLEANUP_MENU_ACTIVE && lcd_settings_list_active &&
+                lcd_settings_editing &&
+                (lcd_settings_value_count(lcd_settings_selected) > 3u ||
+                 lcd_settings_selected == SETTING_USE_SPI)) {
+                lcd_settings_choice_line(lcd_text_glyph_index, line,
+                    &selected_start, &selected_end);
+                goto settings_line_draw;
+            }
             (void)lcd_settings_make_line(lcd_text_glyph_index, line);
-            y_window[0] = 0u;
-            y_window[1] = (uint8_t)(LCD_Y_OFFSET + 3u +
-                lcd_text_glyph_index * 12u);
-            y_window[2] = 0u;
-            y_window[3] = (uint8_t)(y_window[1] +
-                FONT_SMALL_CELL_HEIGHT - 1u);
             {
                 const uint8_t item = lcd_settings_visible_to_item(
                     (uint8_t)(lcd_settings_first_visible_item() +
@@ -3226,8 +3270,6 @@ static __attribute__((noinline)) bool lcd_text_prepare_glyph(void)
                 const bool selected_row = lcd_settings_list_active &&
                     (LCD_CLEANUP_MENU_ACTIVE ? item == lcd_cleanup_selected :
                      item == lcd_settings_selected);
-                const bool reset_selected_row = selected_row &&
-                    (item == SETTING_RESET || item == SETTING_USE_SPI);
                 const bool action_item = !LCD_CLEANUP_MENU_ACTIVE &&
                     (item == LCD_SETTINGS_POWER_OFF_ITEM ||
                      item == LCD_SETTINGS_REBOOT_ITEM);
@@ -3247,10 +3289,6 @@ static __attribute__((noinline)) bool lcd_text_prepare_glyph(void)
                              (lcd_cleanup_status == 2u ? "FAILED" :
                               "WORKING...")) :
                             "")) : lcd_settings_value_text(item);
-                const bool value_edit_row = !LCD_CLEANUP_MENU_ACTIVE &&
-                    selected_row &&
-                    (lcd_settings_value_count(item) > 3u ||
-                     item == SETTING_USE_SPI);
                 uint8_t label_length = 0u;
                 uint8_t value_length = 0u;
                 uint8_t value_start;
@@ -3265,34 +3303,33 @@ static __attribute__((noinline)) bool lcd_text_prepare_glyph(void)
                 if (value_start <= label_length + 1u) {
                     value_start = (uint8_t)(label_length + 2u);
                 }
-                const uint16_t text_color = LCD_CLEANUP_MENU_ACTIVE &&
+                text_color = LCD_CLEANUP_MENU_ACTIVE &&
                     selected_row && lcd_cleanup_status == 1u ?
                     LCD_TEXT_GREEN : (LCD_CLEANUP_MENU_ACTIVE &&
                     selected_row && lcd_cleanup_status == 3u ?
                     LCD_TEXT_YELLOW : (warning_item ?
-                    (selected_row ? LCD_TEXT_RED :
-                     LCD_SETTINGS_WARNING_COLOR) :
+                    (selected_row ? LCD_SETTINGS_SELECTED_COLOR :
+                     LCD_TEXT_RED) :
                     (action_item ?
-                        (selected_row ? LCD_TEXT_YELLOW :
-                         LCD_SETTINGS_ACTION_COLOR) :
+                        (selected_row ? LCD_SETTINGS_SELECTED_COLOR :
+                         LCD_TEXT_YELLOW) :
                         (selected_row ? LCD_SETTINGS_SELECTED_COLOR :
                          LCD_TEXT_FOREGROUND))));
-                uint8_t selected_start = UINT8_MAX;
-                uint8_t selected_end = 0u;
-                if (value_edit_row) {
-                    selected_start = lcd_settings_editing && value_start > 0u ?
-                        (uint8_t)(value_start - 1u) : 0u;
-                    selected_end = lcd_settings_editing ?
-                        (uint8_t)(value_start + value_length - 1u) :
-                        label_length;
+                if (selected_row) {
+                    selected_start = 0u;
+                    selected_end = label_length;
                 }
-                lcd_render_small_line(line, 159u,
-                    value_edit_row ? LCD_TEXT_FOREGROUND : text_color,
-                    selected_start, selected_end,
-                    reset_selected_row ? 0u : UINT8_MAX,
-                    reset_selected_row ? 19u : 0u,
-                    reset_selected_row ? LCD_TEXT_RED : LCD_TEXT_FOREGROUND);
             }
+settings_line_draw:
+            y_window[0] = 0u;
+            y_window[1] = (uint8_t)(LCD_Y_OFFSET + 3u +
+                lcd_text_glyph_index * 12u);
+            y_window[2] = 0u;
+            y_window[3] = (uint8_t)(y_window[1] +
+                FONT_SMALL_CELL_HEIGHT - 1u);
+            lcd_render_small_line(line, 159u, text_color,
+                selected_start, selected_end, UINT8_MAX, 0u,
+                LCD_TEXT_FOREGROUND);
             lcd_submit_text_window(x_window, y_window);
             return true;
         }
