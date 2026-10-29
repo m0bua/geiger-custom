@@ -191,16 +191,15 @@ jobs:
           canonical_sha256="$(python -c 'from pathlib import Path; import hashlib; b=Path("firmware-staging/firmware.bin").read_bytes(); print(hashlib.sha256(b.ljust(65536, bytes([255]))).hexdigest())')"
           windows_sha256="$(sha256sum dist/windows/Dosimeter-App.exe | cut -d ' ' -f1)"
           cat > /tmp/prerelease-notes.md <<EOF
-          Development pre-release built from the dev branch.
+          Development pre-release built from the selected branch.
 
           The HTML and Windows apps identify themselves as Version: ${RELEASE_VERSION}. This build is for testing and may change without notice.
 
           ## Changes
-          - Improved parallel minute, hour, and day logging and faster log retrieval.
-          - Improved minute, hour, and day graph navigation, cursor behavior, and redraw performance.
-          - Expanded EEPROM and SPI NOR dump, flash, restore, and erase controls.
-          - Improved Windows COM-port selection and the settings layout.
-          - Centralized the firmware display palette for easier theme changes.
+          - Improved sleep behavior while the display is off.
+          - Reduced battery percentage fluctuations with linear ADC mapping and hysteresis.
+          - Reordered the settings menu, added a two-column option picker, and updated selection and action colors.
+          - Refreshed manual illustrations and clarified settings, log storage, and reset behavior.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded): ${canonical_sha256}

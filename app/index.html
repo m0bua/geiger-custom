@@ -322,50 +322,52 @@
       </details>
       <details class="information-card manual-card">
         <summary>Settings reference</summary>
-        <p>In the app, supported setting changes are sent to the device immediately. On the device, options with more than three choices require long Right to enter editing, short Left/Right to choose a value, and long Right to save; long Left cancels. Unsupported settings remain visible but disabled in the app. The <strong>Show</strong> checkbox controls whether a setting appears in the device menu; <strong>POWER OFF</strong> is always shown.</p>
-
-        <h3>Indication and alarms</h3>
+        <p>Settings are listed below in device-menu order. In the app, supported changes are sent to the device immediately; unsupported settings remain visible but disabled. <strong>Show</strong> controls visibility in the device menu, where POWER OFF is always shown. Demo changes are temporary and return to defaults when the page is reloaded.</p>
+        <p>On the device, long Right activates a setting. Most settings with up to three choices change immediately. LOG MEMORY and settings with more choices open a separate list: short Left/Right selects an option, long Right saves, and long Left cancels. Each entry into the settings list starts at the first visible item.</p>
+        <p>For rate indications and alarms, YELLOW covers the yellow and red levels, starting at 0.4 µSv/h; RED starts above 0.9 µSv/h. CUSTOM uses RATE CUSTOM. Rate-based triggers wait until the initial measurement window is ready. INVISIBLE suppresses indications and alarms; SEARCH keeps the screen on and flashes the LED on pulses.</p>
         <ul>
-          <li><strong>LED — OFF / ON / ALWAYS / YELLOW / RED / CUSTOM:</strong> controls pulse flashes. ON flashes only while the display is on; ALWAYS also flashes with the display off. YELLOW and RED flash at the matching rate threshold. CUSTOM uses RATE CUSTOM.</li>
-          <li><strong>CLICKS — OFF / ON / ALWAYS / YELLOW / RED / CUSTOM:</strong> same trigger choices as LED, using the speaker for pulse clicks.</li>
-          <li><strong>RATE SCREEN / RATE LIGHT / RATE SOUND — OFF / YELLOW / RED / CUSTOM:</strong> independently choose which rate levels activate the display, flashlight, or sound alarm. YELLOW starts at 0.4 µSv/h; RED starts above 0.9 µSv/h. CUSTOM uses RATE CUSTOM. The display stays on until the rate falls below its trigger. The flashlight alarm flashes twice per second; the sound alarm uses a siren.</li>
-          <li><strong>RATE CUSTOM:</strong> custom rate threshold: 0.3, 0.4, 0.5, 0.7, 0.9, 1, 2, 5, or 10 µSv/h. The device menu omits the unit to save space.</li>
-          <li><strong>DOSE SCREEN / DOSE LIGHT / DOSE SOUND — OFF / YELLOW / RED / CUSTOM:</strong> independently choose which accumulated-dose levels activate the display, flashlight, or sound alarm. YELLOW and RED mean the dose that would accumulate at 0.4 or 0.9 µSv/h over the selected DOSE PERIOD. The display stays on until the dose falls below its trigger. CUSTOM uses DOSE CUSTOM.</li>
-          <li><strong>DOSE CUSTOM:</strong> accumulated-dose threshold of 5, 7, 10, 30, 50, 100, 500, or 1000 µSv. The device menu omits the unit to save space.</li>
-          <li><strong>ALARM STOP — CLEAR / BUTTON:</strong> controls how the sound alarm is acknowledged. CLEAR lets the siren stop when its triggering condition ends. BUTTON keeps the siren latched after that condition ends until a button is pressed. A button press during any active alarm always silences the alarm outputs and is consumed; it does not navigate.</li>
-          <li><strong>TONE — STOCK / CLASSIC:</strong> selects the sound character for pulse clicks and the sound alarm. STOCK preserves the current stock-style sound; CLASSIC uses a short dry click.</li>
-        </ul>
-
-        <h3>Display</h3>
-        <ul>
-          <li><strong>LED BRIGHT:</strong> AUTO or 1%, 3%, 5%, 10%, 25%, 50%, 80%, 100%. AUTO follows solar level, with a 5% minimum and full brightness by 30% solar.</li>
-          <li><strong>SCREEN BRIGHT:</strong> AUTO or the same fixed percentages. AUTO follows solar level and has a 1% minimum.</li>
+          <li><strong>DOSE PERIOD — UPTIME / DAY / TOTAL:</strong> shows accumulated dose since this run started, for the current calendar day, or for the lifetime total. Changing the period resets DOSE ROW 2 to TIME for UPTIME, or to the first alternative unit for DAY and TOTAL (CNT when UNIT is Sv).</li>
+          <li><strong>LED — OFF / ON / ALWAYS / YELLOW / RED / CUSTOM:</strong> controls pulse flashes. ON flashes while the display is on; ALWAYS also flashes while it is off. The remaining modes flash at the chosen rate level.</li>
+          <li><strong>CLICKS — OFF / ON / ALWAYS / YELLOW / RED / CUSTOM:</strong> controls speaker clicks on pulses using the same trigger choices as LED.</li>
+          <li><strong>RATE SCREEN — OFF / YELLOW / RED / CUSTOM:</strong> wakes and keeps the display on while the chosen rate condition is active. Acknowledging the alarm lets the display time out.</li>
+          <li><strong>RATE LIGHT — OFF / YELLOW / RED / CUSTOM:</strong> flashes the flashlight twice per second at the chosen rate level.</li>
+          <li><strong>RATE SOUND — OFF / YELLOW / RED / CUSTOM:</strong> plays a siren at the chosen rate level.</li>
+          <li><strong>RATE CUSTOM:</strong> selects a custom rate threshold of 0.3, 0.4, 0.5, 0.7, 0.9, 1, 2, 5, or 10 µSv/h. The device menu omits the unit.</li>
+          <li><strong>DOSE SCREEN — OFF / YELLOW / RED / CUSTOM:</strong> wakes and keeps the display on at the chosen accumulated-dose threshold. Acknowledging the alarm lets the display time out.</li>
+          <li><strong>DOSE LIGHT — OFF / YELLOW / RED / CUSTOM:</strong> flashes the flashlight twice per second at the chosen accumulated-dose threshold.</li>
+          <li><strong>DOSE SOUND — OFF / YELLOW / RED / CUSTOM:</strong> plays a siren at the chosen accumulated-dose threshold.</li>
+          <li><strong>DOSE CUSTOM:</strong> selects an accumulated-dose threshold of 5, 7, 10, 30, 50, 100, 500, or 1000 µSv. For the three DOSE alarm settings, YELLOW and RED are the dose that would accumulate at 0.4 or 0.9 µSv/h over the measured time in the selected period. The device menu omits the unit.</li>
+          <li><strong>ALARM STOP — CLEAR / BUTTON:</strong> controls when the siren stops. CLEAR stops it when its condition clears; BUTTON keeps it sounding until a button is pressed. During an active alarm, the first button press acknowledges the alarm, silences the siren, stops alarm flashlight flashes, and lets the screen time out without navigating. It can trigger again after the conditions clear and recur.</li>
+          <li><strong>RATE ROW 2:</strong> for Sv/R, show CPM, CPS, OFF, or the opposite radiation unit. For CNT, show Sv, R, OFF, or CPS.</li>
+          <li><strong>DOSE ROW 2:</strong> show another unit, another dose period, TIME, CPM, or OFF. The current unit and current period are unavailable choices.</li>
+          <li><strong>LED BRIGHT — AUTO / 1% / 3% / 5% / 10% / 25% / 50% / 80% / 100%:</strong> AUTO follows solar level, with a 5% minimum and full brightness at 30% solar.</li>
+          <li><strong>SCREEN BRIGHT:</strong> AUTO or the same fixed percentages. AUTO uses an average of solar readings and changes brightness gradually, with a 1% minimum.</li>
           <li><strong>SCREEN TIMER — 1 / 5 / 10 / 30 / 60 / 90 seconds:</strong> inactivity time before the display turns off. SEARCH keeps the display on; INVISIBLE uses a one-second timeout.</li>
-          <li><strong>LEAD ZERO — SHOW / HIDE:</strong> controls the zero before a decimal fraction. HIDE removes that leading zero while preserving the fractional digits.</li>
-        </ul>
-
-        <h3>Units and secondary rows</h3>
-        <ul>
-          <li><strong>UNIT — Sv / CNT / R:</strong> selects radiation dose/rate units, pulse counts, or the device's stock-compatible R display convention (R uses the firmware's ×100 scaling; it is not a universal Sv-to-R conversion). The choice affects both main screens and the app's Overview and Logs.</li>
-          <li><strong>RATE PREFIX:</strong> for Sv/R, choose m, µ, n, or AUTO. In CNT mode, choose CPM or CPS.</li>
-          <li><strong>DOSE PREFIX:</strong> for Sv/R, choose m, µ, n, or AUTO. It is unavailable in CNT mode.</li>
-          <li><strong>RATE ROW 2:</strong> for Sv/R, show CPM, CPS, OFF, or the opposite radiation unit. For CNT, show Sv, R, OFF, or CPS. A value identical to the main unit is disabled in the app.</li>
-          <li><strong>DOSE ROW 2:</strong> show another unit, another dose period, TIME, CPM, or OFF. The current unit and current period are disabled choices. The default is TIME for DOSE PERIOD=UPTIME and CNT otherwise.</li>
-          <li><strong>DOSE PERIOD — UPTIME / DAY / TOTAL:</strong> selects the interval used for the accumulated dose: since this run started, since the current calendar day began, or the lifetime total.</li>
-        </ul>
-
-        <h3>Device and storage</h3>
-        <ul>
-          <li><strong>LONG PRESS — 300 / 500 / 700 / 900 / 1100 / 1300 ms:</strong> sets how long a button must be held to trigger a long press.</li>
-          <li><strong>HV — ON / OFF:</strong> OFF disables detector counting and freezes rate and dose updates. Turning it ON restarts the rate warm-up from zero.</li>
-          <li><strong>LOG MEMORY - EEPROM / SPI / OFF:</strong> the selected storage receives new records; there is no fallback to the other memory if it fails. MIN closes at the minute boundary. HOUR and DAY are aggregated at their boundaries from minute and hour records. Incomplete intervals are retained with their actual coverage. ALERT records begin at a yellow/red rate level and close when the level clears; episodes longer than 4,096 seconds are split. Each log is a ring: when full, its oldest record is overwritten.</li>
-          <li><strong>EEPROM capacity:</strong> 62 MIN, 25 HOUR, 50 DAY, and 30 ALERT records.</li>
-          <li><strong>SPI NOR capacity (1 MiB):</strong> 30,082 MIN, 9,802 HOUR, 16,562 DAY, and 24,650 ALERT records. These are independent rings; each replaces only its own oldest records when full.</li>
-          <li><strong>Switching storage:</strong> changing between EEPROM and SPI starts a fresh active log set; records are not migrated. Selecting SPI erases SPI contents, including stock assets, and clears the previous EEPROM log set. Read the app confirmation before proceeding. OFF pauses new log writes and keeps existing records.</li>
-          <li><strong>RESET: SETTINGS / LOGS / OLD LOGS / EEPROM / SPI / ALL:</strong> SETTINGS restores defaults; LOGS clears EEPROM and SPI log data; OLD LOGS clears logs in inactive storage (EEPROM when LOG MEMORY is SPI, SPI when it is EEPROM, and both when LOG MEMORY is OFF); EEPROM erases internal EEPROM, including settings; SPI erases the SPI chip, including stock assets; ALL erases both memories. Destructive choices restart the device.</li>
-          <li><strong>POWER OFF:</strong> shuts the device down.</li>
+          <li><strong>TONE — STOCK / CLASSIC:</strong> selects the sound character for pulse clicks and the siren.</li>
+          <li><strong>LONG PRESS — 300 / 500 / 700 / 900 / 1100 / 1300 ms:</strong> sets the time required to trigger a long button press.</li>
+          <li><strong>UNIT — Sv / CNT / R:</strong> selects the unit for both main screens and the app's Overview and Logs. R follows the device's stock-compatible ×100 scaling of Sv. Changing UNIT resets the rate and dose prefixes to their defaults for that unit.</li>
+          <li><strong>RATE PREFIX:</strong> for Sv/R, choose m, µ, n, or AUTO; for CNT, choose CPM or CPS.</li>
+          <li><strong>DOSE PREFIX:</strong> for Sv/R, choose m, µ, n, or AUTO. It is unavailable for CNT.</li>
+          <li><strong>LEAD ZERO — SHOW / HIDE:</strong> controls the zero before a decimal fraction.</li>
+          <li><strong>HV — ON / OFF:</strong> OFF disables detector counting and freezes dose updates. Turning it ON restarts the rate warm-up from zero.</li>
+          <li><strong>LOG MEMORY — EEPROM / SPI / OFF:</strong> selects where new logs are stored. OFF pauses logging. The device does not fall back to the other memory if the selected storage fails. See storage details below before switching.</li>
+          <li><strong>RESET — SETTINGS / LOGS / OLD LOGS / EEPROM / SPI / ALL:</strong> selects a reset action; see the effects below. The device executes the selected action on long Right without another on-device confirmation. The app asks for confirmation.</li>
+          <li><strong>POWER OFF:</strong> shuts down the device.</li>
           <li><strong>REBOOT:</strong> restarts the device.</li>
         </ul>
+
+        <h3>Log storage and reset actions</h3>
+        <p>MIN records close at minute boundaries. HOUR and DAY records are calculated from shorter-period records and saved at their boundaries. Incomplete intervals retain their measured coverage. ALERT records start at a yellow or red rate and close when it clears; episodes are split at 4,096 seconds. Each log is a ring that overwrites its oldest records when full.</p>
+        <ul>
+          <li><strong>EEPROM:</strong> up to 62 MIN, 25 HOUR, 50 DAY, and 30 ALERT records.</li>
+          <li><strong>SPI NOR (1 MiB):</strong> up to 30,082 MIN, 9,802 HOUR, 16,562 DAY, and 24,650 ALERT records in separate rings. Actual capacity can be lower when records occupy partially filled sectors.</li>
+          <li><strong>Switching storage:</strong> switching from EEPROM to SPI erases the entire SPI chip, including stock assets, and clears EEPROM logs. Switching from SPI to EEPROM clears EEPROM logs; SPI records remain in inactive storage. Records are not migrated. OFF retains stored records; returning from OFF to the same storage resumes its log set if the storage remains valid, while switching to the other storage starts a fresh set. Changing storage resets the in-progress buffers.</li>
+          <li><strong>RESET SETTINGS:</strong> restores settings defaults.</li>
+          <li><strong>RESET LOGS:</strong> clears EEPROM logs and erases the entire SPI chip, including stock assets.</li>
+          <li><strong>RESET OLD LOGS:</strong> clears inactive storage: EEPROM when SPI is selected, SPI when EEPROM is selected, or both when LOG MEMORY is OFF. Clearing SPI erases the entire chip, including stock assets.</li>
+          <li><strong>RESET EEPROM:</strong> erases internal EEPROM, including settings and dose checkpoints. <strong>RESET SPI</strong> erases the entire SPI chip. <strong>RESET ALL</strong> erases both memories.</li>
+        </ul>
+        <p>Successful reset actions restart the device. Actions that clear SPI require the SPI chip to be accessible. Erasing stock assets affects a return to stock firmware; keep a backup if needed.</p>
 
         <p><strong>Factory defaults:</strong> LED ALWAYS; CLICKS and alarm outputs OFF; both brightness settings AUTO; SCREEN TIMER 10 seconds; TONE STOCK; LEAD ZERO SHOW; UNIT Sv; both prefixes µ; RATE ROW 2 CPM; DOSE PERIOD DAY with DOSE ROW 2 CNT; LONG PRESS 900 ms; HV ON; LOG MEMORY EEPROM; ALARM STOP CLEAR. RATE CUSTOM defaults to 0.9 µSv/h and DOSE CUSTOM to 5 µSv. RATE CUSTOM, DOSE CUSTOM, LONG PRESS, HV, LOG MEMORY, DOSE SCREEN, DOSE LIGHT, DOSE SOUND, ALARM STOP, TONE, LEAD ZERO, RATE PREFIX, DOSE PREFIX, RESET, and REBOOT are hidden from the device menu by default and can be shown from the app.</p>
       </details>
@@ -397,11 +399,11 @@
 
         <section class="manual-chapter">
         <h3>1.1 - Settings</h3>
-        <p>Long Right opens the settings list. Short Left/Right moves the highlight. Long Right activates the highlighted item. Options with up to three choices change immediately. For options with more choices, long Right enters value editing; short Left/Right cycles values, long Right saves, and long Left cancels. RESET runs the selected action on long Right without an additional on-device confirmation; the app still asks before executing a reset. The list includes indication and alarm behavior, tone, brightness and screen timeout, units and prefixes, secondary rows, dose period, log memory, long-press timing, reset actions, Power Off, and Reboot. RESET and REBOOT are hidden by default and can be shown from the app. Some items depend on the selected unit. Set the device clock on the app's Settings page.</p>
+        <p>Long Right opens the settings list at its first visible item. Short Left/Right moves the highlight. Long Right activates the highlighted item. Options with up to three choices change immediately, except LOG MEMORY. For LOG MEMORY and options with more choices, a separate screen lists all values down the left column and then the right; short Left/Right moves the selection, long Right saves, and long Left cancels. RESET runs the selected action on long Right without an additional on-device confirmation; the app still asks before executing a reset. The list includes indication and alarm behavior, tone, brightness and screen timeout, units and prefixes, secondary rows, dose period, log memory, long-press timing, reset actions, Power Off, and Reboot. RESET and REBOOT are hidden by default and can be shown from the app. Some items depend on the selected unit. Set the device clock on the app's Settings page.</p>
         <div class="manual-screen-grid">
-          <figure><figcaption>1.1.1 - Settings with UNIT selected</figcaption><img src="../docs/renders/screens/1.2.1-settings-simple.svg" alt="Settings list with UNIT SV highlighted in green" loading="lazy"></figure>
-          <figure><figcaption>1.1.2 - Editing LED BRIGHT</figcaption><img src="../docs/renders/screens/1.2.2-settings-many-options.svg" alt="Settings list editing LED BRIGHT with AUTO selected" loading="lazy"></figure>
-          <figure><figcaption>1.1.3 - Bottom of the settings list</figcaption><img src="../docs/renders/screens/1.2.3-settings-actions.svg" alt="Bottom settings rows with RESET selected in red and POWER OFF and REBOOT in yellow" loading="lazy"></figure>
+          <figure><figcaption>1.1.1 - Settings with DOSE PERIOD selected</figcaption><img src="../docs/renders/screens/1.2.1-settings-simple.svg" alt="Settings list starting with DOSE PERIOD selected in the accent color" loading="lazy"></figure>
+          <figure><figcaption>1.1.2 - Choosing LED BRIGHT</figcaption><img src="../docs/renders/screens/1.2.2-settings-many-options.svg" alt="LED BRIGHT options in two columns with AUTO selected" loading="lazy"></figure>
+          <figure><figcaption>1.1.3 - Bottom of the settings list</figcaption><img src="../docs/renders/screens/1.2.3-settings-actions.svg" alt="Settings with normally hidden items enabled, RESET selected in the accent color, LOG MEMORY red, and POWER OFF and REBOOT yellow" loading="lazy"></figure>
         </div>
         </section>
 
@@ -412,7 +414,7 @@
 
         <section class="manual-chapter">
         <h3>2 · Dose</h3>
-        <p>Shows accumulated dose in the selected UNIT and DOSE PREFIX for the DOSE PERIOD: UPTIME (this run), DAY (the current calendar day), or TOTAL (lifetime). DOSE ROW 2 can show another unit or period, TIME, CPM, or OFF; the default is TIME for UPTIME and CNT otherwise. Short Left changes the shared NORMAL/SEARCH/INVISIBLE indication mode; short Right returns to Rate; long Left toggles the flashlight; long Right opens Graphs.</p>
+        <p>Shows accumulated dose in the selected UNIT and DOSE PREFIX for the DOSE PERIOD: UPTIME (this run), DAY (the current calendar day), or TOTAL (lifetime). DOSE ROW 2 can show another unit or period, TIME, CPM, or OFF; changing the period selects TIME for UPTIME or the first alternative unit for DAY and TOTAL. Short Left changes the shared NORMAL/SEARCH/INVISIBLE indication mode; short Right returns to Rate; long Left toggles the flashlight; long Right opens Graphs.</p>
         <figure class="manual-screen-single"><figcaption>2 · Accumulated dose</figcaption><img src="../docs/renders/screens/2-dose.svg" alt="Dose screen showing accumulated dose and a secondary row" loading="lazy"></figure>
         </section>
 
@@ -450,6 +452,15 @@
       <section class="information-card">
         <h3>Recent changes</h3>
         <ul class="release-list">
+          <li>
+            <time datetime="2026-10-29">2026-10-29</time> — Pre-release: power and settings updates:
+            <ul>
+              <li><strong>Power:</strong> improved sleep behavior while the display is off.</li>
+              <li><strong>Battery:</strong> linear 1300–2000 ADC mapping and hysteresis reduce percentage fluctuations.</li>
+              <li><strong>Settings:</strong> reordered the menu, added a two-column option picker, and updated selection and action colors.</li>
+              <li><strong>Manual:</strong> refreshed screen illustrations and clarified settings, log storage, and reset behavior.</li>
+            </ul>
+          </li>
           <li>
             <time datetime="2026-10-29">2026-10-29</time> — Logging, graphs, and maintenance updates:
             <ul>
