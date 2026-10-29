@@ -2,4 +2,5 @@
 build/
 .pio/
 dist/
+tmp/
 platformio.local.ini

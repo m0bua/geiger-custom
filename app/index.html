@@ -210,6 +210,20 @@
         </div>
         <p id="dump-status" class="dump-status" role="status" aria-live="polite">Select a device port to read FLASH or EEPROM. SPI dump is unavailable until a compatible device is connected.</p>
       </details>
+      <details class="firmware-section eeprom-write-section" name="firmware-sections">
+        <summary>Write EEPROM</summary>
+        <p>Write a raw 2 KB EEPROM image through the STM32 ROM bootloader. This replaces all EEPROM contents, including settings, checkpoints, and logs; it does not write FLASH.</p>
+        <p class="backup-reminder">Dump and save the current EEPROM before writing. Use only an image intended for this device.</p>
+        <div class="firmware-controls eeprom-write-controls">
+          <div class="firmware-file-control">
+            <label for="eeprom-image-file">EEPROM image (.bin, exactly 2 KB)</label>
+            <input id="eeprom-image-file" type="file" accept=".bin,application/octet-stream">
+          </div>
+          <button id="write-eeprom-image" class="button button-danger" type="button" disabled>Write EEPROM</button>
+          <output id="eeprom-image-status" class="firmware-image-status" aria-live="polite">No image selected.</output>
+        </div>
+        <p id="eeprom-write-status" class="dump-status" role="status" aria-live="polite">Select a 2 KB EEPROM dump to enable writing. Read-back verification is always enabled.</p>
+      </details>
       <section class="firmware-activity">
         <h2>Activity</h2>
         <div class="firmware-log-window">

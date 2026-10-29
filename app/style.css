@@ -207,6 +207,9 @@ button { font: inherit; }
 .log-record .coverage-red { color: #ff6666; }
 .log-record .coverage-yellow { color: #f0d35e; }
 .log-record .coverage-green { color: var(--green); }
+.log-record.log-total { border-top: 1px solid rgba(0,232,159,.28); border-bottom-color: rgba(0,232,159,.2); color: #eef8f5; font-weight: 700; }
+.log-record.log-total::before { width: 100%; background: rgba(0,232,159,.07); }
+.log-record.log-total span:first-child { color: var(--green); }
 .log-content { overflow-x: auto; }
 .log-actions { display: flex; justify-content: center; }
 .logs-diagnostics { margin-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }

@@ -16,7 +16,7 @@ const CAP_GET_SPI_DUMP = 1 << 5;
 const CAP_SET_RTC = 1 << 6;
 const CAP_DEVICE_ACTION = 1 << 7;
 const MAX_PAYLOAD = 137;
-const LOG_BATCH_SIZE = 5;
+const LOG_BATCH_SIZE = 10;
 const LOG_INITIAL_TARGETS = { minutes: 60, hours: 24, days: 30, alerts: 5 };
 const STM32_FLASH_BASE = 0x08000000;
 const STM32_FLASH_SIZE = 64 * 1024;
@@ -258,6 +258,10 @@ const elements = {
   dumpEeprom: document.querySelector('#dump-eeprom'),
   dumpSpi: document.querySelector('#dump-spi'),
   dumpStatus: document.querySelector('#dump-status'),
+  eepromImageFile: document.querySelector('#eeprom-image-file'),
+  writeEepromImage: document.querySelector('#write-eeprom-image'),
+  eepromImageStatus: document.querySelector('#eeprom-image-status'),
+  eepromWriteStatus: document.querySelector('#eeprom-write-status'),
   manualPage: document.querySelector('#manual-page'),
   aboutPage: document.querySelector('#about-page'),
   settingsStatus: document.querySelector('#settings-status'),
@@ -857,6 +861,7 @@ const androidUsbAvailable = webUsbAvailable && /Android/i.test(navigator.userAge
 let bootloaderPortOpen = false;
 let portMayBeOpen = false;
 let selectedFirmwareImage = null;
+let selectedEepromImage = null;
 let firmwareFlashBusy = false;
 let firmwareStopRequested = false;
 let dumpBusy = false;
@@ -880,7 +885,10 @@ let logPageGeneration = 0;
 let logInfoLoading = false;
 let logRefreshBusy = false;
 let logCountsRefreshBusy = false;
+let logInfoPollingFailed = false;
 const logViewCache = new Map();
+const logTypeActiveView = new Map();
+const logRangeInputCache = new Map();
 let logCursor = { time: 0xffffffff, epoch: 0xffff, skip: 0 };
 let logHasMore = true;
 let logSelectedDate = "";
@@ -1096,7 +1104,7 @@ function logDiagnostic(message, error = null) {
   const detail = error ? ` ${error.name || 'Error'}: ${error.message || error}` : '';
   const line = `[${stamp}] ${message}${detail}`;
   logDiagnostics.push(line);
-  if (logDiagnostics.length > 200) logDiagnostics.shift();
+  if (logDiagnostics.length > 400) logDiagnostics.shift();
   if (elements.logDiagnostics) elements.logDiagnostics.textContent = logDiagnostics.join('\n');
   if (error) console.error(line, error); else console.debug(line);
 }
@@ -1118,9 +1126,14 @@ function selectPage(page, updateUrl = true) {
   if (page === 'settings' && serial && deviceSettings === null) loadSettings();
   if (page === 'settings' && serial && protocolCapabilities && logInfo === null) loadLogInfo();
   if (page === 'logs' && serial && protocolCapabilities && logInfo === null) loadLogInfo();
-  else if (page === 'logs' && serial && logInfo) {
-    if (logRecords.length === 0) loadLogSelection();
-    else refreshLatestLogRecord();
+  else if (page === 'logs' && serial && logInfo && !logRecords.length) {
+    if (restoreLogView()) {
+      renderLogSummary();
+      if (logHasMore) loadLogPage(false);
+    }
+    else loadLogSelection();
+  } else if (page === 'logs' && !serial) {
+    updateLogRangeControls();
   }
 }
 
@@ -1137,7 +1150,7 @@ function renderDebugLogInfo() {
 }
 
 function applyLogInfo(payload) {
-  if (payload.length !== 30 || payload[0] !== 0 || payload[26] !== 2) {
+  if ((payload.length !== 30 && payload.length !== 35) || payload[0] !== 0 || payload[26] !== 2) {
     throw new ProtocolError('Update the device firmware to use the new logs.');
   }
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
@@ -1151,6 +1164,9 @@ function applyLogInfo(payload) {
     jedec: Array.from(payload.subarray(17, 20), (byte) => byte.toString(16).padStart(2, '0')).join(' ').toUpperCase(),
     rtcStatus: ({1: 'OSC ERR', 2: 'INIT ERR', 3: 'SYNC ERR', 4: 'DBP ERR', 5: 'SET', 6: 'NOT SET', 7: 'NOT READY'}[payload[20]] || 'UNKNOWN'),
     clockSource: payload[21] === 1 ? 'LSE' : 'LSI', error: !!payload[28],
+    spiFaultOperation: payload.length >= 35 ? payload[30] : 0,
+    spiFaultStage: payload.length >= 35 ? payload[31] : 0,
+    spiFaultAddress: payload.length >= 35 ? payload[32] | (payload[33] << 8) | (payload[34] << 16) : 0,
   };
   if (!logRangeActive && logInfo.calendarValid) updateLogRangeControls();
   renderDebugLogInfo();
@@ -1173,8 +1189,28 @@ async function refreshLogCounts() {
   const activeSerial = serial;
   try {
     const payload = await activeSerial.request(OP_GET_LOG_INFO, undefined, 10000);
-    if (serial === activeSerial) applyLogInfo(payload);
-  } catch { /* The next poll retries a transient transport error. */ }
+    if (serial === activeSerial) {
+      if (logInfoPollingFailed) logDiagnostic('GET_LOG_INFO polling resumed.');
+      logInfoPollingFailed = false;
+      const before = logInfo;
+      applyLogInfo(payload);
+      if (before && (before.spiFaultOperation !== logInfo.spiFaultOperation ||
+          before.spiFaultStage !== logInfo.spiFaultStage || before.spiFaultAddress !== logInfo.spiFaultAddress) &&
+          logInfo.spiFaultOperation) {
+        logDiagnostic(`SPI NOR fault captured: ${spiFaultDescription(logInfo)}`);
+      }
+      if (before && !before.error && logInfo.error) {
+        logDiagnostic(`STORE ERR became active; memory=${logMemoryName(logInfo.memory)}, source=${logMemoryName(logInfo.source)}, SPI-ready=${logInfo.spiReady}, JEDEC=${logInfo.jedec || '—'}`);
+      } else if (before?.error && !logInfo.error) {
+        logDiagnostic('STORE ERR cleared by firmware.');
+      } else if (before && ['minutes', 'hours', 'days', 'alerts'].some((key) => before[key] !== logInfo[key])) {
+        logDiagnostic(`Stored counts changed: MIN ${before.minutes}->${logInfo.minutes}, HOUR ${before.hours}->${logInfo.hours}, DAY ${before.days}->${logInfo.days}, ALERT ${before.alerts}->${logInfo.alerts}`);
+      }
+    }
+  } catch (error) {
+    if (!logInfoPollingFailed) logDiagnostic('GET_LOG_INFO polling failed; will retry.', error);
+    logInfoPollingFailed = true;
+  }
   finally { logCountsRefreshBusy = false; }
 }
 
@@ -1185,18 +1221,41 @@ const logTypes = [
   { id: 'alerts', protocolId: 3, label: 'ALERTS', countKey: 'alerts', period: 60 },
 ];
 
+function logMemoryName(value) {
+  return ['EEPROM', 'SPI', 'OFF'][value] || `UNKNOWN(${value})`;
+}
+
+function spiFaultDescription(info) {
+  if (!info?.spiFaultOperation) return 'none recorded';
+  const operations = ['', 'INIT', 'READ', 'PROGRAM', 'ERASE'];
+  const stages = ['', 'TXE timeout', 'RXNE timeout', 'BSY timeout',
+    'WIP timeout', 'WEL not set', 'command transfer failed',
+    'verify read failed', 'verify mismatch', 'JEDEC mismatch', 'invalid request/state'];
+  return `${operations[info.spiFaultOperation] || `OP${info.spiFaultOperation}`} / ${stages[info.spiFaultStage] || `stage ${info.spiFaultStage}`} @ 0x${info.spiFaultAddress.toString(16).toUpperCase().padStart(6, '0')}`;
+}
+
 function logViewKey() {
-  const view = logRangeActive ? logSelectedDate :
+  const view = logRangeActive ? (logRangeAll ? 'all' : `${logRangeStart}:${logRangeEnd}`) :
     logCountLimit ? `last:${logCountLimit}` : 'latest';
   return `${selectedLogType}:${view}`;
 }
 function saveLogView() {
-  logViewCache.set(logViewKey(), {records: logRecords.slice(), cursor: {...logCursor}, more: logHasMore});
+  const key = logViewKey();
+  logViewCache.set(key, {records: logRecords.slice(), cursor: {...logCursor}, more: logHasMore,
+    rangeActive: logRangeActive, rangeAll: logRangeAll, countLimit: logCountLimit,
+    rangeStart: logRangeStart, rangeEnd: logRangeEnd, selectedDate: logSelectedDate,
+    mode: elements.logRangeMode.value});
+  logTypeActiveView.set(selectedLogType, key);
 }
 function restoreLogView() {
-  const saved = logViewCache.get(logViewKey());
+  const saved = logViewCache.get(logTypeActiveView.get(selectedLogType) || logViewKey());
   if (!saved) return false;
   logRecords = saved.records.slice(); logCursor = {...saved.cursor}; logHasMore = saved.more;
+  logRangeActive = saved.rangeActive; logRangeAll = saved.rangeAll;
+  logCountLimit = saved.countLimit; logRangeStart = saved.rangeStart;
+  logRangeEnd = saved.rangeEnd; logSelectedDate = saved.selectedDate;
+  if (saved.mode) elements.logRangeMode.value = saved.mode;
+  updateLogRangeControls();
   return true;
 }
 function clearLogView() {
@@ -1226,6 +1285,14 @@ function updateLogRangeControls() {
   const type = logTypes.find((item) => item.id === selectedLogType);
   if (!type) return;
   if (elements.logRangeExtra.dataset.type !== type.id) {
+    const oldType = elements.logRangeExtra.dataset.type;
+    if (oldType) {
+      const saved = {};
+      elements.logRangeExtra.querySelectorAll('input,select').forEach((control) => {
+        saved[control.id] = control.value;
+      });
+      logRangeInputCache.set(oldType, saved);
+    }
     elements.logRangeExtra.replaceChildren();
     if (type.id === 'minutes') {
       for (const [id, labelText] of [['log-newer-minute', 'Newer'],
@@ -1263,6 +1330,11 @@ function updateLogRangeControls() {
       }
     }
     elements.logRangeExtra.dataset.type = type.id;
+    const saved = logRangeInputCache.get(type.id) || {};
+    elements.logRangeExtra.querySelectorAll('input,select').forEach((control) => {
+      if (saved[control.id]) control.value = saved[control.id];
+    });
+    if (elements.logRangeMode.value === 'custom') initializeCustomRangeInputs(type);
   }
   if (logInfo?.calendarValid && !logRangeDefaults.has(type.id)) {
     if (elements.logRangeMode.value === 'latest') setDefaultLogRange(type);
@@ -1271,14 +1343,36 @@ function updateLogRangeControls() {
   const custom = elements.logRangeMode.value === 'custom';
   elements.logRangeExtra.hidden = !custom;
   if (logRangeActive && !logRangeAll && custom) populateRangeInputs(type);
-  const enabled = !!logInfo?.calendarValid && custom;
-  elements.logRangeMode.disabled = !logInfo || logCsvBusy || logPageLoading;
+  const enabled = custom;
+  elements.logRangeMode.disabled = logCsvBusy || logPageLoading;
   elements.logRangeExtra.querySelectorAll('input,select').forEach((control) => {
     control.disabled = !enabled || logCsvBusy || logPageLoading;
   });
-  elements.loadLogSelection.disabled = !logInfo || logCsvBusy || logPageLoading ||
-    (custom && !logInfo?.calendarValid);
-  elements.exportLogsCsv.disabled = !logInfo || logCsvBusy || logPageLoading;
+  elements.loadLogSelection.disabled = !serial || !logInfo || logCsvBusy || logPageLoading ||
+    (custom && !readCustomLogRange(type));
+  elements.exportLogsCsv.disabled = !serial || !logRecords.length || logCsvBusy || logPageLoading;
+}
+
+function initializeCustomRangeInputs(type) {
+  const now = new Date();
+  const older = new Date(now);
+  if (type.id === 'minutes') older.setTime(now.getTime() - 59 * 60 * 1000);
+  else if (type.id === 'hours') older.setTime(now.getTime() - 23 * 3600 * 1000);
+  else older.setUTCMonth(older.getUTCMonth() - 1);
+  const valueFor = (date) => {
+    const base = formatDeviceDate(date);
+    return type.id === 'minutes' ?
+      `${base}T${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}` : base;
+  };
+  for (const [side, date] of [['newer', now], ['older', older]]) {
+    const input = document.querySelector(type.id === 'minutes' ?
+      `#log-${side}-minute` : `#log-${side}-date`);
+    if (input && !input.value) input.value = valueFor(date);
+    if (type.id === 'hours') {
+      const hour = document.querySelector(`#log-${side}-hour`);
+      if (hour && !hour.value) hour.value = String(date.getUTCHours()).padStart(2, '0');
+    }
+  }
 }
 
 function setDefaultLogRange(type, force = false) {
@@ -1367,10 +1461,21 @@ function renderLogTabs() {
       if (selectedLogType === type.id) return;
       saveLogView(); ++logPageGeneration;
       selectedLogType = type.id;
-      clearLogView();
       updateLogRangeControls();
-      renderLogTabs();
-      loadLogSelection();
+      elements.logTabs.querySelectorAll('[data-log-type]').forEach((tab) => {
+        const active = tab.dataset.logType === selectedLogType;
+        tab.classList.toggle('active', active);
+        tab.setAttribute('aria-selected', String(active));
+      });
+      if (restoreLogView()) {
+        renderLogSummary();
+        if (logHasMore) loadLogPage(false);
+      }
+      else {
+        clearLogView();
+        renderLogSummary();
+        loadLogSelection();
+      }
     });
     elements.logTabs.append(button);
   }
@@ -1451,6 +1556,42 @@ function logFillValue(record, type) {
     default: return record.dose;
   }
 }
+function formatTotalDuration(seconds) {
+  if (seconds >= 3600) {
+    const hours = Math.floor(seconds / 3600);
+    return `${hours}:${String(Math.floor(seconds / 60) % 60).padStart(2, '0')}h`;
+  }
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}m`;
+}
+function renderLogTotal(type) {
+  const totalDose = logRecords.reduce((sum, record) => sum + record.dose, 0);
+  const covered = logRecords.reduce((sum, record) => sum + record.covered, 0);
+  const weightedAverage = covered ? Math.round(logRecords.reduce((sum, record) =>
+    sum + record.average * record.covered, 0) / covered) : 0;
+  const maximum = logRecords.reduce((max, record) => Math.max(max, record.maximum), 0);
+  const isCnt = (deviceSettings?.[9] ?? 0) === 1;
+  const dose = isCnt ? `${formatGroupedNumber(totalDose)} CNT` :
+    `${formatLogRadiation(totalDose * 0.000111).value} ${formatLogRadiation(totalDose * 0.000111).unit}`;
+  const average = isCnt ? `${formatGroupedNumber(weightedAverage)} CPM` :
+    `${formatLogRadiation(weightedAverage * 0.00666, true).value} ${formatLogRadiation(weightedAverage * 0.00666, true).unit}`;
+  const maximumText = isCnt ? `${formatGroupedNumber(maximum)} CPM` :
+    `${formatLogRadiation(maximum * 0.00666, true).value} ${formatLogRadiation(maximum * 0.00666, true).unit}`;
+  const values = type.id === 'alerts' ?
+    [`TOTAL (${logRecords.length})`, formatTotalDuration(covered), dose, average, maximumText] :
+    [`TOTAL (${logRecords.length})`, dose, average, maximumText, `${formatGroupedNumber(covered)}s total`];
+  const row = document.createElement('div');
+  row.className = 'log-grid log-record log-total';
+  values.forEach((value, index) => {
+    const cell = document.createElement('span');
+    if (index === 2 && type.id === 'alerts') cell.className = `log-metric ${logDoseClass({dose: totalDose, covered})}`;
+    else if (index === (type.id === 'alerts' ? 3 : 2)) cell.className = `log-metric ${logRateClass(weightedAverage)}`;
+    else if (index === (type.id === 'alerts' ? 4 : 3)) cell.className = `log-metric ${logRateClass(maximum)}`;
+    else if (index === 1 && type.id !== 'alerts') cell.className = `log-metric ${logDoseClass({dose: totalDose, covered})}`;
+    cell.textContent = value;
+    row.append(cell);
+  });
+  elements.logContent.append(row);
+}
 function renderLogSummary() {
   elements.logContent.replaceChildren();
   updateLogRangeControls();
@@ -1466,6 +1607,7 @@ function renderLogSummary() {
     '<span>Date</span><span>Duration</span><span>Dose</span><span>Average</span><span>Maximum</span>' :
     '<span>Date</span><span>Dose</span><span>Average</span><span>Maximum</span><span>Coverage</span>';
   elements.logContent.append(header);
+  renderLogTotal(type);
   const maximum = logRecords.reduce((largest, record) =>
     Math.max(largest, logFillValue(record, type)), 1);
   for (const record of logRecords) {
@@ -1491,17 +1633,26 @@ function renderLogSummary() {
 }
 
 async function queryLogPage(type, cursor, limit, count = LOG_BATCH_SIZE) {
-  // Keep log pages at two records: the firmware's transport/protocol path is
-  // intentionally exercised as 2+2+1, even when HELLO advertises 137 bytes.
+  // Keep transport pages at two records; larger UI batches combine requests.
   count = Math.max(1, Math.min(count, 2, Math.floor((protocolMaxPayload - 12) / 25)));
-  logDiagnostic(`GET_LOG_PAGE request type=${type.id} count=${count} limit=${limit} cursor=${cursor.time}/${cursor.epoch}/${cursor.skip}`);
+  const requestStarted = performance.now();
+  logDiagnostic(`Stored-log read request: memory=${logMemoryName(logInfo?.source ?? logInfo?.memory ?? 0)} type=${type.id} period=${type.period}s count=${count} dateLimit=${limit} cursor=${cursor.time}/${cursor.epoch}/${cursor.skip}`);
   const request = new Uint8Array(18); const view = new DataView(request.buffer);
   request[0] = type.protocolId; request[1] = count;
   view.setUint32(2, type.period, true); view.setUint32(6, cursor.time, true);
   view.setUint16(10, cursor.epoch, true); view.setUint16(12, cursor.skip, true); view.setUint32(14, limit, true);
-  const payload = await serial.request(OP_GET_LOG_PAGE, request, 15000);
+  let payload;
+  try {
+    payload = await serial.request(OP_GET_LOG_PAGE, request, 15000);
+  } catch (error) {
+    logDiagnostic(`GET_LOG_PAGE failed after ${(performance.now() - requestStarted).toFixed(1)} ms`, error);
+    throw error;
+  }
   if (payload.length < 12 || payload[0] !== 0 || payload[1] !== type.protocolId ||
-      payload[2] > count || payload.length !== 12 + payload[2] * 25) throw new ProtocolError('Invalid canonical log response.');
+      payload[2] > count || payload.length !== 12 + payload[2] * 25) {
+    logDiagnostic(`GET_LOG_PAGE invalid response after ${(performance.now() - requestStarted).toFixed(1)} ms: bytes=${payload.length}, status=${payload[0]}, type=${payload[1]}, count=${payload[2]}, requested=${count}`);
+    throw new ProtocolError('Invalid canonical log response.');
+  }
   const data = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const records = [];
   for (let i = 0; i < payload[2]; ++i) {
@@ -1513,7 +1664,10 @@ async function queryLogPage(type, cursor, limit, count = LOG_BATCH_SIZE) {
       live: !!(flags & 4), calendar: !!(flags & 8)});
   }
   const nextCursor = {time: data.getUint32(4, true), epoch: data.getUint16(8, true), skip: data.getUint16(10, true)};
-  logDiagnostic(`GET_LOG_PAGE response records=${records.length} more=${!!payload[3]} next=${nextCursor.time}/${nextCursor.epoch}/${nextCursor.skip}`);
+  logDiagnostic(`GET_LOG_PAGE response ${(performance.now() - requestStarted).toFixed(1)} ms: status=${payload[0]}, records=${records.length}, more=${!!payload[3]}, next=${nextCursor.time}/${nextCursor.epoch}/${nextCursor.skip}`);
+  for (const record of records) {
+    logDiagnostic(`  ${record.calendar ? 'calendar' : 'uptime'} t=${record.timestamp} epoch=${record.epoch} id=${record.id} doseCnt=${record.dose} avgCPM=${record.average} maxCPM=${record.maximum} covered=${record.covered}s flags=${Number(record.available) | (Number(record.partial) << 1) | (Number(record.live) << 2) | (Number(record.calendar) << 3)}`);
+  }
   return {records, more: !!payload[3], cursor: nextCursor};
 }
 
@@ -1529,7 +1683,7 @@ async function applyCalendarRange(range, mode) {
   logCountLimit = 0;
   logRangeStart = range.start;
   logRangeEnd = range.end;
-  logSelectedDate = `${mode}:${range.start}:${range.end}`;
+  logSelectedDate = `${range.start}:${range.end}`;
   clearLogView();
   renderLogSummary();
   await loadLogPage(false);
@@ -1547,7 +1701,10 @@ async function loadLogSelection() {
     return loadRecentLogs(LOG_INITIAL_TARGETS[type.id]);
   }
   if (mode !== 'latest' && mode !== 'custom') return;
-  if (!logInfo.calendarValid) return;
+  if (!logInfo.calendarValid) {
+    elements.logsStatus.textContent = 'Set the device clock to load a custom calendar range.';
+    return;
+  }
   await applyCalendarRange(readCustomLogRange(type), mode);
 }
 
@@ -1560,7 +1717,7 @@ async function selectAllLogs() {
   logCountLimit = 0;
   logRangeStart = 0;
   logRangeEnd = 0xffffffff;
-  logSelectedDate = `${selectedLogType}:all`;
+  logSelectedDate = 'all';
   clearLogView();
   renderLogSummary();
   await loadLogPage(false);
@@ -1682,7 +1839,7 @@ async function loadLogPage(reset = false) {
       }
       if (generation === logPageGeneration) {
         const finished = !logHasMore || logRecords.length >= target;
-        if (finished || logRecords.length - lastRenderedCount >= 60) {
+        if (finished || logRecords.length - lastRenderedCount >= LOG_BATCH_SIZE) {
           renderLogSummary(); saveLogView();
           lastRenderedCount = logRecords.length;
           await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -1738,14 +1895,15 @@ async function loadNewerLogRecords(catchUp = true) {
 async function loadLogInfo() {
   if (!serial || logInfoLoading) return;
   logInfoLoading = true;
+  const requestStarted = performance.now();
   try {
-    applyLogInfo(await serial.request(OP_GET_LOG_INFO, undefined, 15000));
-    if (!logTypes.some((type) => type.id === selectedLogType) || (!logRecords.length && !logViewCache.size))
-      selectedLogType = logTypes.find((type) => logInfo[type.countKey] > 0)?.id || 'minutes';
+    logDiagnostic('GET_LOG_INFO request: read selected storage, physical counts, SPI identification, RTC and writer fault.');
+    const payload = await serial.request(OP_GET_LOG_INFO, undefined, 15000);
+    applyLogInfo(payload);
+    if (!logTypes.some((type) => type.id === selectedLogType)) selectedLogType = 'minutes';
+    logDiagnostic(`GET_LOG_INFO response ${(performance.now() - requestStarted).toFixed(1)} ms, ${payload.length} bytes: memory=${logMemoryName(logInfo.memory)}, readSource=${logMemoryName(logInfo.source)}, counts MIN=${logInfo.minutes} HOUR=${logInfo.hours} DAY=${logInfo.days} ALERT=${logInfo.alerts}, SPI-ready=${logInfo.spiReady}, size=${logInfo.spiSizeMb}MB, JEDEC=${logInfo.jedec || '—'}, writerFault=${logInfo.error}, spiFault=${spiFaultDescription(logInfo)}, RTC=${logInfo.rtcStatus}`);
     renderLogTabs(); updateSpiDumpAvailability();
-    if (!elements.logsPage.hidden && !logRecords.length) {
-      loadLogSelection();
-    }
+    if (!logRecords.length) await loadLogSelection();
   } catch (error) {
     logDiagnostic('loadLogInfo failed', error);
     elements.logsStatus.textContent = error.message;
@@ -2240,6 +2398,7 @@ function renderOfflinePreview() {
   elements.logContent.replaceChildren();
   const renderDemoLog = (type) => {
     selectedLogType = type;
+    updateLogRangeControls();
     elements.logTabs.querySelectorAll('[data-demo-log]').forEach((tab) =>
       tab.classList.toggle('active', tab.dataset.demoLog === type));
     updateLogFillOptions(type);
@@ -2284,6 +2443,7 @@ function renderOfflinePreview() {
     elements.logTabs.append(tab);
   });
   renderDemoLog(selectedLogType);
+  updateLogRangeControls();
   elements.settingsDeviceTime.textContent = '--:--:--';
   elements.settingsDeviceDate.textContent = '---- -- --';
   elements.settingsClockDifference.textContent = '—';
@@ -2413,7 +2573,7 @@ async function runDeviceAction(action, value, button) {
     if (action === 0 && ![0, 3, 5].includes(value)) {
       logInfo = null;
       logRecords = [];
-      logViewCache.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
+      logViewCache.clear(); logTypeActiveView.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
       logPageTotal = 0;
       await loadLogInfo();
     }
@@ -2726,6 +2886,8 @@ elements.quickBackupFlash?.addEventListener('click', () => elements.dumpFlash.cl
 elements.dumpEeprom.addEventListener('click', () => dumpRomMemory(
   'EEPROM', STM32_EEPROM_BASE, STM32_EEPROM_SIZE, 'eeprom'));
 elements.dumpSpi.addEventListener('click', dumpSpiMemory);
+elements.eepromImageFile.addEventListener('change', loadEepromImage);
+elements.writeEepromImage.addEventListener('click', writeEepromImage);
 elements.manualTab.addEventListener('click', () => selectPage('manual'));
 elements.aboutTab.addEventListener('click', () => selectPage('about'));
 elements.clearFirmwareLog.addEventListener('click', () => { elements.firmwareLog.textContent = ''; });
@@ -3022,7 +3184,43 @@ function setDumpBusy(busy) {
   elements.dumpFlash.disabled = busy;
   if (elements.quickBackupFlash) elements.quickBackupFlash.disabled = busy;
   elements.dumpEeprom.disabled = busy;
+  elements.eepromImageFile.disabled = busy;
+  updateEepromWriteButton();
   updateSpiDumpAvailability();
+}
+
+function updateEepromWriteButton() {
+  elements.writeEepromImage.disabled = dumpBusy || firmwareFlashBusy || !selectedEepromImage;
+}
+
+async function loadEepromImage() {
+  selectedEepromImage = null;
+  elements.writeEepromImage.disabled = true;
+  const file = elements.eepromImageFile.files?.[0];
+  if (!file) {
+    elements.eepromImageStatus.textContent = 'No image selected.';
+    elements.eepromImageStatus.dataset.kind = 'unknown';
+    elements.eepromWriteStatus.textContent = 'Select a 2 KB EEPROM dump to enable writing. Read-back verification is always enabled.';
+    elements.eepromWriteStatus.dataset.level = '';
+    return;
+  }
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (bytes.length !== STM32_EEPROM_SIZE) {
+      throw new Error(`Expected exactly ${STM32_EEPROM_SIZE.toLocaleString()} bytes; selected file has ${bytes.length.toLocaleString()}.`);
+    }
+    selectedEepromImage = { name: file.name, bytes };
+    elements.eepromImageStatus.textContent = `${file.name} (${bytes.length.toLocaleString()} bytes)`;
+    elements.eepromImageStatus.dataset.kind = 'ours';
+    elements.eepromWriteStatus.textContent = 'Image ready. Writing replaces the entire EEPROM; verify the backup before continuing.';
+    elements.eepromWriteStatus.dataset.level = 'warning';
+    updateEepromWriteButton();
+  } catch (error) {
+    elements.eepromImageStatus.textContent = error.message;
+    elements.eepromImageStatus.dataset.kind = 'invalid';
+    elements.eepromWriteStatus.textContent = 'EEPROM image is invalid and cannot be written.';
+    elements.eepromWriteStatus.dataset.level = 'error';
+  }
 }
 
 function setDumpStatus(message, level = '') {
@@ -3065,7 +3263,7 @@ async function selectFirmwarePort() {
 }
 
 async function dumpRomMemory(label, address, length, filename) {
-  if (dumpBusy) return;
+  if (dumpBusy || firmwareFlashBusy) return;
   let port = null;
   try {
     ({ port } = await selectFirmwarePort());
@@ -3143,8 +3341,109 @@ async function dumpRomMemory(label, address, length, filename) {
   restartFailure ? 'warning' : 'success');
 }
 
+async function writeEepromImage() {
+  if (dumpBusy || firmwareFlashBusy || !selectedEepromImage) return;
+  const image = selectedEepromImage;
+  if (image.bytes.length !== STM32_EEPROM_SIZE) {
+    elements.eepromWriteStatus.textContent = 'EEPROM image size changed; select the file again.';
+    elements.eepromWriteStatus.dataset.level = 'error';
+    return;
+  }
+  if (!window.confirm(
+    `Write ${image.name} to the device EEPROM? This replaces all 2 KB, including settings, checkpoints, and logs. FLASH is not changed. Continue only if you have a backup.`)) return;
+
+  let port = null;
+  let session = null;
+  let attemptedBootloader = false;
+  let wasConnected = !!serial;
+  let failure = null;
+  let restartFailure = null;
+  setDumpBusy(true);
+  elements.eepromWriteStatus.textContent = 'Opening STM32 ROM bootloader…';
+  elements.eepromWriteStatus.dataset.level = '';
+  setConnection('connecting', 'Entering bootloader…');
+  appendFirmwareLog(`EEPROM write requested (${image.bytes.length.toLocaleString()} bytes).`);
+  try {
+    ({ port } = await selectFirmwarePort());
+    wasConnected = !!serial;
+    attemptedBootloader = true;
+    session = await openBootloaderForImage('hex');
+    const deviceId = await session.client.getDeviceId();
+    if (deviceId !== STM32_DEVICE_ID) {
+      throw new Error(`Expected STM32L051 device ID 0x${STM32_DEVICE_ID.toString(16)}, received 0x${deviceId.toString(16)}.`);
+    }
+    if (!session.info.commands.includes(0x31) || !session.info.commands.includes(0x11)) {
+      throw new Error('The ROM bootloader must support Write Memory and Read Memory.');
+    }
+
+    // STM32L0 data EEPROM writes require word-aligned addresses and lengths.
+    // ROM Write Memory handles erasing each EEPROM word before programming it.
+    const chunkSize = 128;
+    for (let offset = 0; offset < image.bytes.length; offset += chunkSize) {
+      const block = image.bytes.subarray(offset, offset + chunkSize);
+      await session.client.writePage(STM32_EEPROM_BASE + offset, block);
+      if ((offset + block.length) % 512 === 0 || offset + block.length === image.bytes.length) {
+        const percent = Math.floor(((offset + block.length) * 100) / image.bytes.length);
+        elements.eepromWriteStatus.textContent = `Writing EEPROM… ${percent}%`;
+        appendFirmwareLog(`EEPROM programmed ${offset + block.length}/${image.bytes.length} bytes.`);
+      }
+    }
+
+    elements.eepromWriteStatus.textContent = 'Verifying EEPROM read-back…';
+    const verifyChunkSize = 128;
+    for (let offset = 0; offset < image.bytes.length; offset += verifyChunkSize) {
+      const expected = image.bytes.subarray(offset, offset + verifyChunkSize);
+      const actual = await session.client.readMemory(STM32_EEPROM_BASE + offset, expected.length);
+      for (let i = 0; i < expected.length; i += 1) {
+        if (actual[i] !== expected[i]) {
+          throw new Error(`EEPROM verification mismatch at 0x${(STM32_EEPROM_BASE + offset + i).toString(16)}.`);
+        }
+      }
+      if ((offset + expected.length) % 512 === 0 || offset + expected.length === image.bytes.length) {
+        appendFirmwareLog(`EEPROM verified ${offset + expected.length}/${image.bytes.length} bytes.`);
+      }
+    }
+    appendFirmwareLog('EEPROM write and full read-back verification complete.', 'success');
+  } catch (error) {
+    failure = error;
+    appendFirmwareLog(`EEPROM write failed: ${error.message}`, 'error');
+  } finally {
+    if (session) await session.client.close(false);
+    bootloaderPortOpen = false;
+    if (attemptedBootloader && port) {
+      try {
+        await sendFirmwareStartSignal(port);
+        appendFirmwareLog('Firmware-start signal sent after EEPROM write.');
+      } catch (error) {
+        restartFailure = new Error(`Could not restart firmware: ${error.message}`);
+        appendFirmwareLog(restartFailure.message, 'error');
+      }
+    }
+    if (wasConnected && port && !portMayBeOpen) {
+      try { await connectDevice(port); }
+      catch (error) { appendFirmwareLog(`Reconnect after EEPROM write failed: ${error.message}`, 'warning'); }
+    } else if (!portMayBeOpen) {
+      setConnection('disconnected', 'Disconnected');
+    } else {
+      setConnection('disconnect-pending', 'Disconnect required');
+    }
+    setDumpBusy(false);
+  }
+
+  if (failure) {
+    elements.eepromWriteStatus.textContent = `EEPROM write failed: ${failure.message}`;
+    elements.eepromWriteStatus.dataset.level = 'error';
+  } else if (restartFailure) {
+    elements.eepromWriteStatus.textContent = `EEPROM was written and verified, but firmware restart failed: ${restartFailure.message}`;
+    elements.eepromWriteStatus.dataset.level = 'warning';
+  } else {
+    elements.eepromWriteStatus.textContent = 'EEPROM written and all 2,048 bytes verified.';
+    elements.eepromWriteStatus.dataset.level = 'success';
+  }
+}
+
 async function dumpSpiMemory() {
-  if (dumpBusy) return;
+  if (dumpBusy || firmwareFlashBusy) return;
   if (!serial || (protocolCapabilities & CAP_GET_SPI_DUMP) === 0 ||
       !logInfo?.spi || !logInfo?.spiReady || !logInfo.spiSizeMb) {
     setDumpStatus('SPI dump requires connected compatible firmware with SPI logging enabled and ready.', 'warning');
@@ -3314,6 +3613,7 @@ async function applyBinSignalModeOrFallback(session) {
 }
 
 async function flashSelectedFirmware() {
+  if (dumpBusy) return;
   if (firmwareFlashBusy) {
     firmwareStopRequested = true;
     elements.flashFirmware.disabled = true;
@@ -3327,6 +3627,7 @@ async function flashSelectedFirmware() {
     return;
   }
   firmwareFlashBusy = true;
+  updateEepromWriteButton();
   firmwareStopRequested = false;
   elements.flashLocalBuild.disabled = false;
   elements.flashLocalBuild.textContent = 'Stop';
@@ -3457,6 +3758,7 @@ async function flashSelectedFirmware() {
     const closed = await disconnectPortAfterAction(port);
     firmwareFlashBusy = false;
     firmwareStopRequested = false;
+    updateEepromWriteButton();
     elements.firmwareFile.disabled = false;
     elements.clearFirmware.disabled = false;
     elements.firmwareVerify.disabled = false;
@@ -3512,7 +3814,7 @@ async function connectDevice(portOverride = null, transport = null) {
   rateHistory.length = 0;
   logInfo = null;
   logRecords = [];
-  logViewCache.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
+  logViewCache.clear(); logTypeActiveView.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
   logStartOffset = 0;
   logPageTotal = 0;
   updateSpiDumpAvailability();
@@ -3530,7 +3832,7 @@ async function connectDevice(portOverride = null, transport = null) {
       deviceHiddenSettings = null;
       logInfo = null;
       logRecords = [];
-      logViewCache.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
+      logViewCache.clear(); logTypeActiveView.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
       logStartOffset = 0;
       logPageTotal = 0;
       elements.settingsList.replaceChildren();
@@ -3573,7 +3875,7 @@ async function connectDevice(portOverride = null, transport = null) {
     deviceHiddenSettings = null;
     logInfo = null;
     logRecords = [];
-    logViewCache.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
+    logViewCache.clear(); logTypeActiveView.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
     logPageTotal = 0;
     elements.settingsList.replaceChildren();
     elements.logTabs.replaceChildren();
@@ -3598,7 +3900,7 @@ async function disconnectDevice() {
   deviceHiddenSettings = null;
   logInfo = null;
   logRecords = [];
-  logViewCache.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
+  logViewCache.clear(); logTypeActiveView.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
   logPageTotal = 0;
   elements.settingsList.replaceChildren();
   elements.logTabs.replaceChildren();
@@ -3729,7 +4031,7 @@ async function startStockFirmwareAndVerify(port, alreadyStarted = false) {
 }
 
 async function rebootToFirmware() {
-  if (elements.rebootFirmware.disabled) return;
+  if (dumpBusy || elements.rebootFirmware.disabled) return;
   elements.rebootFirmware.disabled = true;
   elements.rebootBootloader.disabled = true;
   setRebootStatus('Starting firmware and checking for HELLO…');
@@ -3773,6 +4075,7 @@ async function rebootToFirmware() {
 }
 
 async function rebootToBootloader() {
+  if (dumpBusy) return;
   elements.rebootBootloader.disabled = true;
   elements.rebootFirmware.disabled = true;
   let port = null;
