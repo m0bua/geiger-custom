@@ -10,7 +10,7 @@
 
 #define SOLAR_SAMPLE_INTERVAL_MS 300u
 #define BATTERY_ACTIVE_SAMPLE_INTERVAL_MS 30000u
-#define BATTERY_IDLE_SAMPLE_INTERVAL_MS 600000u
+#define BATTERY_IDLE_SAMPLE_INTERVAL_MS 1800000u
 #define BATTERY_CRITICAL_SAMPLE_INTERVAL_MS 30000u
 #define USB_SAMPLE_INTERVAL_MS 60000u
 #define TOTAL_PULSE_CHECKPOINT_MS 60000u
@@ -100,7 +100,6 @@ int main(void)
     uint16_t solar_adc_raw = 0u;
     uint16_t usb_adc_raw = 0u;
     uint32_t led_blink_deadline = 0u;
-    uint32_t high_speed_deadline = 0u;
     uint32_t debug_usage_last_uptime;
     uint32_t debug_screen_seconds = 0u;
     uint32_t debug_sleep_seconds = 0u;
@@ -251,13 +250,6 @@ int main(void)
         }
 
         if ((uint32_t)(now - next_sample) >= 10u) {
-            /* Run the periodic 64-bit rate/dose calculations at full speed.
-             * MSI remains the clock between these brief service intervals. */
-            if (idle_clock_active &&
-                (int32_t)(now - next_minute_tick) >= 0) {
-                (void)board_set_idle_clock(false);
-                idle_clock_active = false;
-            }
             now = board_millis;
             uint8_t events = board_buttons_sample_10ms();
             uint32_t detected_pulses = board_detector_count();
@@ -466,10 +458,6 @@ int main(void)
                     sound_alarm_active = true;
                 }
                 if (sound_alarm_active != previous_alarm_active) {
-                    if (sound_alarm_active && idle_clock_active) {
-                        (void)board_set_idle_clock(false);
-                        idle_clock_active = false;
-                    }
                     board_sound_alarm_set(sound_alarm_active);
                 }
             }
@@ -482,11 +470,6 @@ int main(void)
 
             if (detected_pulses != event_count) {
                 event_count = detected_pulses;
-                high_speed_deadline = now + 500u;
-                if (idle_clock_active) {
-                    (void)board_set_idle_clock(false);
-                    idle_clock_active = false;
-                }
                 board_display_set_count(detected_pulses);
                 if (!sound_alarm_active &&
                     board_display_click_sound_enabled(backlight_on)) {
@@ -716,10 +699,6 @@ int main(void)
                 uint16_t channel8;
                 uint16_t channel9;
 
-                if (idle_clock_active) {
-                    (void)board_set_idle_clock(false);
-                    idle_clock_active = false;
-                }
                 board_adc_read_selected(battery_due, read_usb, read_solar,
                     &channel2, &channel8, &channel9);
                 if (channel2 != UINT16_MAX) battery_adc_raw = channel2;
@@ -758,10 +737,8 @@ int main(void)
 
         {
             const bool high_speed_needed = backlight_on ||
-                board_display_busy() || startup_led_active || event_led_on ||
-                light_alarm_active || sound_alarm_active ||
-                board_display_usb_connected() ||
-                (int32_t)(now - high_speed_deadline) < 0;
+                board_display_busy() || startup_led_active ||
+                board_display_usb_connected();
             if (high_speed_needed && idle_clock_active) {
                 (void)board_set_idle_clock(false);
                 idle_clock_active = false;
