@@ -1,0 +1,203 @@
+name: Build dev pre-release
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: dev-prerelease
+  cancel-in-progress: true
+
+jobs:
+  build-app:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Check out dev
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js for Terser
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install the firmware's pinned ARM toolchain
+        run: |
+          python -m pip install platformio==6.1.18
+          pio pkg install --global --tool platformio/toolchain-gccarmnoneeabi@1.70201.0
+
+      - name: Set pre-release tag
+        id: release
+        shell: bash
+        run: echo "tag=$(date -u +%Y%m%d%H%M)-dev-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build firmware and standalone app
+        run: |
+          pio run -e geiger2_spi_mini
+          python tools/build_release.py --version local --spi-mini-bin .pio/build/geiger2_spi_mini/firmware.bin --require-minifier
+
+      - name: Upload standalone HTML
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-release-html
+          path: dist/Dosimeter-App.html
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload firmware BIN
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-release-firmware
+          path: .pio/scratch/geiger2_manual/firmware.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload SPI service firmware BIN
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-release-spi-mini
+          path: .pio/build/geiger2_spi_mini/firmware.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  build-windows:
+    needs: build-app
+    if: github.ref == 'refs/heads/dev'
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out dev
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js for Terser
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install desktop packaging dependencies
+        run: python -m pip install -r tools/windows_app_requirements.txt
+
+      - name: Download release firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: dev-release-firmware
+          path: expected-firmware
+
+      - name: Download SPI service firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: dev-release-spi-mini
+          path: expected-spi-mini
+
+      - name: Build Windows executable
+        run: python tools/build_windows_app.py --version local --firmware-bin expected-firmware\firmware.bin --spi-mini-bin expected-spi-mini\firmware.bin --require-minifier
+
+      - name: Verify embedded firmware images
+        shell: pwsh
+        run: |
+          $expected = (Get-FileHash expected-firmware\firmware.bin -Algorithm SHA256).Hash
+          $built = (Get-FileHash .pio\scratch\geiger2_manual\firmware.bin -Algorithm SHA256).Hash
+          if ($expected -ne $built) { throw "Windows EXE firmware differs from the pre-release BIN" }
+          $expected = (Get-FileHash expected-spi-mini\firmware.bin -Algorithm SHA256).Hash
+          $built = (Get-FileHash .pio\build\geiger2_spi_mini\firmware.bin -Algorithm SHA256).Hash
+          if ($expected -ne $built) { throw "Windows EXE SPI image differs from the pre-release BIN" }
+
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-release-windows
+          path: dist/windows/Dosimeter-App.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  publish-prerelease:
+    needs: [build-app, build-windows]
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out dev
+        uses: actions/checkout@v4
+
+      - name: Download standalone HTML
+        uses: actions/download-artifact@v4
+        with:
+          name: dev-release-html
+          path: dist
+
+      - name: Download firmware BIN
+        uses: actions/download-artifact@v4
+        with:
+          name: dev-release-firmware
+          path: firmware-staging
+
+      - name: Download Windows executable
+        uses: actions/download-artifact@v4
+        with:
+          name: dev-release-windows
+          path: dist/windows
+
+      - name: Download SPI service firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: dev-release-spi-mini
+          path: spi-mini-staging
+
+      - name: Publish GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build-app.outputs.tag }}
+        run: |
+          cp spi-mini-staging/firmware.bin dist/spi-service-firmware.bin
+          firmware="firmware-staging/firmware.bin"
+          firmware_sha256="$(sha256sum "$firmware" | cut -d ' ' -f1)"
+          canonical_sha256="$(python -c 'from pathlib import Path; import hashlib; b=Path("firmware-staging/firmware.bin").read_bytes(); print(hashlib.sha256(b.ljust(65536, bytes([255]))).hexdigest())')"
+          windows_sha256="$(sha256sum dist/windows/Dosimeter-App.exe | cut -d ' ' -f1)"
+          cat > /tmp/prerelease-notes.md <<EOF
+          Development pre-release built from the dev branch.
+
+          The HTML and Windows apps identify themselves as Version: local. This build is for testing and may change without notice.
+
+          ## Changes
+          - Improved parallel minute, hour, and day logging and faster log retrieval.
+          - Improved minute, hour, and day graph navigation, cursor behavior, and redraw performance.
+          - Expanded EEPROM and SPI NOR dump, flash, restore, and erase controls.
+          - Improved Windows COM-port selection and the settings layout.
+          - Centralized the firmware display palette for easier theme changes.
+
+          Firmware BIN SHA-256: ${firmware_sha256}
+          Canonical 64 KiB flash image SHA-256 (0xFF padded): ${canonical_sha256}
+          Windows app SHA-256: ${windows_sha256}
+
+          Built from commit ${GITHUB_SHA}. Tag timestamp is UTC.
+          EOF
+          gh release create "$RELEASE_TAG" \
+            dist/Dosimeter-App.html \
+            "$firmware" \
+            dist/spi-service-firmware.bin \
+            dist/windows/Dosimeter-App.exe \
+            --title "DEV-$RELEASE_TAG" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --notes-file /tmp/prerelease-notes.md

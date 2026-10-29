@@ -97,9 +97,12 @@ def main() -> int:
         worker = f'''const C="device-monitor-{slug}";self.addEventListener("install",e=>{{e.waitUntil(caches.open(C).then(c=>c.addAll(["./index.html","./manifest.webmanifest","./app-icon.svg"])));self.skipWaiting()}});self.addEventListener("activate",e=>e.waitUntil(self.clients.claim()));self.addEventListener("fetch",e=>{{if(e.request.method==="GET"&&new URL(e.request.url).origin===self.location.origin)e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)))}});'''
         (version_dir / "service-worker.js").write_text(worker, encoding="utf-8")
         title = html.escape(str(release.get("name") or tag))
-        if re.fullmatch(r"\d{12}", tag):
-            published = (f"{tag[:4]}-{tag[4:6]}-{tag[6:8]} "
-                         f"{tag[8:10]}:{tag[10:12]} UTC")
+        timestamp = re.match(r"^(\d{12})(?:-|$)", tag)
+        if timestamp:
+            version_time = timestamp.group(1)
+            published = (f"{version_time[:4]}-{version_time[4:6]}-"
+                         f"{version_time[6:8]} {version_time[8:10]}:"
+                         f"{version_time[10:12]} UTC")
         else:
             published = str(release.get("published_at", ""))[:10]
         published = html.escape(published)

@@ -173,11 +173,18 @@ jobs:
           canonical_sha256="$(python -c 'from pathlib import Path; import hashlib; b=Path(".pio/scratch/geiger2_manual/firmware.bin").read_bytes(); print(hashlib.sha256(b.ljust(65536, bytes([255]))).hexdigest())')"
           windows_sha256="$(sha256sum dist/windows/Dosimeter-App.exe | cut -d ' ' -f1)"
           cat > /tmp/release-notes.md <<EOF
-          First production-ready app and firmware build.
+          Firmware and companion app release.
 
           Includes the standalone Windows EXE with an integrated COM-port connection and firmware programming, alongside the single-file HTML app and firmware BIN.
 
           The HTML and EXE include a recovery-backed SPI NOR dump flow and the matching temporary SPI service firmware.
+
+          ## Changes
+          - Improved parallel minute, hour, and day logging and faster log retrieval.
+          - Improved minute, hour, and day graph navigation, cursor behavior, and redraw performance.
+          - Expanded EEPROM and SPI NOR dump, flash, restore, and erase controls.
+          - Improved Windows COM-port selection and the settings layout.
+          - Centralized the firmware display palette for easier theme changes.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded; used for app compatibility checks): ${canonical_sha256}

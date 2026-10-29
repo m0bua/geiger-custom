@@ -1,14 +1,9 @@
 name: Deploy Device Monitor portal
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
   workflow_run:
-    workflows: [Build app release]
+    workflows: [Build app release, Build dev pre-release]
     types: [completed]
-  release:
-    types: [published]
 
 permissions:
   contents: read
@@ -21,11 +16,13 @@ concurrency:
 
 jobs:
   build:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
