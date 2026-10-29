@@ -1,6 +1,5 @@
 FIX: battery life improve (speep: 82-85%)
 BUG: battery % up-down
 
-FEAT: partial EEPROM/SPI img flash/read: start/end address selector.
-FEAT: кольори тем
 FEAT: refactor long setting items
+FEAT: кольори тем

@@ -26,6 +26,20 @@ const STM32_FLASH_SIZE = 64 * 1024;
 const STM32_FLASH_PAGE_SIZE = 128;
 const STM32_EEPROM_BASE = 0x08080000;
 const STM32_EEPROM_SIZE = 2 * 1024;
+const SPI_NOR_SIZE = 1024 * 1024;
+const SPI_SECTOR_SIZE = 4096;
+const MEMORY_PRESETS = {
+  eeprom: {
+    full: [0, 2047], settings: [0, 347], minutes: [348, 905],
+    hours: [906, 1130], days: [1131, 1580], alerts: [1581, 1910],
+    'all-logs': [348, 1910]
+  },
+  spi: {
+    full: [0, 1048575], minutes: [0, 368639], hours: [368640, 491519],
+    days: [491520, 696319], alerts: [696320, 1048575],
+    'all-logs': [0, 1048575]
+  }
+};
 const SPI_DUMP_CHUNK_SIZE = 58;
 const SPI_RECOVERY_DB = 'dosimeter-spi-recovery';
 const STM32_DEVICE_ID = 0x0417;
@@ -264,6 +278,14 @@ const elements = {
   dumpFlash: document.querySelector('#dump-flash'),
   dumpEeprom: document.querySelector('#dump-eeprom'),
   dumpSpi: document.querySelector('#dump-spi'),
+  eraseEeprom: document.querySelector('#erase-eeprom'),
+  eraseSpi: document.querySelector('#erase-spi'),
+  eepromRangePreset: document.querySelector('#eeprom-range-preset'),
+  eepromAddressFrom: document.querySelector('#eeprom-address-from'),
+  eepromAddressTo: document.querySelector('#eeprom-address-to'),
+  spiRangePreset: document.querySelector('#spi-range-preset'),
+  spiAddressFrom: document.querySelector('#spi-address-from'),
+  spiAddressTo: document.querySelector('#spi-address-to'),
   dumpStatus: document.querySelector('#dump-status'),
   spiNorSection: document.querySelector('#spi-nor-section'),
   spiRecoveryControls: document.querySelector('#spi-recovery-controls'),
@@ -2903,9 +2925,41 @@ elements.dumpFlash.addEventListener('click', () => dumpRomMemory(
 elements.quickBackupFlash?.addEventListener('click', () => elements.dumpFlash.click());
 elements.quickRestoreFlash?.addEventListener('click', restoreLatestFlashBackup);
 elements.firmwareRestoreFlash?.addEventListener('click', restoreLatestFlashBackup);
-elements.dumpEeprom.addEventListener('click', () => dumpRomMemory(
-  'EEPROM', STM32_EEPROM_BASE, STM32_EEPROM_SIZE, 'eeprom'));
-elements.dumpSpi.addEventListener('click', dumpSpiMemory);
+elements.eepromRangePreset.addEventListener('change', () => applyMemoryPreset('eeprom'));
+elements.eepromAddressFrom.addEventListener('input', () => updateMemoryPresetSelection('eeprom'));
+elements.eepromAddressTo.addEventListener('input', () => updateMemoryPresetSelection('eeprom'));
+elements.spiRangePreset.addEventListener('change', () => applyMemoryPreset('spi'));
+elements.spiAddressFrom.addEventListener('input', () => updateMemoryPresetSelection('spi'));
+elements.spiAddressTo.addEventListener('input', () => updateMemoryPresetSelection('spi'));
+elements.dumpEeprom.addEventListener('click', () => {
+  try {
+    const range = getMemoryRange('eeprom');
+    void dumpRomMemory('EEPROM', STM32_EEPROM_BASE + range.start, range.length,
+      `eeprom-${range.start}-${range.end}`);
+  } catch (error) { setDumpStatus(error.message, 'error'); }
+});
+elements.dumpSpi.addEventListener('click', () => {
+  try { void dumpSpiMemory(getMemoryRange('spi')); }
+  catch (error) { setDumpStatus(error.message, 'error'); }
+});
+elements.eraseEeprom.addEventListener('click', () => {
+  try {
+    const range = getMemoryRange('eeprom');
+    void writeEepromImage({
+      name: `EEPROM erase ${range.start}-${range.end}`,
+      bytes: new Uint8Array(range.length).fill(0xff)
+    }, 'Erase', true);
+  } catch (error) { setDumpStatus(error.message, 'error'); }
+});
+elements.eraseSpi.addEventListener('click', () => {
+  try {
+    const range = getMemoryRange('spi');
+    void writeSpiImage({
+      name: `SPI erase ${range.start}-${range.end}`,
+      bytes: new Uint8Array(range.length).fill(0xff)
+    }, 'Erase', true);
+  } catch (error) { setDumpStatus(error.message, 'error'); }
+});
 elements.downloadSpiBackup?.addEventListener('click', downloadSpiRecoveryBackup);
 elements.eepromImageFile.addEventListener('change', loadEepromImage);
 elements.clearEepromImage.addEventListener('click', clearEepromImageSelection);
@@ -3211,6 +3265,14 @@ function setDumpBusy(busy) {
   if (elements.quickBackupFlash) elements.quickBackupFlash.disabled = busy;
   if (elements.quickRestoreFlash) elements.quickRestoreFlash.disabled = busy || firmwareFlashBusy || !latestFlashBackup;
   elements.dumpEeprom.disabled = busy;
+  elements.eraseEeprom.disabled = busy;
+  elements.eepromRangePreset.disabled = busy;
+  elements.eepromAddressFrom.disabled = busy;
+  elements.eepromAddressTo.disabled = busy;
+  elements.eraseSpi.disabled = busy;
+  elements.spiRangePreset.disabled = busy;
+  elements.spiAddressFrom.disabled = busy;
+  elements.spiAddressTo.disabled = busy;
   elements.eepromImageFile.disabled = busy;
   elements.clearEepromImage.disabled = busy;
   elements.spiImageFile.disabled = busy;
@@ -3228,11 +3290,76 @@ function setDumpBusy(busy) {
 }
 
 function updateEepromWriteButton() {
-  elements.writeEepromImage.disabled = dumpBusy || firmwareFlashBusy || !selectedEepromImage;
+  let fits = false;
+  try {
+    if (selectedEepromImage) {
+      getMemoryWriteStart('eeprom', selectedEepromImage.bytes.length);
+      fits = true;
+    }
+  }
+  catch (_) { }
+  elements.writeEepromImage.disabled = dumpBusy || firmwareFlashBusy || !fits;
 }
 
 function updateSpiWriteButton() {
-  elements.writeSpiImage.disabled = dumpBusy || firmwareFlashBusy || !selectedSpiImage || !!spiRecoveryBackup;
+  let fits = false;
+  try {
+    if (selectedSpiImage) {
+      getMemoryWriteStart('spi', selectedSpiImage.bytes.length);
+      fits = true;
+    }
+  }
+  catch (_) { }
+  elements.writeSpiImage.disabled = dumpBusy || firmwareFlashBusy || !fits || !!spiRecoveryBackup;
+}
+
+function memoryRangeControls(memory) {
+  return memory === 'eeprom'
+    ? { preset: elements.eepromRangePreset, from: elements.eepromAddressFrom,
+        to: elements.eepromAddressTo, size: STM32_EEPROM_SIZE }
+    : { preset: elements.spiRangePreset, from: elements.spiAddressFrom,
+        to: elements.spiAddressTo, size: SPI_NOR_SIZE };
+}
+
+function applyMemoryPreset(memory) {
+  const controls = memoryRangeControls(memory);
+  const range = MEMORY_PRESETS[memory][controls.preset.value];
+  if (!range) return;
+  controls.from.value = String(range[0]);
+  controls.to.value = String(range[1]);
+  memory === 'eeprom' ? updateEepromWriteButton() : updateSpiWriteButton();
+}
+
+function updateMemoryPresetSelection(memory) {
+  const controls = memoryRangeControls(memory);
+  const matching = Object.entries(MEMORY_PRESETS[memory]).find(([, range]) =>
+    Number(controls.from.value) === range[0] && Number(controls.to.value) === range[1]);
+  controls.preset.value = matching?.[0] || 'custom';
+  memory === 'eeprom' ? updateEepromWriteButton() : updateSpiWriteButton();
+}
+
+function getMemoryRange(memory) {
+  const controls = memoryRangeControls(memory);
+  if (!controls.from.value.trim() || !controls.to.value.trim())
+    throw new Error(`Enter both ${memory.toUpperCase()} address offsets.`);
+  const start = Number(controls.from.value);
+  const end = Number(controls.to.value);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
+      start < 0 || end < start || end >= controls.size) {
+    throw new Error(`Enter an inclusive ${memory.toUpperCase()} address range from 0 to ${controls.size - 1}.`);
+  }
+  return { start, end, length: end - start + 1 };
+}
+
+function getMemoryWriteStart(memory, length) {
+  const controls = memoryRangeControls(memory);
+  if (!controls.from.value.trim()) throw new Error(`Enter the ${memory.toUpperCase()} From address.`);
+  const start = Number(controls.from.value);
+  if (!Number.isSafeInteger(start) || start < 0 || start >= controls.size ||
+      !Number.isSafeInteger(length) || length < 1 || length > controls.size - start) {
+    throw new Error(`The image does not fit in ${memory.toUpperCase()} from the selected From address.`);
+  }
+  return start;
 }
 
 function clearEepromImageSelection() {
@@ -3240,7 +3367,7 @@ function clearEepromImageSelection() {
   elements.eepromImageFile.value = '';
   elements.eepromImageStatus.textContent = 'No image selected.';
   elements.eepromImageStatus.dataset.kind = 'unknown';
-  elements.eepromWriteStatus.textContent = 'Select a 2 KB EEPROM dump to enable writing. Read-back verification is always enabled.';
+  elements.eepromWriteStatus.textContent = 'Select an EEPROM image that fits from the From address. Read-back verification is always enabled.';
   elements.eepromWriteStatus.dataset.level = '';
   updateEepromWriteButton();
 }
@@ -3250,7 +3377,7 @@ function clearSpiImageSelection() {
   elements.spiImageFile.value = '';
   elements.spiImageStatus.textContent = 'No image selected.';
   elements.spiImageStatus.dataset.kind = 'unknown';
-  elements.spiWriteStatus.textContent = 'Select a 1 MB SPI image to enable writing. The entire SPI NOR chip will be erased and programmed.';
+  elements.spiWriteStatus.textContent = 'Select an SPI image that fits from the From address. Read-back verification is always enabled.';
   elements.spiWriteStatus.dataset.level = '';
   updateSpiWriteButton();
 }
@@ -3265,14 +3392,13 @@ async function loadSpiImage() {
   }
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const expected = 1024 * 1024;
-    if (bytes.length !== expected) {
-      throw new Error(`Expected exactly ${expected.toLocaleString()} bytes; selected file has ${bytes.length.toLocaleString()}.`);
+    if (bytes.length === 0 || bytes.length > SPI_NOR_SIZE) {
+      throw new Error(`Expected 1 to ${SPI_NOR_SIZE.toLocaleString()} bytes; selected file has ${bytes.length.toLocaleString()}.`);
     }
     selectedSpiImage = {name: file.name, bytes};
     elements.spiImageStatus.textContent = `${file.name} (${bytes.length.toLocaleString()} bytes)`;
     elements.spiImageStatus.dataset.kind = 'unknown';
-    elements.spiWriteStatus.textContent = 'Image ready. Flashing erases and replaces the entire SPI NOR chip.';
+    elements.spiWriteStatus.textContent = `Image ready. It will be written at From=${elements.spiAddressFrom.value}; other bytes in affected sectors will be preserved.`;
     elements.spiWriteStatus.dataset.level = 'warning';
     updateSpiWriteButton();
   } catch (error) {
@@ -3290,19 +3416,19 @@ async function loadEepromImage() {
   if (!file) {
     elements.eepromImageStatus.textContent = 'No image selected.';
     elements.eepromImageStatus.dataset.kind = 'unknown';
-    elements.eepromWriteStatus.textContent = 'Select a 2 KB EEPROM dump to enable writing. Read-back verification is always enabled.';
+    elements.eepromWriteStatus.textContent = 'Select an EEPROM image that fits from the From address. Read-back verification is always enabled.';
     elements.eepromWriteStatus.dataset.level = '';
     return;
   }
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
-    if (bytes.length !== STM32_EEPROM_SIZE) {
-      throw new Error(`Expected exactly ${STM32_EEPROM_SIZE.toLocaleString()} bytes; selected file has ${bytes.length.toLocaleString()}.`);
+    if (bytes.length === 0 || bytes.length > STM32_EEPROM_SIZE) {
+      throw new Error(`Expected 1 to ${STM32_EEPROM_SIZE.toLocaleString()} bytes; selected file has ${bytes.length.toLocaleString()}.`);
     }
     selectedEepromImage = { name: file.name, bytes };
     elements.eepromImageStatus.textContent = `${file.name} (${bytes.length.toLocaleString()} bytes)`;
     elements.eepromImageStatus.dataset.kind = 'ours';
-    elements.eepromWriteStatus.textContent = 'Image ready. Writing replaces the entire EEPROM; verify the backup before continuing.';
+    elements.eepromWriteStatus.textContent = `Image ready. It will be written at From=${elements.eepromAddressFrom.value}; bytes outside the image range are preserved.`;
     elements.eepromWriteStatus.dataset.level = 'warning';
     updateEepromWriteButton();
   } catch (error) {
@@ -3442,16 +3568,22 @@ async function dumpRomMemory(label, address, length, filename) {
   restartFailure || backupWarning ? 'warning' : 'success');
 }
 
-async function writeEepromImage() {
-  if (dumpBusy || firmwareFlashBusy || !selectedEepromImage) return;
-  const image = selectedEepromImage;
-  if (image.bytes.length !== STM32_EEPROM_SIZE) {
-    elements.eepromWriteStatus.textContent = 'EEPROM image size changed; select the file again.';
+async function writeEepromImage(imageOverride = null, operationLabel = 'Write', isErase = false) {
+  if (dumpBusy || firmwareFlashBusy || (!selectedEepromImage && !imageOverride)) return;
+  const image = imageOverride || selectedEepromImage;
+  let targetStart;
+  try { targetStart = getMemoryWriteStart('eeprom', image.bytes.length); }
+  catch (error) {
+    elements.eepromWriteStatus.textContent = error.message;
     elements.eepromWriteStatus.dataset.level = 'error';
     return;
   }
+  const targetEnd = targetStart + image.bytes.length;
+  const alignedStart = targetStart & ~3;
+  const alignedEnd = (targetEnd + 3) & ~3;
+  const preserved = new Uint8Array(alignedEnd - alignedStart);
   if (!window.confirm(
-    `Write ${image.name} to the device EEPROM? This replaces all 2 KB, including settings, checkpoints, and logs. FLASH is not changed. Continue only if you have a backup.`)) return;
+    `${operationLabel} ${image.bytes.length.toLocaleString()} EEPROM bytes from address ${targetStart} through ${targetEnd - 1}? Data outside this range will be preserved. Continue only if you have a backup.`)) return;
 
   let port = null;
   let session = null;
@@ -3463,7 +3595,7 @@ async function writeEepromImage() {
   elements.eepromWriteStatus.textContent = 'Opening STM32 ROM bootloader…';
   elements.eepromWriteStatus.dataset.level = '';
   setConnection('connecting', 'Entering bootloader…');
-  appendFirmwareLog(`EEPROM write requested (${image.bytes.length.toLocaleString()} bytes).`);
+  appendFirmwareLog(`EEPROM ${operationLabel.toLowerCase()} requested at offsets ${targetStart}-${targetEnd - 1} (${image.bytes.length.toLocaleString()} bytes).`);
   try {
     ({ port } = await selectFirmwarePort());
     wasConnected = !!serial;
@@ -3477,34 +3609,38 @@ async function writeEepromImage() {
       throw new Error('The ROM bootloader must support Write Memory and Read Memory.');
     }
 
-    // STM32L0 data EEPROM writes require word-aligned addresses and lengths.
-    // ROM Write Memory handles erasing each EEPROM word before programming it.
-    const chunkSize = 128;
-    for (let offset = 0; offset < image.bytes.length; offset += chunkSize) {
-      const block = image.bytes.subarray(offset, offset + chunkSize);
-      await session.client.writePage(STM32_EEPROM_BASE + offset, block);
-      if ((offset + block.length) % 512 === 0 || offset + block.length === image.bytes.length) {
-        const percent = Math.floor(((offset + block.length) * 100) / image.bytes.length);
-        elements.eepromWriteStatus.textContent = `Writing EEPROM… ${percent}%`;
-        appendFirmwareLog(`EEPROM programmed ${offset + block.length}/${image.bytes.length} bytes.`);
-      }
+    for (let offset = 0; offset < preserved.length; offset += 128) {
+      const count = Math.min(128, preserved.length - offset);
+      preserved.set(await session.client.readMemory(
+        STM32_EEPROM_BASE + alignedStart + offset, count), offset);
+    }
+    preserved.set(image.bytes, targetStart - alignedStart);
+
+    // ROM writes require aligned addresses and lengths; preserve partial boundary words.
+    for (let offset = 0; offset < preserved.length; offset += 128) {
+      const block = preserved.subarray(offset, offset + 128);
+      await session.client.writePage(STM32_EEPROM_BASE + alignedStart + offset, block);
+      const completed = offset + block.length;
+      const percent = Math.floor((completed * 100) / preserved.length);
+      elements.eepromWriteStatus.textContent = `Writing EEPROM ${percent}%`;
+      if (completed % 512 === 0 || completed === preserved.length)
+        appendFirmwareLog(`EEPROM programmed through offset ${alignedStart + completed}.`);
     }
 
-    elements.eepromWriteStatus.textContent = 'Verifying EEPROM read-back…';
-    const verifyChunkSize = 128;
-    for (let offset = 0; offset < image.bytes.length; offset += verifyChunkSize) {
-      const expected = image.bytes.subarray(offset, offset + verifyChunkSize);
-      const actual = await session.client.readMemory(STM32_EEPROM_BASE + offset, expected.length);
+    elements.eepromWriteStatus.textContent = 'Verifying EEPROM read-back...';
+    for (let offset = 0; offset < preserved.length; offset += 128) {
+      const expected = preserved.subarray(offset, offset + 128);
+      const actual = await session.client.readMemory(
+        STM32_EEPROM_BASE + alignedStart + offset, expected.length);
       for (let i = 0; i < expected.length; i += 1) {
-        if (actual[i] !== expected[i]) {
-          throw new Error(`EEPROM verification mismatch at 0x${(STM32_EEPROM_BASE + offset + i).toString(16)}.`);
-        }
+        if (actual[i] !== expected[i])
+          throw new Error(`EEPROM verification mismatch at 0x${(STM32_EEPROM_BASE + alignedStart + offset + i).toString(16)}.`);
       }
-      if ((offset + expected.length) % 512 === 0 || offset + expected.length === image.bytes.length) {
-        appendFirmwareLog(`EEPROM verified ${offset + expected.length}/${image.bytes.length} bytes.`);
-      }
+      const completed = offset + expected.length;
+      if (completed % 512 === 0 || completed === preserved.length)
+        appendFirmwareLog(`EEPROM verified through offset ${alignedStart + completed}.`);
     }
-    appendFirmwareLog('EEPROM write and full read-back verification complete.', 'success');
+    appendFirmwareLog(`EEPROM ${operationLabel.toLowerCase()} range written and read-back verified.`, 'success');
   } catch (error) {
     failure = error;
     appendFirmwareLog(`EEPROM write failed: ${error.message}`, 'error');
@@ -3538,22 +3674,23 @@ async function writeEepromImage() {
     elements.eepromWriteStatus.textContent = `EEPROM was written and verified, but firmware restart failed: ${restartFailure.message}`;
     elements.eepromWriteStatus.dataset.level = 'warning';
   } else {
-    elements.eepromWriteStatus.textContent = 'EEPROM written and all 2,048 bytes verified.';
+    elements.eepromWriteStatus.textContent = `EEPROM range ${targetStart}-${targetEnd - 1} ${isErase ? 'erased' : 'written'} and verified; surrounding bytes preserved.`;
     elements.eepromWriteStatus.dataset.level = 'success';
   }
 }
 
-async function readSpiThroughProtocol(connection, length) {
+async function readSpiThroughProtocol(connection, length, startAddress = 0) {
   const bytes = new Uint8Array(length);
   let nextProgress = 10;
   for (let offset = 0; offset < length; offset += SPI_DUMP_CHUNK_SIZE) {
     const count = Math.min(SPI_DUMP_CHUNK_SIZE, length - offset);
     const request = new Uint8Array(5);
-    new DataView(request.buffer).setUint32(0, offset, true);
+    const address = startAddress + offset;
+    new DataView(request.buffer).setUint32(0, address, true);
     request[4] = count;
     const response = await connection.request(OP_GET_SPI_DUMP_PAGE, request, 10000);
     if (response.length !== count + 6 || response[0] !== 0 ||
-        new DataView(response.buffer, response.byteOffset, response.byteLength).getUint32(1, true) !== offset ||
+        new DataView(response.buffer, response.byteOffset, response.byteLength).getUint32(1, true) !== address ||
         response[5] !== count) throw new ProtocolError(`Invalid SPI dump response at offset 0x${offset.toString(16)}.`);
     bytes.set(response.subarray(6), offset);
     const percent = Math.floor(((offset + count) * 100) / length);
@@ -3789,9 +3926,9 @@ async function restoreSpiRecoveryBackup(port, transport, showStatus = true) {
   return applicationOnline;
 }
 
-async function runMiniSpiDump(port, transport) {
+async function runMiniSpiDump(port, transport, startAddress, length) {
   const mini = getEmbeddedSpiMiniImage();
-  if (!window.confirm('The app will stop counting, capture and save a full FLASH backup, temporarily replace the firmware with the SPI service image, read SPI, then restore and verify the original FLASH. Keep the device connected throughout. Continue?')) return;
+  if (!window.confirm(`The app will stop counting, capture and save a full FLASH backup, temporarily run the SPI service, dump offsets ${startAddress}-${startAddress + length - 1}, then restore and verify the original FLASH. Keep the device connected throughout. Continue?`)) return;
   let backup = null;
   let spiBytes = null;
   let operationError = null;
@@ -3803,7 +3940,7 @@ async function runMiniSpiDump(port, transport) {
     await programFlashImage(port, mini.pages, 'SPI service firmware');
     await reconnectAndCheckFirmware(port, transport, true);
     setDumpStatus('Reading SPI NOR through the temporary service firmwareвЂ¦');
-    spiBytes = await readSpiThroughProtocol(serial, logInfo.spiSizeMb * 1024 * 1024);
+    spiBytes = await readSpiThroughProtocol(serial, length, startAddress);
   } catch (error) {
     operationError = error;
     appendFirmwareLog(`SPI service operation failed: ${error.message}`, 'error');
@@ -3820,7 +3957,7 @@ async function runMiniSpiDump(port, transport) {
     setDumpStatus(`SPI dump failed; original firmware was restored and verified. ${operationError.message}`, 'error');
     return;
   }
-  const filename = makeDumpFilename('spi');
+  const filename = makeDumpFilename(`spi-${startAddress}-${startAddress + length - 1}`);
   downloadDump(spiBytes, filename);
   appendFirmwareLog(`SPI dump saved as ${filename}; original firmware restored.`, 'success');
   setDumpStatus(originalApplicationOnline
@@ -3844,20 +3981,21 @@ async function restoreLatestFlashBackup() {
   } finally { setDumpBusy(false); }
 }
 
-async function dumpSpiMemory() {
+async function dumpSpiMemory(range) {
   if (dumpBusy || firmwareFlashBusy) return;
   if (spiRecoveryBackup) {
     setDumpStatus('A pending FLASH recovery backup must be restored before starting another SPI operation.', 'error');
     return;
   }
   setDumpBusy(true);
-  appendFirmwareLog('SPI dump requested.');
+  appendFirmwareLog(`SPI dump requested at offsets ${range.start}–${range.end}.`);
   try {
     if (serial && (protocolCapabilities & CAP_GET_SPI_DUMP) !== 0 &&
         logInfo?.spiReady && logInfo.spiSizeMb) {
       try {
-        const bytes = await readSpiThroughProtocol(serial, logInfo.spiSizeMb * 1024 * 1024);
-        const filename = makeDumpFilename('spi');
+        if (range.end >= logInfo.spiSizeMb * 1024 * 1024) throw new Error('Selected range exceeds the detected SPI size.');
+        const bytes = await readSpiThroughProtocol(serial, range.length, range.start);
+        const filename = makeDumpFilename(`spi-${range.start}-${range.end}`);
         downloadDump(bytes, filename);
         appendFirmwareLog(`Direct SPI dump saved as ${filename}.`, 'success');
         setDumpStatus(`SPI dump saved as ${filename} (${bytes.length.toLocaleString()} bytes).`, 'success');
@@ -3867,22 +4005,25 @@ async function dumpSpiMemory() {
       }
     }
     const {port, transport} = await selectFirmwarePort();
-    await runMiniSpiDump(port, transport);
+    await runMiniSpiDump(port, transport, range.start, range.length);
   } catch (error) {
     appendFirmwareLog(`SPI dump failed: ${error.message}`, 'error');
     setDumpStatus(`SPI dump failed: ${error.message}`, 'error');
   } finally { setDumpBusy(false); }
 }
 
-async function writeSpiImage() {
-  if (dumpBusy || firmwareFlashBusy || !selectedSpiImage) return;
-  const image = selectedSpiImage;
-  const capacity = 1024 * 1024;
-  if (image.bytes.length !== capacity) {
-    elements.spiWriteStatus.textContent = 'SPI image size changed; select the file again.';
+async function writeSpiImage(imageOverride = null, operationLabel = 'Write', isErase = false) {
+  if (dumpBusy || firmwareFlashBusy || (!selectedSpiImage && !imageOverride)) return;
+  const image = imageOverride || selectedSpiImage;
+  const capacity = SPI_NOR_SIZE;
+  let targetStart;
+  try { targetStart = getMemoryWriteStart('spi', image.bytes.length); }
+  catch (error) {
+    elements.spiWriteStatus.textContent = error.message;
     elements.spiWriteStatus.dataset.level = 'error';
     return;
   }
+  const targetEnd = targetStart + image.bytes.length;
   let mini;
   try { mini = getEmbeddedSpiMiniImage(); }
   catch (error) {
@@ -3891,7 +4032,7 @@ async function writeSpiImage() {
     return;
   }
   if (!window.confirm(
-    `Flash ${image.name} to SPI NOR? This erases and replaces the entire 1 MB chip, including all existing logs and assets. The app will save the device FLASH, run the SPI service, then restore the original firmware. Keep the device connected until the operation finishes.`)) return;
+    `${operationLabel} ${image.bytes.length.toLocaleString()} SPI NOR bytes from address ${targetStart} through ${targetEnd - 1}? Affected sectors are erased and rewritten; bytes outside the range will be preserved. The app will back up and restore device FLASH. Keep the device connected until the operation finishes.`)) return;
 
   setDumpBusy(true);
   let port = null;
@@ -3901,7 +4042,7 @@ async function writeSpiImage() {
   let firmwareOnline = false;
   try {
     ({port, transport} = await selectFirmwarePort());
-    appendFirmwareLog(`SPI NOR flash requested from ${image.name} (${image.bytes.length.toLocaleString()} bytes).`);
+    appendFirmwareLog(`SPI NOR ${operationLabel.toLowerCase()} requested at ${targetStart}-${targetEnd - 1} (${image.bytes.length.toLocaleString()} bytes).`);
     elements.spiWriteStatus.textContent = 'Saving a verified FLASH recovery image…';
     elements.spiWriteStatus.dataset.level = 'warning';
     backup = await readFullFlashBackup(port);
@@ -3913,40 +4054,71 @@ async function writeSpiImage() {
       throw new Error('SPI service did not detect a ready 1 MB NOR chip.');
     }
 
-    elements.spiWriteStatus.textContent = 'Erasing SPI NOR…';
-    appendFirmwareLog('Erasing all 256 SPI NOR sectors.');
-    for (let address = 0; address < capacity; address += 4096) {
-      const request = new Uint8Array(4);
-      new DataView(request.buffer).setUint32(0, address, true);
-      const response = await serial.request(OP_SPI_ERASE_SECTOR, request, 5000);
-      if (response.length !== 1 || response[0] !== 0) {
-        throw new Error(`SPI sector erase failed at 0x${address.toString(16)}.`);
+    const firstSector = Math.floor(targetStart / SPI_SECTOR_SIZE) * SPI_SECTOR_SIZE;
+    const lastSector = Math.floor((targetEnd - 1) / SPI_SECTOR_SIZE) * SPI_SECTOR_SIZE;
+    const sectorCount = (lastSector - firstSector) / SPI_SECTOR_SIZE + 1;
+    let sectorsDone = 0;
+    for (let sectorStart = firstSector; sectorStart <= lastSector;
+         sectorStart += SPI_SECTOR_SIZE) {
+      const sectorEnd = Math.min(sectorStart + SPI_SECTOR_SIZE, capacity);
+      const sectorLength = sectorEnd - sectorStart;
+      const writeStart = Math.max(targetStart, sectorStart);
+      const writeEnd = Math.min(targetEnd, sectorEnd);
+      const isFullSector = writeStart === sectorStart && writeEnd === sectorEnd;
+      const original = isFullSector && !isErase ? null :
+        await readSpiThroughProtocol(serial, sectorLength, sectorStart);
+      const sectorImage = original ? original.slice() : new Uint8Array(sectorLength);
+      sectorImage.set(image.bytes.subarray(writeStart - targetStart,
+        writeEnd - targetStart), writeStart - sectorStart);
+      const erase = async () => {
+        const request = new Uint8Array(4);
+        new DataView(request.buffer).setUint32(0, sectorStart, true);
+        const response = await serial.request(OP_SPI_ERASE_SECTOR, request, 5000);
+        if (response.length !== 1 || response[0] !== 0)
+          throw new Error(`SPI sector erase failed at 0x${sectorStart.toString(16)}.`);
+      };
+      const program = async (data) => {
+        for (let offset = 0; offset < data.length; offset += 128) {
+          const amount = Math.min(128, data.length - offset);
+          const page = data.subarray(offset, offset + amount);
+          if (page.every((byte) => byte === 0xff)) continue;
+          const request = new Uint8Array(5 + amount);
+          new DataView(request.buffer).setUint32(0, sectorStart + offset, true);
+          request[4] = amount;
+          request.set(page, 5);
+          const response = await serial.request(OP_SPI_PROGRAM_PAGE, request, 5000);
+          if (response.length !== 1 || response[0] !== 0)
+            throw new Error(`SPI write/read-back verification failed at 0x${(sectorStart + offset).toString(16)}.`);
+        }
+      };
+      elements.spiWriteStatus.textContent = `Updating SPI sector ${sectorsDone + 1}/${sectorCount}...`;
+      try {
+        await erase();
+        await program(sectorImage);
+        if (isErase) {
+          const verified = await readSpiThroughProtocol(serial, sectorLength, sectorStart);
+          if (verified.some((byte, index) => byte !== sectorImage[index]))
+            throw new Error(`SPI erase verification failed at sector 0x${sectorStart.toString(16)}.`);
+        }
+      } catch (error) {
+        if (original) {
+          try {
+            await erase();
+            await program(original);
+          } catch (restoreError) {
+            throw new Error(`${error.message}; boundary sector restore failed: ${restoreError.message}`);
+          }
+        }
+        throw error;
       }
-      if ((address & 0xffff) === 0xf000 || address + 4096 === capacity) {
-        const percent = Math.floor(((address + 4096) * 100) / capacity);
-        elements.spiWriteStatus.textContent = `Erasing SPI NOR… ${percent}%`;
-        appendFirmwareLog(`SPI sectors erased ${address + 4096}/${capacity} bytes.`);
+      sectorsDone += 1;
+      if (sectorsDone % 8 === 0 || sectorsDone === sectorCount) {
+        const percent = Math.floor((sectorsDone * 100) / sectorCount);
+        elements.spiWriteStatus.textContent = `Updating SPI NOR... ${percent}%`;
+        appendFirmwareLog(`SPI sectors programmed and verified ${sectorsDone}/${sectorCount}.`);
       }
     }
-
-    elements.spiWriteStatus.textContent = 'Programming and verifying SPI NOR…';
-    for (let offset = 0; offset < capacity; offset += 128) {
-      const amount = Math.min(128, capacity - offset);
-      const request = new Uint8Array(5 + amount);
-      new DataView(request.buffer).setUint32(0, offset, true);
-      request[4] = amount;
-      request.set(image.bytes.subarray(offset, offset + amount), 5);
-      const response = await serial.request(OP_SPI_PROGRAM_PAGE, request, 5000);
-      if (response.length !== 1 || response[0] !== 0) {
-        throw new Error(`SPI write/read-back verification failed at 0x${offset.toString(16)}.`);
-      }
-      if ((offset & 0x7fff) === 0x7f80 || offset + amount === capacity) {
-        const percent = Math.floor(((offset + amount) * 100) / capacity);
-        elements.spiWriteStatus.textContent = `Programming and verifying SPI NOR… ${percent}%`;
-        appendFirmwareLog(`SPI programmed and verified ${offset + amount}/${capacity} bytes.`);
-      }
-    }
-    appendFirmwareLog('SPI NOR image programmed and verified.', 'success');
+    appendFirmwareLog(`SPI ${operationLabel.toLowerCase()} range programmed and verified; surrounding sector bytes preserved.`, 'success');
   } catch (error) {
     operationError = error;
     appendFirmwareLog(`SPI NOR flash failed: ${error.message}`, 'error');
@@ -3971,10 +4143,10 @@ async function writeSpiImage() {
       : `SPI write failed before a FLASH recovery image was captured. ${operationError.message}`;
     elements.spiWriteStatus.dataset.level = 'error';
   } else if (firmwareOnline) {
-    elements.spiWriteStatus.textContent = 'SPI image programmed and verified. Original firmware was restored.';
+    elements.spiWriteStatus.textContent = `SPI range ${targetStart}-${targetEnd - 1} ${isErase ? 'erased' : 'programmed'} and verified; original firmware was restored.`;
     elements.spiWriteStatus.dataset.level = 'success';
   } else {
-    elements.spiWriteStatus.textContent = 'SPI image programmed and verified; original FLASH was restored, but firmware HELLO was not confirmed.';
+    elements.spiWriteStatus.textContent = `SPI range ${targetStart}-${targetEnd - 1} ${isErase ? 'erased' : 'programmed'} and verified; original FLASH was restored, but firmware HELLO was not confirmed.`;
     elements.spiWriteStatus.dataset.level = 'warning';
   }
 }

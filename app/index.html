@@ -210,38 +210,79 @@
       </details>
       <details class="firmware-section eeprom-write-section" name="firmware-sections">
         <summary>EEPROM</summary>
-        <p>Dump or write the raw 2 KB EEPROM image. Writing replaces all EEPROM contents, including settings, checkpoints, and logs; it does not write FLASH.</p>
+        <p>Dump uses the inclusive From-to range. Writing uses From plus the image length; To is ignored, and bytes outside the image are preserved. EEPROM settings, checkpoints, and log areas are shown by the presets.</p>
+        <div class="memory-range-controls">
+          <label for="eeprom-range-preset">Preset
+            <select id="eeprom-range-preset">
+              <option value="full">Full</option>
+              <option value="settings">Settings</option>
+              <option value="minutes">Minutes</option>
+              <option value="hours">Hours</option>
+              <option value="days">Days</option>
+              <option value="alerts">Alerts</option>
+              <option value="all-logs">All logs</option>
+              <option value="custom">Custom</option>
+            </select>
+          </label>
+          <label for="eeprom-address-from">From (byte offset)
+            <input id="eeprom-address-from" type="number" min="0" max="2047" step="1" value="0">
+          </label>
+          <label for="eeprom-address-to">To (inclusive)
+            <input id="eeprom-address-to" type="number" min="0" max="2047" step="1" value="2047">
+          </label>
+        </div>
         <div class="dump-controls">
           <button id="dump-eeprom" class="button" type="button">Dump EEPROM</button>
+          <button id="erase-eeprom" class="button button-danger" type="button">Erase range</button>
         </div>
         <p class="backup-reminder">Dump and save the current EEPROM before writing. Use only an image intended for this device.</p>
         <div class="firmware-controls eeprom-write-controls">
           <div class="firmware-file-control">
-            <label for="eeprom-image-file">EEPROM image (.bin, exactly 2 KB)</label>
+            <label for="eeprom-image-file">EEPROM image (.bin; write begins at From)</label>
             <input id="eeprom-image-file" type="file" accept=".bin,application/octet-stream">
           </div>
           <button id="clear-eeprom-image" class="button button-quiet" type="button">Clear</button>
           <button id="write-eeprom-image" class="button button-danger" type="button" disabled>Write EEPROM</button>
           <output id="eeprom-image-status" class="firmware-image-status" aria-live="polite">No image selected.</output>
         </div>
-        <p id="eeprom-write-status" class="dump-status" role="status" aria-live="polite">Select a 2 KB EEPROM dump to enable writing. Read-back verification is always enabled.</p>
+        <p id="eeprom-write-status" class="dump-status" role="status" aria-live="polite">Select an EEPROM image that fits from the From address. Read-back verification is always enabled.</p>
       </details>
       <details id="spi-nor-section" class="firmware-section" name="firmware-sections">
         <summary>SPI NOR</summary>
-        <p>SPI reads directly when supported. Writing replaces the entire 1 MB SPI NOR image. If needed, the app temporarily runs the SPI service firmware and restores the device firmware afterward.</p>
+        <p>Dump uses the inclusive From-to range. Flashing uses From plus the image length; To is ignored. Data outside the image is preserved by saving and restoring affected sectors. If needed, the app temporarily runs the SPI service firmware and restores the device firmware afterward.</p>
+        <div class="memory-range-controls">
+          <label for="spi-range-preset">Preset
+            <select id="spi-range-preset">
+              <option value="full">Full</option>
+              <option value="minutes">Minutes</option>
+              <option value="hours">Hours</option>
+              <option value="days">Days</option>
+              <option value="alerts">Alerts</option>
+              <option value="all-logs">All logs</option>
+              <option value="custom">Custom</option>
+            </select>
+          </label>
+          <label for="spi-address-from">From (byte offset)
+            <input id="spi-address-from" type="number" min="0" max="1048575" step="1" value="0">
+          </label>
+          <label for="spi-address-to">To (inclusive)
+            <input id="spi-address-to" type="number" min="0" max="1048575" step="1" value="1048575">
+          </label>
+        </div>
         <div class="dump-controls">
           <button id="dump-spi" class="button" type="button">Dump SPI</button>
+          <button id="erase-spi" class="button button-danger" type="button">Erase range</button>
         </div>
         <div class="firmware-controls spi-write-controls">
           <div class="firmware-file-control">
-            <label for="spi-image-file">SPI image (.bin, exactly 1 MB)</label>
+            <label for="spi-image-file">SPI image (.bin; write begins at From)</label>
             <input id="spi-image-file" type="file" accept=".bin,application/octet-stream">
           </div>
           <button id="clear-spi-image" class="button button-quiet" type="button">Clear</button>
           <button id="write-spi-image" class="button button-danger" type="button" disabled>Flash SPI</button>
           <output id="spi-image-status" class="firmware-image-status" aria-live="polite">No image selected.</output>
         </div>
-        <p id="spi-write-status" class="dump-status" role="status" aria-live="polite">Select a 1 MB SPI image to enable writing. The entire SPI NOR chip will be erased and programmed.</p>
+        <p id="spi-write-status" class="dump-status" role="status" aria-live="polite">Select an SPI image that fits from the From address. Read-back verification is always enabled.</p>
       </details>
       <p id="dump-status" class="dump-status" role="status" aria-live="polite">Operation status appears here.</p>
       <section class="firmware-activity">
