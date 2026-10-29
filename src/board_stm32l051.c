@@ -2334,12 +2334,27 @@ static bool lcd_graph_stat_icon_pixel(uint8_t stat, uint8_t x, uint8_t y)
     };
     if (stat == 0u) return font_small_pixel(lcd_graph_log_type ? 'D' : 'C', x, y);
     if (stat == 2u) return font_small_pixel('A', x, y);
-    if (stat == 3u && lcd_graph_log_type) {
-        return lcd_graph_stat_min > 9990u &&
-            font_small_pixel('>', x, y);
-    }
+    if (stat == 3u && lcd_graph_log_type) return false;
     if ((stat != 1u && stat != 3u) || x < 1u || x > 5u || y < 1u || y > 7u) return false;
     return (icon_rows[stat == 1u ? 0u : 1u][y - 1u] & (uint8_t)(1u << (5u - x))) != 0u;
+}
+
+static bool lcd_graph_stat_value_pixel(uint8_t stat, uint8_t x, uint8_t y)
+{
+    if (stat == 3u && lcd_graph_log_type && lcd_graph_stat_min >= 36000000u) {
+        const uint8_t digit = x / 8u;
+        return font_small_pixel(digit < 5u ? lcd_graph_stat_values[stat][digit] : 'h',
+                                (uint8_t)(x % 8u), y);
+    }
+    if (x < 8u) return lcd_graph_stat_icon_pixel(stat, x, y);
+    if (x < 48u) {
+        const uint8_t rel = (uint8_t)(x - 8u);
+        const uint8_t digit = rel / 8u;
+        return digit < 5u && rel % 8u < 7u &&
+            font_small_pixel(lcd_graph_stat_values[stat][digit],
+                             (uint8_t)(rel % 8u), y);
+    }
+    return false;
 }
 
 static uint64_t lcd_graph_stat_rate(uint32_t cpm)
@@ -2517,14 +2532,17 @@ static void lcd_graph_format_duration(uint32_t seconds, char text[5])
 {
     uint32_t value = seconds;
     char suffix = 's';
-    if (seconds > 9990u) {
-        value = 9990u;
+    if (seconds >= 10000u) {
+        value = seconds / 3600u;
+        suffix = value < 10000u ? 'h' : ' ';
     }
-    text[0] = (char)('0' + value / 1000u);
-    text[1] = (char)('0' + (value / 100u) % 10u);
-    text[2] = (char)('0' + (value / 10u) % 10u);
-    text[3] = (char)('0' + value % 10u);
+    text[0] = text[1] = text[2] = text[3] = ' ';
     text[4] = suffix;
+    for (uint8_t i = suffix == ' ' ? 5u : 4u;
+         value != 0u && i != 0u; ) {
+        text[--i] = (char)('0' + value % 10u);
+        value /= 10u;
+    }
 }
 
 static uint32_t lcd_graph_interpolate(uint32_t a, uint32_t b,
@@ -2906,17 +2924,8 @@ static uint16_t lcd_graph_log_pixel(uint16_t x, uint16_t y)
                 else if (lcd_graph_stat_max >= LCD_GRAPH_YELLOW_THRESHOLD_CPM)
                     color = LCD_TEXT_YELLOW;
             }
-            if (x < FONT_SMALL_CELL_WIDTH)
-                return lcd_graph_stat_icon_pixel(stat, (uint8_t)x, yy) ? color :
-                    LCD_TEXT_BACKGROUND;
-            if (x >= 8u && x < 48u) {
-                const uint8_t rel = (uint8_t)(x - 8u);
-                const uint8_t digit = rel / 8u;
-                if (digit < 5u && rel % 8u < 7u &&
-                    font_small_pixel(lcd_graph_stat_values[stat][digit],
-                                     (uint8_t)(rel % 8u), yy)) return color;
-            }
-            return LCD_TEXT_BACKGROUND;
+            return x < 48u && lcd_graph_stat_value_pixel(stat, (uint8_t)x, yy) ?
+                color : LCD_TEXT_BACKGROUND;
         }
         return LCD_TEXT_BACKGROUND;
     }
@@ -2950,17 +2959,8 @@ static uint16_t lcd_graph_pixel(uint16_t x, uint16_t y)
             const uint8_t yy = (uint8_t)(y - sy[stat]);
             const uint16_t color = stat == 0u ? lcd_rate_color :
                 LCD_TEXT_FOREGROUND;
-            if (x < FONT_SMALL_CELL_WIDTH)
-                return lcd_graph_stat_icon_pixel(stat, (uint8_t)x, yy) ? color :
-                    LCD_TEXT_BACKGROUND;
-            if (x >= 8u && x < 48u) {
-                const uint8_t rel = (uint8_t)(x - 8u);
-                const uint8_t digit = rel / 8u;
-                if (digit < 5u && rel % 8u < 7u &&
-                    font_small_pixel(lcd_graph_stat_values[stat][digit],
-                                     (uint8_t)(rel % 8u), yy)) return color;
-            }
-            return LCD_TEXT_BACKGROUND;
+            return x < 48u && lcd_graph_stat_value_pixel(stat, (uint8_t)x, yy) ?
+                color : LCD_TEXT_BACKGROUND;
         }
         return LCD_TEXT_BACKGROUND;
     }
