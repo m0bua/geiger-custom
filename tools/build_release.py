@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from datetime import datetime
 import hashlib
 import html
 import os
@@ -136,12 +137,13 @@ def main() -> int:
                         help="use this existing SPI service firmware BIN")
     parser.add_argument("--toolchain", type=Path,
                         help="optional ARM GCC bin directory passed to build_firmware.py")
-    parser.add_argument("--version", default="local",
+    parser.add_argument("--version",
                         help="version label embedded in About (release tag, e.g. YYYYMMDDhhmm)")
     parser.add_argument("--require-minifier", action="store_true",
                         default=os.environ.get("CI", "").lower() == "true",
                         help="fail unless Terser is available (automatically required on CI)")
     args = parser.parse_args()
+    version = args.version or f"{datetime.now().astimezone():%Y%m%d%H%M}-local"
 
     firmware_path = args.firmware_bin.resolve() if args.firmware_bin else DEFAULT_FIRMWARE
     if args.firmware_bin:
@@ -183,7 +185,7 @@ def main() -> int:
     document = (APP / "index.html").read_text(encoding="utf-8")
     document, version_count = re.subn(
         r'(<strong id="app-version">).*?(</strong>)',
-        lambda match: match.group(1) + html.escape(args.version) + match.group(2),
+        lambda match: match.group(1) + html.escape(version) + match.group(2),
         document, count=1,
     )
     if version_count != 1:

@@ -2217,12 +2217,36 @@ function settingLabel(setting) {
   return setting.label;
 }
 
+function makeSettingVisibilityControl(settingId, supported, preview) {
+  const label = document.createElement('label');
+  label.className = 'setting-visible';
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.checked = preview ? !demoHiddenSettings.has(settingId) :
+    deviceHiddenSettings === null || (deviceHiddenSettings[settingId] ?? false) === false;
+  input.disabled = !preview && (!supported || deviceHiddenSettings === null);
+  input.title = 'Show this setting on the device';
+  input.addEventListener('change', () => {
+    if (preview) {
+      if (input.checked) demoHiddenSettings.delete(settingId);
+      else demoHiddenSettings.add(settingId);
+      return;
+    }
+    writeSetting(0x80 + settingId, input.checked ? 0 : 1, input);
+  });
+  const text = document.createElement('span');
+  text.textContent = 'Show';
+  label.append(input, text);
+  return label;
+}
+
 function renderSettings() {
   elements.settingsList.replaceChildren();
   const preview = deviceSettings === null;
   const currentSettings = preview ? demoSettings : deviceSettings;
   const rows = [];
   for (const setting of remoteSettings) {
+    if (setting.id === 19) continue;
     const supportSettings = deviceSettings ?? demoSettings;
     const hasSetting = supportSettings !== null &&
       setting.id < supportSettings.length;
@@ -2251,17 +2275,33 @@ function renderSettings() {
     }
     const isReset = setting.id === 14;
     const isPowerOff = setting.id === 18;
-    const isReboot = setting.id === 19;
-    const standaloneActionButton = isPowerOff || isReboot ?
-      makeDeviceActionButton(isPowerOff ? 'POWER OFF' : 'REBOOT',
-        isPowerOff ? 1 : 2) : null;
-    if (standaloneActionButton && (!supported || preview)) {
-      standaloneActionButton.disabled = true;
-      standaloneActionButton.title = preview ? 'Connect a device to enable this action.' :
-        'This device firmware does not support this action.';
-    }
     if (setting.id === 13 || isReset) row.classList.add('setting-danger');
-    if (isPowerOff || isReboot) row.classList.add('setting-action-warning');
+    if (isPowerOff) {
+      row.classList.add('setting-action-warning', 'setting-power-actions');
+      const actionTitle = document.createElement('span');
+      actionTitle.className = 'setting-action-title';
+      actionTitle.textContent = 'POWER';
+      row.append(actionTitle);
+      const powerOffButton = makeDeviceActionButton('POWER OFF', 1);
+      const rebootButton = makeDeviceActionButton('REBOOT', 2);
+      const rebootSupported = supportSettings !== null && 19 < supportSettings.length &&
+        (!serial || (protocolCapabilities & CAP_DEVICE_ACTION) !== 0);
+      for (const [button, actionIsSupported] of [
+        [powerOffButton, supported], [rebootButton, rebootSupported]
+      ]) {
+        if (!actionIsSupported || preview) {
+          button.disabled = true;
+          button.title = preview ? 'Connect a device to enable this action.' :
+            'This device firmware does not support this action.';
+        }
+      }
+      controls.classList.add('setting-power-controls');
+      controls.append(powerOffButton, rebootButton,
+        makeSettingVisibilityControl(19, rebootSupported, preview));
+      row.append(controls);
+      rows.push(row);
+      continue;
+    }
 
     if (isReset) {
       const select = document.createElement('select');
@@ -2282,8 +2322,6 @@ function renderSettings() {
       const resetButton = makeDeviceActionButton('Reset', 0, () => selectedResetAction);
       if (preview || !supported) resetButton.disabled = true;
       controls.append(resetButton);
-    } else if (standaloneActionButton) {
-      // Destructive device actions replace the text heading in this row.
     } else {
       const select = document.createElement('select');
       select.id = `setting-${setting.id}`;
@@ -2333,36 +2371,13 @@ function renderSettings() {
       controls.append(select);
     }
 
-    if (setting.id !== 18) {
-      const visibilityLabel = document.createElement('label');
-      visibilityLabel.className = 'setting-visible';
-      const visibility = document.createElement('input');
-      visibility.type = 'checkbox';
-      visibility.checked = preview ? !demoHiddenSettings.has(setting.id) :
-        deviceHiddenSettings === null || (deviceHiddenSettings[setting.id] ?? false) === false;
-      visibility.disabled = !preview && (!supported || deviceHiddenSettings === null);
-      visibility.title = 'Show this setting on the device';
-      visibility.addEventListener('change', () => {
-        if (preview) {
-          if (visibility.checked) demoHiddenSettings.delete(setting.id);
-          else demoHiddenSettings.add(setting.id);
-          return;
-        }
-        writeSetting(0x80 + setting.id, visibility.checked ? 0 : 1, visibility);
-      });
-      const visibilityText = document.createElement('span');
-      visibilityText.textContent = 'Show';
-      visibilityLabel.append(visibility, visibilityText);
-      controls.append(visibilityLabel);
-    }
-    if (standaloneActionButton) row.append(standaloneActionButton);
-    else row.append(label);
+    controls.append(makeSettingVisibilityControl(setting.id, supported, preview));
+    row.append(label);
     row.append(controls);
     rows.push(row);
   }
   const pair = document.createElement('div');
   pair.className = 'settings-pair';
-  pair.style.setProperty('--settings-row-count', Math.ceil(rows.length / 2));
   pair.append(...rows);
   elements.settingsList.append(pair);
   if (preview) {

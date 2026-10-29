@@ -58,7 +58,7 @@ def configure_windows_html(path: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default="local", help="version shown in About")
+    parser.add_argument("--version", help="version shown in About; defaults to build time plus -local")
     parser.add_argument("--toolchain", type=Path,
                         help="ARM GCC bin directory passed to firmware builder")
     parser.add_argument("--firmware-bin", type=Path,
@@ -96,8 +96,10 @@ def main() -> int:
             shutil.copy2(asset, target)
 
     embedded_html = app_bundle / "index.html"
-    command = [sys.executable, str(TOOLS / "build_release.py"), "--version", args.version,
+    command = [sys.executable, str(TOOLS / "build_release.py"),
                "--output", str(embedded_html)]
+    if args.version:
+        command.extend(["--version", args.version])
     if args.toolchain:
         command.extend(["--toolchain", str(args.toolchain.resolve())])
     if args.firmware_bin:
