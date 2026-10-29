@@ -5847,6 +5847,22 @@ static uint16_t lcd_battery_percent(uint16_t raw)
          (battery_full_adc - battery_empty_adc)));
 }
 
+static uint16_t lcd_battery_percent_hysteresis(uint16_t percent,
+                                                uint16_t raw)
+{
+    uint16_t next_boundary = (uint16_t)(1301u + percent * 7u);
+
+    while (percent < 100u && raw >= (uint16_t)(next_boundary + 3u)) {
+        ++percent;
+        next_boundary = (uint16_t)(next_boundary + 7u);
+    }
+    while (percent != 0u && raw <= (uint16_t)(next_boundary - 10u)) {
+        --percent;
+        next_boundary = (uint16_t)(next_boundary - 7u);
+    }
+    return percent;
+}
+
 static void lcd_apply_brightness_settings(void)
 {
     static const uint8_t levels[] = {
@@ -5974,16 +5990,20 @@ void board_display_set_adc(uint16_t channel2, uint16_t channel8,
             lcd_battery_percent_initialized = true;
             lcd_format_percent(battery_percent, 13u);
             changed = true;
-        } else if (battery_percent != lcd_battery_percent_candidate) {
-            lcd_battery_percent_candidate = battery_percent;
-            lcd_battery_percent_candidate_since_ms = board_millis;
-        } else if (battery_percent != lcd_displayed_battery_percent &&
-                   (uint32_t)(board_millis -
-                       lcd_battery_percent_candidate_since_ms) >=
-                           LCD_BATTERY_PERCENT_STABLE_MS) {
-            lcd_displayed_battery_percent = battery_percent;
-            lcd_format_percent(battery_percent, 13u);
-            changed = true;
+        } else {
+            const uint16_t candidate = lcd_battery_percent_hysteresis(
+                lcd_battery_percent_candidate, channel2);
+            if (candidate != lcd_battery_percent_candidate) {
+                lcd_battery_percent_candidate = candidate;
+                lcd_battery_percent_candidate_since_ms = board_millis;
+            } else if (candidate != lcd_displayed_battery_percent &&
+                       (uint32_t)(board_millis -
+                           lcd_battery_percent_candidate_since_ms) >=
+                               LCD_BATTERY_PERCENT_STABLE_MS) {
+                lcd_displayed_battery_percent = candidate;
+                lcd_format_percent(candidate, 13u);
+                changed = true;
+            }
         }
     }
     if (channel9 <= 4095u) {
