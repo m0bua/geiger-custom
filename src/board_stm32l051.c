@@ -11,6 +11,7 @@
 #include "log_eeprom.h"
 #include "spi_log.h"
 #include "spi_nor.h"
+#include "lcd_theme.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -195,26 +196,11 @@ static uint32_t lcd_search_mode_started;
 #define LCD_ADC_TEXT_LENGTH 18u
 #define LCD_CPM_TEXT_WIDTH (LCD_CPM_TEXT_LENGTH * FONT_SMALL_CELL_WIDTH + \
     (LCD_CPM_TEXT_LENGTH - 1u) * LCD_SMALL_TEXT_GAP)
-#define LCD_COUNTER_GREEN 0x07E0u
-#define LCD_COUNTER_YELLOW 0xFFE0u
-#define LCD_COUNTER_RED 0xF800u
-#define LCD_COUNTER_CYAN 0x07FFu
-#define LCD_COUNTER_BLUE 0x001Fu
-#define LCD_COUNTER_LIGHT_GRAY 0xC618u
 #define LCD_LARGE_GLYPH_PIXELS (FONT_LARGE_CELL_WIDTH * FONT_LARGE_CELL_HEIGHT)
 #define LCD_TOP_ROW_PIXELS (LCD_WIDTH * FONT_SMALL_CELL_HEIGHT)
 #define LCD_TEXT_GLYPH_PIXELS ((LCD_LARGE_GLYPH_PIXELS > \
     LCD_TOP_ROW_PIXELS) ? LCD_LARGE_GLYPH_PIXELS : \
     LCD_TOP_ROW_PIXELS)
-#define LCD_TEXT_FOREGROUND 0xD6BAu
-#define LCD_TEXT_BACKGROUND 0x0000u
-#define LCD_TEXT_GREEN 0x07E0u
-#define LCD_TEXT_YELLOW 0xFFE0u
-#define LCD_TEXT_RED 0xF800u
-#define LCD_SETTINGS_SELECTED_COLOR 0x07EEu
-#define LCD_SETTINGS_ACTION_COLOR 0x7BE0u
-#define LCD_SETTINGS_WARNING_COLOR 0xB000u
-
 static void adc_wait_ms(uint32_t duration);
 static bool adc_enable(void);
 static void adc_disable(void);
@@ -2942,7 +2928,7 @@ static uint16_t lcd_graph_log_pixel(uint16_t x, uint16_t y)
         }
         return LCD_TEXT_BACKGROUND;
     }
-    if (x == LCD_GRAPH_STATS_WIDTH - 1u) return 0x7BEFu;
+    if (x == LCD_GRAPH_STATS_WIDTH - 1u) return LCD_GRAPH_DIM_COLOR;
     if (lcd_graph_loading) return LCD_TEXT_BACKGROUND;
     if (gy > LCD_GRAPH_BASELINE) {
         const uint16_t left = LCD_GRAPH_STATS_WIDTH +
@@ -2963,7 +2949,7 @@ static uint16_t lcd_graph_log_pixel(uint16_t x, uint16_t y)
     if (gy == lcd_graph_yellow_threshold_y) return LCD_COUNTER_YELLOW;
     if (!fill) return LCD_TEXT_BACKGROUND;
     if (selected) return LCD_SETTINGS_SELECTED_COLOR;
-    return (column & 0x80u) ? 0x7BEFu : 0xBDF7u;
+    return (column & 0x80u) ? LCD_GRAPH_DIM_COLOR : LCD_GRAPH_COLOR;
 }
 
 static uint16_t lcd_graph_pixel(uint16_t x, uint16_t y)
@@ -2985,11 +2971,12 @@ static uint16_t lcd_graph_pixel(uint16_t x, uint16_t y)
         }
         return LCD_TEXT_BACKGROUND;
     }
-    if (x == LCD_GRAPH_STATS_WIDTH - 1u) return 0x7BEFu;
+    if (x == LCD_GRAPH_STATS_WIDTH - 1u) return LCD_GRAPH_DIM_COLOR;
     const uint8_t column = lcd_graph_column_y[x];
     if (y == lcd_graph_red_threshold_y) return LCD_COUNTER_RED;
     if (y == lcd_graph_yellow_threshold_y) return LCD_COUNTER_YELLOW;
-    return column != UINT8_MAX && y >= column ? 0xBDF7u : LCD_TEXT_BACKGROUND;
+    return column != UINT8_MAX && y >= column ?
+        LCD_GRAPH_COLOR : LCD_TEXT_BACKGROUND;
 }
 
 static void lcd_graph_prepare_header(void)
@@ -3599,7 +3586,7 @@ static __attribute__((noinline)) bool lcd_text_prepare_glyph(void)
                                 x <= fill_width;
                             lcd_glyph_put((uint16_t)y * text_width +
                                 box_x + x, frame ? LCD_COUNTER_LIGHT_GRAY :
-                                (filled ? LCD_COUNTER_BLUE :
+                                (filled ? LCD_COLOR_PROGRESS_FILL :
                                     LCD_TEXT_BACKGROUND));
                         }
                     }
