@@ -3585,7 +3585,7 @@ static __attribute__((noinline)) bool lcd_text_prepare_glyph(void)
                             const bool filled = !frame && x > 0u &&
                                 x <= fill_width;
                             lcd_glyph_put((uint16_t)y * text_width +
-                                box_x + x, frame ? LCD_COUNTER_LIGHT_GRAY :
+                                box_x + x, frame ? LCD_COLOR_PROGRESS_FRAME :
                                 (filled ? LCD_COLOR_PROGRESS_FILL :
                                     LCD_TEXT_BACKGROUND));
                         }
@@ -3599,7 +3599,7 @@ static __attribute__((noinline)) bool lcd_text_prepare_glyph(void)
                                         (uint16_t)(y + 1u) * text_width + text_x +
                                         column * (FONT_SMALL_CELL_WIDTH +
                                             LCD_SMALL_TEXT_GAP) + x;
-                                    lcd_glyph_put(pixel, LCD_COUNTER_LIGHT_GRAY);
+                                    lcd_glyph_put(pixel, LCD_TEXT_FOREGROUND);
                                 }
                             }
                         }
