@@ -48,7 +48,8 @@ def main():
     flags = ['-std=gnu11', '-mcpu=cortex-m0plus', '-mthumb', '-Os', '-g2',
              '-ffunction-sections', '-fdata-sections', '-fstack-usage', '-Wall', '-Wextra', '-Werror',
              '-I', str(ROOT / 'include')]
-    sources = sorted((ROOT / 'src').glob('*.c'))
+    sources = sorted(source for source in (ROOT / 'src').glob('*.c')
+                     if not source.name.startswith('spi_mini_'))
     if args.test_support:
         sources.append(ROOT / 'tests/test_log_engine_support.c')
     objects = []
