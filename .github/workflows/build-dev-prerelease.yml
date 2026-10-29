@@ -18,6 +18,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
       source_sha: ${{ steps.release.outputs.source_sha }}
     steps:
       - name: Check out dev
@@ -45,13 +46,15 @@ jobs:
         shell: bash
         run: |
           source_sha="$(git rev-parse HEAD)"
+          version="$(date -u +%Y%m%d%H%M)-dev"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
-          echo "tag=$(date -u +%Y%m%d%H%M)-dev-${source_sha:0:7}" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=${version}-${source_sha:0:7}" >> "$GITHUB_OUTPUT"
 
       - name: Build firmware and standalone app
         run: |
           pio run -e geiger2_spi_mini
-          python tools/build_release.py --version local --spi-mini-bin .pio/build/geiger2_spi_mini/firmware.bin --require-minifier
+          python tools/build_release.py --version "${{ steps.release.outputs.version }}" --spi-mini-bin .pio/build/geiger2_spi_mini/firmware.bin --require-minifier
 
       - name: Upload standalone HTML
         uses: actions/upload-artifact@v4
@@ -117,7 +120,7 @@ jobs:
           path: expected-spi-mini
 
       - name: Build Windows executable
-        run: python tools/build_windows_app.py --version local --firmware-bin expected-firmware\firmware.bin --spi-mini-bin expected-spi-mini\firmware.bin --require-minifier
+        run: python tools/build_windows_app.py --version "${{ needs.build-app.outputs.version }}" --firmware-bin expected-firmware\firmware.bin --spi-mini-bin expected-spi-mini\firmware.bin --require-minifier
 
       - name: Verify firmware embedded in the Windows app
         run: >-
@@ -175,6 +178,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.build-app.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.build-app.outputs.version }}
           SOURCE_SHA: ${{ needs.build-app.outputs.source_sha }}
         run: |
           cp spi-mini-staging/firmware.bin dist/spi-service-firmware.bin
@@ -185,7 +189,7 @@ jobs:
           cat > /tmp/prerelease-notes.md <<EOF
           Development pre-release built from the dev branch.
 
-          The HTML and Windows apps identify themselves as Version: local. This build is for testing and may change without notice.
+          The HTML and Windows apps identify themselves as Version: ${RELEASE_VERSION}. This build is for testing and may change without notice.
 
           ## Changes
           - Improved parallel minute, hour, and day logging and faster log retrieval.
