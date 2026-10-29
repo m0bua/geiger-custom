@@ -1,7 +1,7 @@
 """Create a 1 MiB SPI image with valid synthetic log records.
 
-Build the ARM log test support first:
-    python tools/build_firmware.py --test-support
+Build the firmware first:
+    python tools/build_firmware.py
 Then run:
     python tools/generate_fake_spi_fixture.py
 """
@@ -16,16 +16,19 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from test_log_engine import Engine, SCRATCH  # noqa: E402
+import test_log_engine  # noqa: E402
+
+test_log_engine.BUILD = ROOT / ".pio/scratch/geiger2_manual"
+Engine = test_log_engine.Engine
+SCRATCH = test_log_engine.SCRATCH
 
 CAPACITY = 1024 * 1024
-EPOCH_START = datetime(2026, 1, 1, tzinfo=timezone.utc)
 NOW = datetime(2026, 10, 29, 9, 26, tzinfo=timezone.utc)
-YEAR_DESCRIPTOR = 0x20 | (2026 & 0x1F)
 
 
 def period_index(moment: datetime, period_seconds: int) -> int:
-    return int((moment - EPOCH_START).total_seconds()) // period_seconds
+    year_start = datetime(moment.year, 1, 1, tzinfo=timezone.utc)
+    return int((moment - year_start).total_seconds()) // period_seconds
 
 
 def append(firmware: Engine, kind: int, moment: datetime, count: int,
@@ -36,7 +39,8 @@ def append(firmware: Engine, kind: int, moment: datetime, count: int,
         duration, 0, coverage,
     )
     firmware.cpu.mem_write(SCRATCH, record)
-    result = firmware.call("spi_log_prepare", kind, 0, YEAR_DESCRIPTOR,
+    year_descriptor = 0x20 | (moment.year & 0x1F)
+    result = firmware.call("spi_log_prepare", kind, 0, year_descriptor,
                            SCRATCH + 128)
     if result != 0:
         raise RuntimeError(f"SPI log prepare failed for kind={kind}: {result}")
@@ -64,34 +68,32 @@ def add_periods(firmware: Engine, kind: int, moments: list[datetime],
         append(firmware, kind, moment, count, maximum, coverage)
 
 
-def main() -> None:
-    output = ROOT / "tests/fixtures/spi-logs-fake-1mb.bin"
+def generate(output: Path, counts: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
     firmware = Engine(mode=1, nor=b"\xff" * CAPACITY)
     if not firmware.call("log_writer_init"):
         raise RuntimeError("Could not initialize the SPI log layout")
 
-    minute_start = NOW.replace(second=0) - timedelta(minutes=120)
+    minute_count, hour_count, day_count, alert_count = counts
+    minute_start = NOW.replace(second=0) - timedelta(minutes=minute_count)
     add_periods(firmware, 0,
-                [minute_start + timedelta(minutes=i) for i in range(120)], 60)
+                [minute_start + timedelta(minutes=i) for i in range(minute_count)], 60)
 
-    hour_start = NOW.replace(minute=0, second=0) - timedelta(hours=72)
+    hour_start = NOW.replace(minute=0, second=0) - timedelta(hours=hour_count)
     add_periods(firmware, 1,
-                [hour_start + timedelta(hours=i) for i in range(72)], 3600)
+                [hour_start + timedelta(hours=i) for i in range(hour_count)], 3600)
 
-    day_start = datetime(2026, 10, 20, tzinfo=timezone.utc)
+    day_start = NOW.replace(hour=0, minute=0, second=0) - timedelta(days=day_count - 1)
     add_periods(firmware, 2,
-                [day_start + timedelta(days=i) for i in range(10)], 86400)
+                [day_start + timedelta(days=i) for i in range(day_count)], 86400)
 
-    alerts = (
-        (datetime(2026, 10, 27, 11, 25, tzinfo=timezone.utc), 36, 63, 42),
-        (datetime(2026, 10, 28, 2, 14, tzinfo=timezone.utc), 128, 118, 390),
-        (datetime(2026, 10, 28, 16, 3, tzinfo=timezone.utc), 61, 82, 85),
-        (datetime(2026, 10, 29, 8, 10, tzinfo=timezone.utc), 738, 280, 1390),
-    )
-    for moment, count, maximum, duration in alerts:
-        append(firmware, 3, moment, count, maximum, 0, duration)
+    for index in range(alert_count):
+        moment = NOW - timedelta(hours=(alert_count - index) * 12)
+        alert_count = 36 + (index * 37) % 900
+        maximum = min(262144, 63 + (index * 17) % 480)
+        duration = 42 + (index * 53) % 1800
+        append(firmware, 3, moment, alert_count, maximum, 0, duration)
 
-    expected_counts = (120, 72, 10, len(alerts))
+    expected_counts = counts
     for kind, expected in enumerate(expected_counts):
         actual = firmware.call("spi_log_count", kind)
         if actual != expected:
@@ -109,6 +111,13 @@ def main() -> None:
 
     print(f"Wrote {output.relative_to(ROOT)} ({output.stat().st_size:,} bytes)")
     print("Recovered log counts MIN/HOUR/DAY/ALERT:", *actual_counts)
+    return actual_counts
+
+
+def main() -> None:
+    fixtures = ROOT / "tests/fixtures"
+    generate(fixtures / "spi-logs-fake-1mb.bin", (120, 72, 10, 4))
+    generate(fixtures / "spi-logs-load-500-each-1mb.bin", (500, 500, 500, 500))
 
 
 if __name__ == "__main__":
