@@ -893,6 +893,7 @@ let selectedUsbPort = null;
 let selectedNativePort = null;
 let selectedBridgePort = '';
 let nativeBridgeAvailable = false;
+let bridgePortsKey = null;
 let activeTransport = 'serial';
 const webUsbAvailable = !!navigator.usb;
 const androidUsbAvailable = webUsbAvailable && /Android/i.test(navigator.userAgent);
@@ -4879,16 +4880,26 @@ async function refreshNativeBridgePorts() {
     if (!Array.isArray(ports)) return;
     nativeBridgeAvailable = true;
     if (elements.bridgePort.disabled || document.activeElement === elements.bridgePort) return;
-    const previous = selectedBridgePort;
+    const preferred = (item) => {
+      const description = `${item.description || ''} ${item.hwid || ''} ${item.manufacturer || ''}`.toLowerCase();
+      if (item.vid === 0x10c4 && item.pid === 0xea60) return 0;
+      if (description.includes('cp210') || description.includes('silicon labs')) return 1;
+      return 2;
+    };
+    const ordered = ports.slice().sort((a, b) => preferred(a) - preferred(b) ||
+      String(a.port).localeCompare(String(b.port), undefined, { numeric: true }));
+    const listKey = ordered.map((item) =>
+      [item.port, item.vid, item.pid, item.description, item.hwid].join('|')).join('\\n');
+    if (listKey === bridgePortsKey) return;
+    bridgePortsKey = listKey;
     elements.bridgePort.replaceChildren();
-    for (const item of ports) {
+    for (const item of ordered) {
       const option = document.createElement('option');
       option.value = item.port;
       option.textContent = `${item.port}${item.description ? ` · ${item.description}` : ''}`;
       elements.bridgePort.append(option);
     }
-    selectedBridgePort = ports.some((item) => item.port === previous) ? previous :
-      (ports[0]?.port || '');
+    selectedBridgePort = ordered[0]?.port || '';
     elements.bridgePort.value = selectedBridgePort;
     elements.bridgePort.title = 'Select the Windows COM port';
     if (!selectedNativePort || selectedNativePort.portName !== selectedBridgePort)

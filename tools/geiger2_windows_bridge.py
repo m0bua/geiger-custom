@@ -246,8 +246,21 @@ class BridgeHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             return
         if path == "/api/ports":
-            ports = [{"port": item.device, "description": item.description}
-                     for item in list_ports.comports()]
+            devices = list(list_ports.comports())
+
+            def port_priority(item):
+                text = " ".join((item.description or "", item.hwid or "",
+                                 item.manufacturer or "")).lower()
+                if item.vid == 0x10C4 and item.pid == 0xEA60:
+                    return 0
+                if "cp210" in text or "silicon labs" in text:
+                    return 1
+                return 2
+
+            devices.sort(key=lambda item: (port_priority(item), item.device))
+            ports = [{"port": item.device, "description": item.description,
+                      "vid": item.vid, "pid": item.pid, "hwid": item.hwid}
+                     for item in devices]
             body = json.dumps(ports).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
