@@ -50,17 +50,17 @@ static void dose_from_pulse_count(uint32_t pulse_count,
                                   uint32_t *dose_thousandths,
                                   uint32_t *dose_fraction)
 {
-    /* 0.00666 uSv/h per CPM means 0.000111 uSv per pulse.
-     * Store dose in nSv plus a 1/3600 nSv remainder: one pulse is
-     * 0.111 nSv ~= 400/3600 nSv. */
-    const uint64_t scaled = (uint64_t)pulse_count * 400u;
-    const uint64_t whole = scaled / 3600u;
+    /* Match the graph's 1998/18000 nSv per pulse. Store nSv with a
+     * 1/3600 nSv remainder for the display and protocol. */
+    const uint64_t scaled = (uint64_t)pulse_count * 1998u;
+    const uint64_t dose_x3600 = (scaled + 2u) / 5u;
+    const uint64_t whole = dose_x3600 / 3600u;
     if (whole > UINT32_MAX) {
         *dose_thousandths = UINT32_MAX;
         *dose_fraction = 0u;
     } else {
         *dose_thousandths = (uint32_t)whole;
-        *dose_fraction = (uint32_t)(scaled % 3600u);
+        *dose_fraction = (uint32_t)(dose_x3600 % 3600u);
     }
 }
 
@@ -217,7 +217,6 @@ int main(void)
             if (memory != last_dose_log_memory) {
                 last_dose_log_memory = memory;
                 dose_reconcile_cancel();
-                dose_reconcile_invalidate_history();
                 if (memory != BOARD_LOG_MEMORY_OFF &&
                     calendar_day_valid) {
                     uint32_t uptime_seconds = 0u;
@@ -231,7 +230,7 @@ int main(void)
                         const uint32_t day_start = calendar_seconds -
                             (calendar_seconds % 86400u);
                         dose_reconcile_begin(memory, calendar_day_key,
-                            day_start, today_pulse_count);
+                            day_start);
                     }
                 }
             }
@@ -239,10 +238,10 @@ int main(void)
                 memory = board_display_log_source();
             }
             const dose_reconcile_result_t result = dose_reconcile_step(
-                memory, calendar_day_key, today_pulse_count,
+                memory, calendar_day_key,
                 &reconciled_day, &reconciled_total);
             if (result == DOSE_RECONCILE_COMPLETE) {
-                daily_dose_set_day(calendar_day_key, reconciled_day);
+                daily_dose_set_count(reconciled_day);
                 today_pulse_count = daily_dose_count();
                 total_pulse_count = reconciled_total;
                 daily_dose_set_total(total_pulse_count);
@@ -633,7 +632,7 @@ int main(void)
                         const uint32_t day_start = log_calendar_seconds -
                             (log_calendar_seconds % 86400u);
                         dose_reconcile_begin(memory, calendar_day_key,
-                            day_start, today_pulse_count);
+                            day_start);
                     }
                 }
                 if (board_display_dose_period() == 1u) {

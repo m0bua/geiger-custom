@@ -101,6 +101,14 @@ void daily_dose_add(uint32_t pulses)
     if (pulses != 0u) dirty = true;
 }
 
+void daily_dose_set_count(uint32_t count)
+{
+    if (pulse_count != count) {
+        pulse_count = count;
+        dirty = true;
+    }
+}
+
 uint32_t daily_dose_count(void)
 {
     return pulse_count;

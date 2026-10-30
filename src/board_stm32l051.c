@@ -3,6 +3,7 @@
 #include "button_input.h"
 #include "cpm_history.h"
 #include "daily_dose.h"
+#include "dose_reconcile.h"
 #include "font_large.h"
 #include "font_small.h"
 #include "protocol_v1.h"
@@ -306,7 +307,8 @@ static uint8_t lcd_graph_log_available;
 static log_point_t lcd_graph_log_points[LCD_GRAPH_VISIBLE_BARS];
 static log_cursor_t lcd_graph_log_record_cursors[LCD_GRAPH_LOG_MAX_RECORDS];
 static log_cursor_t lcd_graph_log_summary_cursor;
-static uint8_t lcd_graph_log_summary_count;
+static uint32_t lcd_graph_log_summary_count;
+static uint8_t lcd_graph_log_summary_memory;
 static uint8_t lcd_graph_column_y[LCD_WIDTH];
 static char lcd_graph_stat_values[4][5];
 static bool lcd_graph_input_locked;
@@ -1206,9 +1208,12 @@ static void lcd_format_dose_row(void)
             lcd_format_count_value(lcd_daily_pulse_count, "CNT  ");
         } else {
             const uint64_t scaled =
-                (uint64_t)lcd_daily_pulse_count * 400u;
-            const uint32_t dose_thousandths = (uint32_t)(scaled / 3600u);
-            const uint32_t dose_fraction = (uint32_t)(scaled % 3600u);
+                (uint64_t)lcd_daily_pulse_count * 1998u;
+            const uint64_t dose_x3600 = (scaled + 2u) / 5u;
+            const uint32_t dose_thousandths =
+                (uint32_t)(dose_x3600 / 3600u);
+            const uint32_t dose_fraction =
+                (uint32_t)(dose_x3600 % 3600u);
             lcd_settings_value_index[SETTING_UNIT] = row_unit;
             lcd_format_dose(dose_thousandths, dose_fraction);
             lcd_rate_label[2] = ' ';
@@ -2892,7 +2897,7 @@ static void lcd_graph_reset_log_window(void)
     lcd_graph_log_summary_valid = false;
     lcd_graph_loading = false;
     lcd_graph_log_summary_work_active = false;
-    lcd_graph_log_summary_count = UINT8_MAX;
+    lcd_graph_log_summary_count = UINT32_MAX;
     lcd_graph_partial_pending = false;
     lcd_graph_partial_kind = 0u;
 }
@@ -2903,26 +2908,33 @@ static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
     const uint8_t type = (uint8_t)(lcd_graph_log_type - 1u);
     const uint32_t period = type == LOG_RECORD_ALERT ? 60u :
         log_record_period_seconds((log_record_kind_t)type);
-    if (lcd_graph_log_summary_count == UINT8_MAX) {
+    const bool all_days = type == LOG_RECORD_DAY;
+    bool exhausted = false;
+    if (lcd_graph_log_summary_count == UINT32_MAX) {
         lcd_graph_log_summary_count = 0u;
         lcd_graph_log_available = lcd_graph_log_record_limit();
         lcd_graph_log_summary_dose = 0u;
         lcd_graph_log_summary_coverage = 0u;
         lcd_graph_log_summary_max = 0u;
         lcd_graph_log_summary_bar_max = 0u;
+        lcd_graph_log_summary_memory = board_display_log_memory();
+        if (lcd_graph_log_summary_memory == BOARD_LOG_MEMORY_OFF)
+            lcd_graph_log_summary_memory = board_display_log_source();
         log_history_begin(&lcd_graph_log_summary_cursor);
     }
-    uint8_t batch_end = (uint8_t)(lcd_graph_log_summary_count +
-        LCD_GRAPH_LOG_BATCH_RECORDS);
-    if (batch_end > lcd_graph_log_available)
+    uint32_t batch_end = lcd_graph_log_summary_count + LCD_GRAPH_LOG_BATCH_RECORDS;
+    if (!all_days && batch_end > lcd_graph_log_available)
         batch_end = lcd_graph_log_available;
     while (lcd_graph_log_summary_count < batch_end) {
         log_point_t point;
         const uint32_t index = lcd_graph_log_summary_count;
-        lcd_graph_log_record_cursors[index] = lcd_graph_log_summary_cursor;
+        if (index < lcd_graph_log_available)
+            lcd_graph_log_record_cursors[index] = lcd_graph_log_summary_cursor;
         if (!log_history_next(type, period, &lcd_graph_log_summary_cursor,
                 0u, &point)) {
-            lcd_graph_log_available = (uint8_t)index;
+            if (index < lcd_graph_log_available)
+                lcd_graph_log_available = (uint8_t)index;
+            exhausted = true;
             break;
         }
         if (index < LCD_GRAPH_VISIBLE_BARS)
@@ -2931,11 +2943,13 @@ static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
         lcd_graph_log_summary_coverage += point.covered_seconds;
         if (point.maximum_cpm > lcd_graph_log_summary_max)
             lcd_graph_log_summary_max = point.maximum_cpm;
-        if (point.count > lcd_graph_log_summary_bar_max)
+        if (index < lcd_graph_log_available &&
+            point.count > lcd_graph_log_summary_bar_max)
             lcd_graph_log_summary_bar_max = point.count;
         ++lcd_graph_log_summary_count;
     }
-    if (lcd_graph_log_summary_count < lcd_graph_log_available)
+    if (!exhausted && (all_days ||
+        lcd_graph_log_summary_count < lcd_graph_log_available))
         return false;
     lcd_graph_log_visible = lcd_graph_log_available < LCD_GRAPH_VISIBLE_BARS ?
         lcd_graph_log_available : LCD_GRAPH_VISIBLE_BARS;
@@ -2945,6 +2959,14 @@ static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
             lcd_graph_log_summary_coverage) : 0u;
     lcd_graph_log_window_valid = lcd_graph_log_visible != 0u;
     lcd_graph_log_summary_valid = true;
+    if (all_days && lcd_graph_log_visible != 0u &&
+        lcd_graph_log_points[0].calendar_valid) {
+        dose_reconcile_use_summary(lcd_graph_log_summary_memory,
+            (uint16_t)(lcd_graph_log_points[0].period_start / 86400u),
+            lcd_graph_log_points[0].count,
+            lcd_graph_log_summary_dose > UINT32_MAX ? UINT32_MAX :
+                (uint32_t)lcd_graph_log_summary_dose);
+    }
     return true;
 }
 

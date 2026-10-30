@@ -6,6 +6,8 @@
 
 void daily_dose_init(uint16_t day_key, uint32_t fallback_count);
 void daily_dose_set_day(uint16_t day_key, uint32_t fallback_count);
+/* Apply a log-derived count to the current day without reloading EEPROM. */
+void daily_dose_set_count(uint32_t count);
 void daily_dose_add(uint32_t pulses);
 uint32_t daily_dose_count(void);
 bool daily_dose_checkpoint(void);
