@@ -109,6 +109,17 @@ button { font: inherit; }
 .app-version { margin: 0; color: var(--muted); font-size: 12px; }
 .app-version strong { color: #d8e2e4; font-weight: 600; }
 .release-list time { color: var(--green); font: 11px "DM Mono", Consolas, monospace; white-space: nowrap; }
+.release-history { position: relative; }
+.release-history-toggle-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.release-history-content { max-height: 190px; overflow: hidden; transition: max-height .35s ease; mask-image: linear-gradient(to bottom, #000 calc(100% - 30px), transparent 100%); -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 30px), transparent 100%); }
+.release-history-toggle { display: block; padding-top: 6px; color: var(--green); font-size: 11px; text-align: center; cursor: pointer; }
+.release-history-toggle .show-less { display: none; }
+.release-history-toggle::after { content: " ↓"; }
+.release-history-toggle-input:checked ~ .release-history-content { max-height: 5000px; mask-image: none; -webkit-mask-image: none; }
+.release-history-toggle-input:checked ~ .release-history-toggle .show-more { display: none; }
+.release-history-toggle-input:checked ~ .release-history-toggle .show-less { display: inline; }
+.release-history-toggle-input:checked ~ .release-history-toggle::after { content: " ↑"; }
+.release-history-toggle-input:focus-visible ~ .release-history-toggle { outline: 1px solid var(--green); outline-offset: 4px; }
 .information-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .information-note a { color: var(--green); }
 .firmware-section { max-width: 900px; margin-top: 10px; padding: 0 14px; border: 1px solid var(--line); border-radius: 9px; background: rgba(17,26,31,.65); }
@@ -282,6 +293,7 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
 @keyframes pulse { 50% { opacity: .35; } }
 @media (min-width: 1180px) {
   .settings-pair { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(10, auto); column-gap: 56px; }
+  .release-history-content { max-height: 160px; }
 }
 @media (max-width: 650px) {
   .shell { width: calc(100% - 28px); }
@@ -311,6 +323,7 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .detail-grid { grid-template-columns: repeat(2, 1fr); }
   .settings-pair { grid-template-columns: 1fr; grid-template-rows: none; grid-auto-flow: row; }
   .settings-clock-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .release-history-content { max-height: 300px; }
   .panel-heading { align-items: flex-start; flex-wrap: wrap; gap: 9px; }
   .panel-heading-actions { width: 100%; min-width: 0; justify-content: space-between; gap: 8px; }
   .panel-heading-actions > #settings-status { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; line-height: 1.4; }

@@ -180,7 +180,9 @@ jobs:
           ## Changes
           - Reduced power use with low-frequency operation while the display is off.
           - Stabilized the battery percentage using linear ADC mapping and hysteresis.
-          - Added LED TIME: full-brightness pulses with adjustable duration and solar-controlled AUTO; in AUTO, SOLAR is sampled every minute while the display is off.
+          - Separated LED TIME pulse duration from LED BRIGHT PWM level; both settings support solar-controlled AUTO and persist independently.
+          - Removed the unit suffix from AUTO values and kept POWER actions within three settings columns in the app.
+          - Reduced firmware flash usage with shared setting values and newlib-nano.
           - Adjusted the sound timer for low-frequency operation so clicks and alarms can sound with the display off.
           - Reordered settings and added a two-column picker for longer option lists.
           - Refreshed the manual and screen illustrations; identified known older firmware images with different LED settings as partially compatible.

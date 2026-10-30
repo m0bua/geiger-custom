@@ -452,7 +452,18 @@
       <p class="app-version">Version: <strong id="app-version">local</strong></p>
       <section class="information-card">
         <h3>Recent changes</h3>
+        <div class="release-history">
+          <input class="release-history-toggle-input" id="release-history-toggle" type="checkbox">
+          <div class="release-history-content">
         <ul class="release-list">
+          <li>
+            <time datetime="2026-10-30">2026-10-30</time> — Pre-release: LED settings and app layout:
+            <ul>
+              <li><strong>LED:</strong> split pulse duration (LED TIME) from PWM level (LED BRIGHT); both settings persist independently without increasing the EEPROM record size. AUTO is shown without a unit suffix.</li>
+              <li><strong>Firmware size:</strong> shared repeated setting values and enabled newlib-nano to fit the 64 KiB flash limit.</li>
+              <li><strong>Settings app:</strong> kept POWER actions within the third column on wide windows.</li>
+            </ul>
+          </li>
           <li>
             <time datetime="2026-10-29">2026-10-29</time> — Pre-release: power and settings updates:
             <ul>
@@ -493,6 +504,11 @@
             </ul>
           </li>
         </ul>
+          </div>
+          <label class="release-history-toggle" for="release-history-toggle">
+            <span class="show-more">Show more</span><span class="show-less">Show less</span>
+          </label>
+        </div>
       </section>
       <section class="information-card">
         <h3>Known issues</h3>
