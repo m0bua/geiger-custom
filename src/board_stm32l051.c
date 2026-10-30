@@ -352,7 +352,7 @@ typedef enum {
     SETTING_HV, SETTING_RATE_CUSTOM, SETTING_ALARM_STOP, SETTING_POWER_OFF,
     SETTING_REBOOT, SETTING_TONE, SETTING_LONG_PRESS, SETTING_DOSE_ROW_2,
     SETTING_DOSE_PERIOD, SETTING_DOSE_SCREEN, SETTING_DOSE_LIGHT,
-    SETTING_DOSE_SOUND, SETTING_DOSE_CUSTOM, SETTING_RESERVED_28,
+    SETTING_DOSE_SOUND, SETTING_DOSE_CUSTOM, SETTING_LED_TIME,
     SETTING_COUNT
 } setting_id_t;
 
@@ -374,8 +374,7 @@ static uint32_t board_rgb_tim2_compare(void)
 {
     const uint32_t period = click_sound_active ?
         REG32(TIM2_BASE + TIM_ARR) + 1u : PWM_PERIOD;
-    return rgb_flash_active ? period :
-        ((uint32_t)rgb_brightness_percent * period) / 100u;
+    return ((uint32_t)rgb_brightness_percent * period) / 100u;
 }
 
 static uint32_t board_rgb_channel_compare(uint8_t channel)
@@ -390,8 +389,7 @@ static void board_rgb_apply(void)
     const uint32_t green_compare = (rgb_channels & 2u) ?
         board_rgb_channel_compare(1u) : 0u;
     const uint32_t blue_compare = (rgb_channels & 4u) ?
-        ((rgb_flash_active ? PWM_PERIOD :
-          ((uint32_t)rgb_brightness_percent * PWM_PERIOD) / 100u) *
+        (((uint32_t)rgb_brightness_percent * PWM_PERIOD) / 100u *
          rgb_level[2]) / 255u : 0u;
     const bool tim2_active = click_sound_active || red_compare != 0u ||
         green_compare != 0u;
@@ -1982,7 +1980,7 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
 }
 
 #define LCD_SETTINGS_COUNT SETTING_COUNT
-#define LCD_SETTINGS_MENU_COUNT (SETTING_COUNT - 1u)
+#define LCD_SETTINGS_MENU_COUNT SETTING_COUNT
 #define LCD_SETTINGS_VISIBLE_ROWS 6u
 #define LCD_SETTINGS_POWER_OFF_ITEM SETTING_POWER_OFF
 #define LCD_SETTINGS_REBOOT_ITEM SETTING_REBOOT
@@ -1993,13 +1991,13 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
 
 static const uint8_t lcd_settings_item_order[LCD_SETTINGS_MENU_COUNT] = {
     23u, 0u, 1u, 2u, 3u, 4u, 16u, 24u, 25u, 26u, 27u, 17u,
-    12u, 22u, 5u, 6u, 7u, 20u, 21u, 9u, 10u, 11u, 8u,
+    12u, 22u, 28u, 5u, 6u, 7u, 20u, 21u, 9u, 10u, 11u, 8u,
     15u, 13u, 14u, 18u, 19u
 };
 
 static bool lcd_settings_item_is_visible(uint8_t item)
 {
-    return item < LCD_SETTINGS_COUNT && item != SETTING_RESERVED_28 &&
+    return item < LCD_SETTINGS_COUNT &&
         (lcd_settings_hidden_mask & (1UL << item)) == 0u &&
         !(lcd_settings_value_index[SETTING_UNIT] == 1u && item == 11u);
 }
@@ -2032,35 +2030,26 @@ static const char *const lcd_cleanup_labels[LCD_CLEANUP_COUNT] = {
 };
 
 static const char *const lcd_settings_labels[LCD_SETTINGS_COUNT] = {
-    "LED", "CLICKS", "RATE SCREEN", "RATE LIGHT", "RATE SOUND", "LED TIME",
+    "LED", "CLICKS", "RATE SCREEN", "RATE LIGHT", "RATE SOUND", "LED BRIGHT",
     "SCREEN BRIGHT", "SCREEN TIMER", "LEAD ZERO", "UNIT", "RATE PREFIX",
     "DOSE PREF", "RATE ROW 2", "LOG MEMORY", "RESET", "HV", "RATE CUSTOM",
     "ALARM STOP", "POWER OFF", "REBOOT", "TONE", "LONG PRESS",
     "DOSE ROW 2", "DOSE PERIOD", "DOSE SCREEN", "DOSE LIGHT",
-    "DOSE SOUND", "DOSE CUSTOM", ""
+    "DOSE SOUND", "DOSE CUSTOM", "LED TIME"
 };
 
 /* Share value lists instead of reserving eleven pointers for every item. */
 static const char *const indication_values[] = {
     "OFF", "ON", "ALWAYS", "YELLOW", "RED", "CUSTOM"
 };
-static const char *const alarm_values[] = { "OFF", "YELLOW", "RED", "CUSTOM" };
-static const char *const brightness_values[] = {
-    "AUTO", "1%", "3%", "5%", "10%", "25%", "50%", "80%", "100%"
-};
-static const char *const led_pulse_values[] = {
-    "AUTO", "1ms", "3ms", "5ms", "10ms", "25ms", "50ms", "80ms", "100ms"
+static const char *const scale_values[] = {
+    "AUTO", "1", "3", "5", "10", "25", "50", "80", "100"
 };
 static const char *const timer_values[] = { "1", "5", "10", "30", "60", "90" };
 static const char *const zero_values[] = { "SHOW", "HIDE" };
 static const char *const unit_values[] = { "SV", "CNT", "R" };
 static const char *const prefix_values[] = { "m", "\xB5", "n", "AUTO", "CPM", "CPS" };
-static const char *const rate_row_values[] = {
-    "CPM", "CPS", "OFF"
-};
 static const char *const dose_period_values[] = { "UPTIME", "DAY", "TOTAL" };
-static const char *const log_memory_values[] = { "EEPROM", "SPI", "OFF" };
-static const char *const on_off_values[] = { "ON", "OFF" };
 static const char *const empty_values[] = { "" };
 static const char *const reset_values[] = {
     "SETTINGS", "LOGS", "OLD LOGS", "EEPROM", "SPI", "ALL"
@@ -2116,19 +2105,20 @@ static uint8_t lcd_dose_row_option_count(void)
     return 7u;
 }
 
-static const char *const *const lcd_settings_values[LCD_SETTINGS_COUNT] = {
-    indication_values, indication_values, alarm_values, alarm_values,
-    alarm_values, led_pulse_values, brightness_values, timer_values,
-    zero_values, unit_values, prefix_values, prefix_values, rate_row_values,
-    log_memory_values, reset_values, on_off_values, rate_custom_values, stop_values,
-    empty_values, empty_values, tone_values, long_press_values,
-    empty_values, dose_period_values, alarm_values, alarm_values,
-    alarm_values, dose_alarm_values, empty_values
+static const char *const *const lcd_settings_value_lists[] = {
+    indication_values, scale_values, timer_values, zero_values, unit_values,
+    prefix_values, empty_values, reset_values, rate_custom_values, stop_values,
+    tone_values, long_press_values, dose_period_values, dose_alarm_values
+};
+
+static const uint8_t lcd_settings_value_list_map[(LCD_SETTINGS_COUNT + 1u) / 2u] = {
+    0x00u, 0x00u, 0x10u, 0x21u, 0x43u, 0x55u, 0x76u, 0x07u,
+    0x98u, 0x66u, 0xBAu, 0xC6u, 0x00u, 0xD0u, 0x01u
 };
 
 static const uint8_t lcd_settings_value_counts[LCD_SETTINGS_COUNT] = {
     6u, 6u, 4u, 4u, 4u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 3u, 3u, 6u, 2u,
-    9u, 2u, 1u, 1u, 2u, 6u, 7u, 3u, 4u, 4u, 4u, 8u, 1u
+    9u, 2u, 1u, 1u, 2u, 6u, 7u, 3u, 4u, 4u, 4u, 8u, 9u
 };
 
 static __attribute__((noinline)) uint8_t lcd_settings_value_count(uint8_t item)
@@ -2141,6 +2131,13 @@ static __attribute__((noinline)) uint8_t lcd_settings_value_count(uint8_t item)
     }
     if (item == SETTING_DOSE_ROW_2) return lcd_dose_row_option_count();
     return lcd_settings_value_counts[item];
+}
+
+static const char *const *lcd_settings_value_list(uint8_t item)
+{
+    uint8_t packed = lcd_settings_value_list_map[item >> 1u];
+    if ((item & 1u) != 0u) packed >>= 4u;
+    return lcd_settings_value_lists[packed & 0x0Fu];
 }
 
 static const char *lcd_settings_value_text(uint8_t item)
@@ -2158,21 +2155,33 @@ static const char *lcd_settings_value_text(uint8_t item)
         return lcd_cleanup_status == 1u ? "SUCCESS" :
             (lcd_cleanup_status == 2u ? "FAILED" : "WORKING..." );
     }
+    if (item == SETTING_USE_SPI) {
+        return value_index < 2u ? reset_values[value_index + 3u] :
+            indication_values[0u];
+    }
+    if ((item >= SETTING_RATE_SCREEN && item <= SETTING_RATE_SOUND) ||
+        (item >= SETTING_DOSE_SCREEN && item <= SETTING_DOSE_SOUND)) {
+        return indication_values[value_index == 0u ? 0u :
+            (uint8_t)(value_index + 2u)];
+    }
+    if (item == SETTING_HV)
+        return indication_values[value_index == 0u ? 1u : 0u];
     if ((item == 10u || item == 11u) &&
         lcd_settings_value_index[SETTING_UNIT] == 1u) {
-        return lcd_settings_values[item][value_index + 4u];
+        return prefix_values[value_index + 4u];
     }
     if (item == SETTING_RATE_ROW_2) {
         if (lcd_settings_value_index[SETTING_UNIT] == 1u) {
             if (value_index == 0u) return unit_values[0u];
             if (value_index == 1u) return unit_values[2u];
-            if (value_index == 3u) return "CPS";
+            if (value_index == 3u) return prefix_values[5u];
         } else if (value_index == 3u) {
             return lcd_settings_value_index[SETTING_UNIT] == 0u ?
                 unit_values[2u] : unit_values[0u];
         }
-        if (value_index < 3u) return rate_row_values[value_index];
-        return "OFF";
+        if (value_index == 0u) return prefix_values[4u];
+        if (value_index == 1u) return prefix_values[5u];
+        return indication_values[0u];
     }
     if (item == SETTING_DOSE_ROW_2) {
         const uint8_t option = lcd_dose_row_option(value_index);
@@ -2183,7 +2192,15 @@ static const char *lcd_settings_value_text(uint8_t item)
         if (option < 6u) return dose_period_values[option - LCD_DOSE_ROW_PERIOD_BASE];
         return "OFF";
     }
-    return lcd_settings_values[item][value_index];
+    return lcd_settings_value_list(item)[value_index];
+}
+
+static uint8_t lcd_settings_value_suffix(uint8_t item, uint8_t value)
+{
+    if (value == 0u) return 0u;
+    if (item == SETTING_LED_TIME) return 2u;
+    return (item == SETTING_LED_BRIGHT ||
+        item == SETTING_SCREEN_BRIGHT) ? 1u : 0u;
 }
 
 static uint8_t lcd_settings_visible_count(void)
@@ -2263,10 +2280,21 @@ static __attribute__((noinline)) void lcd_settings_choice_line(
             (uint8_t)(split + row - 1u);
         if (option >= count) continue;
         const char *value = lcd_settings_choice_text(option);
+        const uint8_t suffix = lcd_settings_value_suffix(
+            lcd_settings_selected, option);
         const uint8_t start = (uint8_t)(column * 10u);
+        uint8_t value_length = 0u;
         line[start] = option == lcd_settings_edit_value ? '>' : ' ';
-        for (uint8_t i = 0u; i < 8u && value[i] != '\0'; ++i) {
+        while (value[value_length] != '\0' && value_length < 6u)
+            ++value_length;
+        for (uint8_t i = 0u; i < value_length; ++i) {
             line[start + 1u + i] = value[i];
+        }
+        if (suffix == 1u)
+            line[start + 1u + value_length] = '%';
+        else if (suffix == 2u) {
+            line[start + 1u + value_length] = 'm';
+            line[start + 2u + value_length] = 's';
         }
         if (option == lcd_settings_edit_value) {
             *selected_start = start;
@@ -2282,8 +2310,11 @@ static uint8_t lcd_settings_make_line(uint8_t visible_row, char *line)
         (uint8_t)(first + visible_row));
     const char *label;
     const char *value;
+    uint8_t suffix;
     uint8_t label_length = 0u;
     uint8_t value_length = 0u;
+    uint8_t raw_value_length;
+    uint8_t suffix_length;
     uint8_t value_start;
 
     for (uint8_t i = 0u; i < 20u; ++i) line[i] = ' ';
@@ -2345,8 +2376,14 @@ static uint8_t lcd_settings_make_line(uint8_t visible_row, char *line)
         item == lcd_settings_selected && !lcd_settings_editing ? '>' : ' ';
     label = lcd_settings_labels[item];
     value = lcd_settings_value_text(item);
+    suffix = lcd_settings_value_suffix(item,
+        lcd_settings_editing && item == lcd_settings_selected ?
+            lcd_settings_edit_value : lcd_settings_value_index[item]);
     while (label[label_length] != '\0' && label_length < 13u) ++label_length;
     while (value[value_length] != '\0' && value_length < 9u) ++value_length;
+    raw_value_length = value_length;
+    suffix_length = suffix == 2u ? 2u : suffix;
+    value_length = (uint8_t)(raw_value_length + suffix_length);
     for (uint8_t i = 0u; i < label_length && i + 1u < 20u; ++i) {
         line[i + 1u] = label[i];
     }
@@ -2354,8 +2391,13 @@ static uint8_t lcd_settings_make_line(uint8_t visible_row, char *line)
     if (value_start <= label_length + 1u) {
         value_start = (uint8_t)(label_length + 2u);
     }
-    for (uint8_t i = 0u; i < value_length && value_start + i < 20u; ++i) {
+    for (uint8_t i = 0u; i < raw_value_length && value_start + i < 20u; ++i)
         line[value_start + i] = value[i];
+    if (suffix == 1u && value_start + raw_value_length < 20u) {
+        line[value_start + raw_value_length] = '%';
+    } else if (suffix == 2u && value_start + raw_value_length + 1u < 20u) {
+        line[value_start + raw_value_length] = 'm';
+        line[value_start + raw_value_length + 1u] = 's';
     }
     return 20u;
 }
@@ -4074,6 +4116,7 @@ static void lcd_debug_probe_spi(void)
 #define SETTINGS_EEPROM_MAGIC 0xA7u
 #define SETTINGS_EEPROM_V2_MAGIC 0xA8u
 #define SETTINGS_EEPROM_V3_MAGIC 0xA9u
+#define SETTINGS_EEPROM_V4_MAGIC 0xAAu
 #define SETTINGS_TIMER_EEPROM_MAGIC 0xB1u
 #define SETTINGS_ALARM_EEPROM_MAGIC 0xB2u
 #define SETTINGS_ALARM_V2_EEPROM_MAGIC 0xB7u
@@ -4215,7 +4258,8 @@ static bool settings_v3_record_read(uint8_t slot, uint8_t *sequence,
                                     uint8_t *lead_zero, uint8_t *unit,
                                     uint8_t *rate_prefix, uint8_t *dose_prefix,
                                     uint8_t *led_brightness,
-                                    uint8_t *screen_brightness)
+                                    uint8_t *screen_brightness,
+                                    uint8_t *led_time)
 {
     const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
         DATA_EEPROM_BASE + SETTINGS_EEPROM_V3_BASE +
@@ -4225,14 +4269,21 @@ static bool settings_v3_record_read(uint8_t slot, uint8_t *sequence,
     *unit = record[3];
     *rate_prefix = record[4];
     *dose_prefix = record[5];
-    *led_brightness = record[6];
+    const uint8_t magic = record[0];
+    const uint8_t led_record = record[6];
+    *led_brightness = magic == SETTINGS_EEPROM_V4_MAGIC ?
+        (uint8_t)(led_record & 0x0Fu) : led_record;
+    *led_time = magic == SETTINGS_EEPROM_V4_MAGIC ?
+        (uint8_t)(led_record >> 4) : 0u;
     *screen_brightness = record[7];
-    return record[0] == SETTINGS_EEPROM_V3_MAGIC && *lead_zero < 2u &&
+    return (magic == SETTINGS_EEPROM_V3_MAGIC ||
+            magic == SETTINGS_EEPROM_V4_MAGIC) && *lead_zero < 2u &&
         *unit < 3u && *rate_prefix < (*unit == 1u ? 2u : 4u) &&
         *dose_prefix < (*unit == 1u ? 2u : 4u) &&
-        *led_brightness < 9u && *screen_brightness < 9u &&
+        *led_brightness < 9u && *screen_brightness < 9u && *led_time < 9u &&
         record[8] == settings_v3_crc(*sequence, *lead_zero, *unit,
-            *rate_prefix, *dose_prefix, *led_brightness, *screen_brightness);
+            *rate_prefix, *dose_prefix, magic == SETTINGS_EEPROM_V4_MAGIC ?
+                led_record : *led_brightness, *screen_brightness);
 }
 
 static bool settings_legacy_record_read(uint8_t slot, uint8_t *sequence,
@@ -4371,7 +4422,6 @@ static void settings_visibility_load(void)
         ((uint32_t)bytes[1] << 8u) | ((uint32_t)bytes[2] << 16u) |
         ((uint32_t)bytes[3] << 24u);
     lcd_settings_hidden_mask &= ((1UL << SETTING_COUNT) - 1UL);
-    lcd_settings_hidden_mask &= ~(1UL << SETTING_RESERVED_28);
     if (magic == SETTINGS_VISIBILITY_OLD_MAGIC) {
         lcd_settings_hidden_mask |= 0x071A4D00u;
         (void)settings_visibility_save(lcd_settings_hidden_mask);
@@ -4864,12 +4914,12 @@ static bool settings_dose_alarm_save(void)
 
 static void settings_eeprom_load(void)
 {
-    uint8_t seq0, lead0, unit0, rate0, dose0, led0, screen0;
-    uint8_t seq1, lead1, unit1, rate1, dose1, led1, screen1;
+    uint8_t seq0, lead0, unit0, rate0, dose0, led0, screen0, time0;
+    uint8_t seq1, lead1, unit1, rate1, dose1, led1, screen1, time1;
     bool valid0 = settings_v3_record_read(0u, &seq0, &lead0, &unit0,
-        &rate0, &dose0, &led0, &screen0);
+        &rate0, &dose0, &led0, &screen0, &time0);
     bool valid1 = settings_v3_record_read(1u, &seq1, &lead1, &unit1,
-        &rate1, &dose1, &led1, &screen1);
+        &rate1, &dose1, &led1, &screen1, &time1);
     uint8_t slot;
 
     if (valid0 || valid1) {
@@ -4882,6 +4932,7 @@ static void settings_eeprom_load(void)
             lcd_settings_value_index[SETTING_DOSE_PREFIX] = dose0;
             lcd_settings_value_index[SETTING_LED_BRIGHT] = led0;
             lcd_settings_value_index[SETTING_SCREEN_BRIGHT] = screen0;
+            lcd_settings_value_index[SETTING_LED_TIME] = time0;
         } else {
             lcd_settings_sequence = seq1;
             lcd_settings_value_index[SETTING_LEAD_ZERO] = lead1;
@@ -4890,6 +4941,7 @@ static void settings_eeprom_load(void)
             lcd_settings_value_index[SETTING_DOSE_PREFIX] = dose1;
             lcd_settings_value_index[SETTING_LED_BRIGHT] = led1;
             lcd_settings_value_index[SETTING_SCREEN_BRIGHT] = screen1;
+            lcd_settings_value_index[SETTING_LED_TIME] = time1;
         }
         return;
     }
@@ -4937,12 +4989,12 @@ static void settings_eeprom_load(void)
 
 static bool settings_eeprom_save(void)
 {
-    uint8_t seq0, lead0, unit0, rate0, dose0, led0, screen0;
-    uint8_t seq1, lead1, unit1, rate1, dose1, led1, screen1;
+    uint8_t seq0, lead0, unit0, rate0, dose0, led0, screen0, time0;
+    uint8_t seq1, lead1, unit1, rate1, dose1, led1, screen1, time1;
     const bool valid0 = settings_v3_record_read(0u, &seq0, &lead0, &unit0,
-        &rate0, &dose0, &led0, &screen0);
+        &rate0, &dose0, &led0, &screen0, &time0);
     const bool valid1 = settings_v3_record_read(1u, &seq1, &lead1, &unit1,
-        &rate1, &dose1, &led1, &screen1);
+        &rate1, &dose1, &led1, &screen1, &time1);
     const uint8_t current_slot = valid1 &&
         (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
     const uint8_t target_slot =
@@ -4953,6 +5005,7 @@ static bool settings_eeprom_save(void)
     const uint8_t rate_prefix = lcd_settings_value_index[SETTING_RATE_PREFIX];
     const uint8_t dose_prefix = lcd_settings_value_index[SETTING_DOSE_PREFIX];
     const uint8_t led_brightness = lcd_settings_value_index[SETTING_LED_BRIGHT];
+    const uint8_t led_time = lcd_settings_value_index[SETTING_LED_TIME];
     const uint8_t screen_brightness = lcd_settings_value_index[SETTING_SCREEN_BRIGHT];
     const uint8_t base = (uint8_t)(SETTINGS_EEPROM_V3_BASE +
         target_slot * SETTINGS_EEPROM_V3_SLOT_SIZE);
@@ -4964,12 +5017,13 @@ static bool settings_eeprom_save(void)
         !settings_eeprom_write_byte((uint8_t)(base + 4u), rate_prefix) ||
         !settings_eeprom_write_byte((uint8_t)(base + 5u), dose_prefix) ||
         !settings_eeprom_write_byte((uint8_t)(base + 6u),
-            led_brightness) ||
+            (uint8_t)((led_time << 4) | led_brightness)) ||
         !settings_eeprom_write_byte((uint8_t)(base + 7u), screen_brightness) ||
         !settings_eeprom_write_byte((uint8_t)(base + 8u),
             settings_v3_crc(sequence, lead_zero, unit, rate_prefix,
-                dose_prefix, led_brightness, screen_brightness)) ||
-        !settings_eeprom_write_byte(base, SETTINGS_EEPROM_V3_MAGIC)) {
+                dose_prefix, (uint8_t)((led_time << 4) | led_brightness),
+                screen_brightness)) ||
+        !settings_eeprom_write_byte(base, SETTINGS_EEPROM_V4_MAGIC)) {
         return false;
     }
     lcd_settings_sequence = sequence;
@@ -5032,7 +5086,9 @@ static void lcd_settings_apply_current(void)
         lcd_format_dose_row();
         lcd_cpm_redraw_pending = true;
     }
-    if (lcd_settings_selected == 5u || lcd_settings_selected == 6u) {
+    if (lcd_settings_selected == SETTING_LED_BRIGHT ||
+        lcd_settings_selected == SETTING_SCREEN_BRIGHT ||
+        lcd_settings_selected == SETTING_LED_TIME) {
         (void)settings_eeprom_save();
         lcd_apply_brightness_settings();
     }
@@ -5110,7 +5166,6 @@ bool board_display_setting_remote_write(uint8_t setting_id, uint8_t value)
 
     if (setting_id >= 0x80u && setting_id < (uint8_t)(0x80u + SETTING_COUNT)) {
         const uint8_t item = (uint8_t)(setting_id - 0x80u);
-        if (item == SETTING_RESERVED_28) return false;
         const uint32_t bit = 1UL << item;
         const uint32_t candidate = value != 0u ?
             (lcd_settings_hidden_mask | bit) :
@@ -5134,7 +5189,6 @@ bool board_display_setting_remote_write(uint8_t setting_id, uint8_t value)
 
     /* RESET, POWER OFF and REBOOT are actions, not remote preferences. */
     if (lcd_settings_list_active || setting_id >= SETTING_COUNT ||
-        setting_id == SETTING_RESERVED_28 ||
         setting_id == SETTING_RESET ||
         setting_id == SETTING_POWER_OFF || setting_id == SETTING_REBOOT ||
         value >= lcd_settings_value_count(setting_id)) {
@@ -5336,7 +5390,8 @@ bool board_display_led_flash_enabled(bool screen_on)
 
 bool board_display_led_auto(void)
 {
-    return lcd_settings_value_index[SETTING_LED_BRIGHT] == 0u;
+    return lcd_settings_value_index[SETTING_LED_BRIGHT] == 0u ||
+        lcd_settings_value_index[SETTING_LED_TIME] == 0u;
 }
 
 bool board_display_click_sound_enabled(bool screen_on)
@@ -7013,8 +7068,19 @@ void board_rgb_set(uint8_t logical_rgb_mask)
 
 uint8_t board_rgb_begin_flash(void)
 {
+    static const uint8_t duration_ms[] = {
+        0u, 1u, 3u, 5u, 10u, 25u, 50u, 80u, 100u
+    };
+    const uint8_t selected = lcd_settings_value_index[SETTING_LED_TIME];
+    uint8_t duration = duration_ms[selected];
+
+    if (selected == 0u) {
+        const uint8_t solar = lcd_displayed_solar_percent;
+        duration = solar >= 30u ? 100u :
+            (uint8_t)(5u + ((uint16_t)solar * 95u) / 30u);
+    }
     rgb_flash_active = true;
-    return rgb_brightness_percent;
+    return duration;
 }
 
 void board_rgb_set_color(uint8_t red, uint8_t green, uint8_t blue)

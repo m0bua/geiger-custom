@@ -340,7 +340,8 @@
           <li><strong>ALARM STOP — CLEAR / BUTTON:</strong> controls when the siren stops. CLEAR stops it when its condition clears; BUTTON keeps it sounding until a button is pressed. During an active alarm, the first button press acknowledges the alarm, silences the siren, stops alarm flashlight flashes, and lets the screen time out without navigating. It can trigger again after the conditions clear and recur.</li>
           <li><strong>RATE ROW 2:</strong> for Sv/R, show CPM, CPS, OFF, or the opposite radiation unit. For CNT, show Sv, R, OFF, or CPS.</li>
           <li><strong>DOSE ROW 2:</strong> show another unit, another dose period, TIME, CPM, or OFF. The current unit and current period are unavailable choices.</li>
-          <li><strong>LED TIME — AUTO / 1 / 3 / 5 / 10 / 25 / 50 / 80 / 100 ms:</strong> pulse flashes use full brightness. AUTO follows SOLAR, from 5 ms in darkness to 100 ms at 30% solar and above. With the screen off, SOLAR is sampled once per minute while AUTO is selected.</li>
+          <li><strong>LED TIME — AUTO / 1 / 3 / 5 / 10 / 25 / 50 / 80 / 100 ms:</strong> sets the pulse duration. AUTO follows SOLAR, from 5 ms in darkness to 100 ms at 30% solar and above. With the screen off, SOLAR is sampled once per minute while an LED AUTO setting is selected.</li>
+          <li><strong>LED BRIGHT — AUTO / 1 / 3 / 5 / 10 / 25 / 50 / 80 / 100%:</strong> sets LED PWM brightness. AUTO follows SOLAR. LED TIME and LED BRIGHT are independent.</li>
           <li><strong>SCREEN BRIGHT — AUTO / 1% / 3% / 5% / 10% / 25% / 50% / 80% / 100%:</strong> AUTO uses an average of solar readings and changes brightness gradually, with a 1% minimum.</li>
           <li><strong>SCREEN TIMER — 1 / 5 / 10 / 30 / 60 / 90 seconds:</strong> inactivity time before the display turns off. SEARCH keeps the display on; INVISIBLE uses a one-second timeout.</li>
           <li><strong>TONE — STOCK / CLASSIC:</strong> selects the sound character for pulse clicks and the siren.</li>
@@ -457,7 +458,7 @@
             <ul>
               <li><strong>Power:</strong> improved sleep behavior while the display is off.</li>
               <li><strong>Battery:</strong> linear 1300–2000 ADC mapping and hysteresis reduce percentage fluctuations.</li>
-              <li><strong>LED and sound:</strong> LED TIME controls pulse duration, including solar-controlled AUTO; the sound timer supports low-frequency operation while the display is off.</li>
+              <li><strong>LED and sound:</strong> LED TIME controls pulse duration and LED BRIGHT controls PWM level; both support solar-controlled AUTO. The sound timer supports low-frequency operation while the display is off.</li>
               <li><strong>Settings:</strong> reordered the menu, added a two-column option picker, and updated selection and action colors.</li>
               <li><strong>Manual and compatibility:</strong> refreshed screen illustrations and settings documentation; known older firmware images with different LED settings are marked partially compatible.</li>
             </ul>
@@ -504,7 +505,7 @@
         <h3>Known limitations</h3>
         <ul>
           <li>Only firmware images on the compatibility checksum list receive the normal application <code>HELLO</code> startup check. Unlisted project builds are started without that check.</li>
-          <li>Older firmware may interpret LED TIME as LED brightness in percent. Known older images are marked partially compatible when selected for flashing; the connected device cannot currently be identified by firmware version.</li>
+          <li>Older firmware may interpret setting ID 5 as LED brightness. New firmware keeps that ID for LED BRIGHT and assigns LED TIME to ID 28. Known older images are marked partially compatible when selected for flashing; the connected device cannot currently be identified by firmware version.</li>
           <li>Battery and solar percentages, dose calibration, RTC behavior after full power loss, and SPI logging reliability still need physical verification.</li>
           <li>SPI dump requires compatible running firmware with SPI logging enabled and a ready SPI memory chip.</li>
         </ul>
