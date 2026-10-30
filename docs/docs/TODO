@@ -1,0 +1,5 @@
+BUG: LED on sleep
+BUG: logs 54s
+BUG: settings position mem
+BUG: invisible mode wakeup
+FEAT: windows bigger window

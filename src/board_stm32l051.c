@@ -158,6 +158,7 @@ static uint32_t lcd_search_mode_started;
 #define LCD_GRAPH_VISIBLE_BARS ((LCD_GRAPH_PLOT_WIDTH + LCD_GRAPH_BAR_GAP) / \
     LCD_GRAPH_BAR_STEP)
 #define LCD_GRAPH_LOG_MAX_RECORDS 60u
+#define LCD_GRAPH_LOG_BATCH_RECORDS 13u
 #define LCD_GRAPH_CURSOR_CENTER (LCD_GRAPH_VISIBLE_BARS / 2u)
 #define LCD_GRAPH_PENDING_LEFT  (-1)
 #define LCD_GRAPH_PENDING_RIGHT (1)
@@ -291,13 +292,15 @@ static uint32_t lcd_graph_selected_time;
 static bool lcd_graph_selected_calendar;
 static bool lcd_graph_cursor_mode;
 static bool lcd_graph_log_window_valid;
-static bool lcd_graph_log_refresh_pending;
 static bool lcd_graph_log_summary_valid;
 static bool lcd_graph_loading;
+static bool lcd_graph_log_summary_work_active;
 static uint8_t lcd_graph_log_visible;
 static uint8_t lcd_graph_log_available;
 static log_point_t lcd_graph_log_points[LCD_GRAPH_VISIBLE_BARS];
 static log_cursor_t lcd_graph_log_record_cursors[LCD_GRAPH_LOG_MAX_RECORDS];
+static log_cursor_t lcd_graph_log_summary_cursor;
+static uint8_t lcd_graph_log_summary_count;
 static uint8_t lcd_graph_column_y[LCD_WIDTH];
 static char lcd_graph_stat_values[4][5];
 static bool lcd_graph_input_locked;
@@ -318,7 +321,7 @@ static uint32_t lcd_graph_refresh_deadline;
 static void lcd_graph_reset_log_window(void);
 static bool lcd_graph_load_log_window(uint8_t start);
 static bool lcd_graph_read_log_point(uint8_t index, log_point_t *point);
-static void lcd_graph_update_log_summary(void);
+static bool lcd_graph_update_log_summary(void);
 static bool lcd_graph_prepare_partial_glyph(void);
 static __attribute__((noinline)) void lcd_render_small_line(
     const char line[20], uint16_t row_width, uint16_t base_color,
@@ -2696,6 +2699,7 @@ static void lcd_graph_select_period(bool forward)
     lcd_graph_reset_log_window();
     lcd_graph_log_summary_valid = false;
     lcd_graph_loading = lcd_graph_log_type != 0u;
+    lcd_graph_log_summary_work_active = false;
     lcd_graph_input_locked = true;
     lcd_graph_refresh_deadline = board_millis + 5000u;
     lcd_text_active = false;
@@ -2739,7 +2743,8 @@ static bool lcd_graph_load_log_window(uint8_t start)
 
 static bool lcd_graph_move_bar(bool older)
 {
-    if (!lcd_graph_log_summary_valid) lcd_graph_update_log_summary();
+    if (!lcd_graph_log_summary_valid || lcd_graph_log_available == 0u)
+        return false;
     if (!lcd_graph_log_window_valid && !lcd_graph_load_log_window(0u)) return false;
     if (lcd_graph_log_available == 0u) return false;
 
@@ -2796,7 +2801,6 @@ static bool lcd_graph_move_bar(bool older)
         lcd_graph_partial_kind = LCD_GRAPH_PARTIAL_CURSOR;
     }
     lcd_graph_input_locked = true;
-    lcd_graph_log_refresh_pending = false;
     lcd_graph_refresh_deadline = board_millis + 5000u;
     lcd_graph_partial_pending = true;
     return true;
@@ -2810,97 +2814,77 @@ static void lcd_graph_reset_log_window(void)
     lcd_graph_log_visible = 0u;
     lcd_graph_log_available = 0u;
     lcd_graph_log_window_valid = false;
-    lcd_graph_log_refresh_pending = false;
     lcd_graph_log_summary_valid = false;
     lcd_graph_loading = false;
+    lcd_graph_log_summary_work_active = false;
+    lcd_graph_log_summary_count = UINT8_MAX;
     lcd_graph_partial_pending = false;
     lcd_graph_partial_kind = 0u;
 }
 
-static void lcd_graph_update_log_summary(void)
+static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
 {
-    if (lcd_graph_log_summary_valid) return;
+    if (lcd_graph_log_summary_valid) return true;
     const uint8_t type = (uint8_t)(lcd_graph_log_type - 1u);
     const uint32_t period = type == LOG_RECORD_ALERT ? 60u :
         log_record_period_seconds((log_record_kind_t)type);
-    log_cursor_t cursor;
-    log_point_t point;
-    uint64_t dose = 0u, weighted_rate = 0u, covered = 0u;
-    uint32_t max_rate = 0u, max_dose = 0u;
-    uint32_t count = 0u;
-    const uint32_t limit = type == LOG_RECORD_DAY ?
-        log_history_count(type) + 1u : lcd_graph_log_record_limit();
-    log_history_begin(&cursor);
-    while (count < limit) {
-        if (count < lcd_graph_log_record_limit())
-            lcd_graph_log_record_cursors[count] = cursor;
-        if (!log_history_next(type, period, &cursor, 0u, &point)) break;
-        dose += point.count;
-        weighted_rate += (uint64_t)point.average_cpm * point.covered_seconds;
-        covered += point.covered_seconds;
-        if (point.maximum_cpm > max_rate) max_rate = point.maximum_cpm;
-        if (point.count > max_dose) max_dose = point.count;
-        ++count;
+    if (lcd_graph_log_summary_count == UINT8_MAX) {
+        lcd_graph_log_summary_count = 0u;
+        lcd_graph_log_available = lcd_graph_log_record_limit();
+        lcd_graph_log_summary_dose = 0u;
+        lcd_graph_log_summary_coverage = 0u;
+        lcd_graph_log_summary_max = 0u;
+        lcd_graph_log_summary_bar_max = 0u;
+        log_history_begin(&lcd_graph_log_summary_cursor);
     }
-    lcd_graph_log_available = (uint8_t)(count < lcd_graph_log_record_limit() ?
-        count : lcd_graph_log_record_limit());
-    lcd_graph_log_summary_dose = dose;
-    lcd_graph_log_summary_max = max_rate;
-    lcd_graph_log_summary_average = covered ?
-        (uint32_t)((weighted_rate + covered / 2u) / covered) : 0u;
-    lcd_graph_log_summary_bar_max = max_dose;
-    lcd_graph_log_summary_coverage = (uint32_t)covered;
+    uint8_t batch_end = (uint8_t)(lcd_graph_log_summary_count +
+        LCD_GRAPH_LOG_BATCH_RECORDS);
+    if (batch_end > lcd_graph_log_available)
+        batch_end = lcd_graph_log_available;
+    while (lcd_graph_log_summary_count < batch_end) {
+        log_point_t point;
+        const uint32_t index = lcd_graph_log_summary_count;
+        lcd_graph_log_record_cursors[index] = lcd_graph_log_summary_cursor;
+        if (!log_history_next(type, period, &lcd_graph_log_summary_cursor,
+                0u, &point)) {
+            lcd_graph_log_available = (uint8_t)index;
+            break;
+        }
+        if (index < LCD_GRAPH_VISIBLE_BARS)
+            lcd_graph_log_points[index] = point;
+        lcd_graph_log_summary_dose += point.count;
+        lcd_graph_log_summary_coverage += point.covered_seconds;
+        if (point.maximum_cpm > lcd_graph_log_summary_max)
+            lcd_graph_log_summary_max = point.maximum_cpm;
+        if (point.count > lcd_graph_log_summary_bar_max)
+            lcd_graph_log_summary_bar_max = point.count;
+        ++lcd_graph_log_summary_count;
+    }
+    if (lcd_graph_log_summary_count < lcd_graph_log_available)
+        return false;
+    lcd_graph_log_visible = lcd_graph_log_available < LCD_GRAPH_VISIBLE_BARS ?
+        lcd_graph_log_available : LCD_GRAPH_VISIBLE_BARS;
+    lcd_graph_log_summary_average = lcd_graph_log_summary_coverage ?
+        (uint32_t)((lcd_graph_log_summary_dose * 60u +
+            lcd_graph_log_summary_coverage / 2u) /
+            lcd_graph_log_summary_coverage) : 0u;
+    lcd_graph_log_window_valid = lcd_graph_log_visible != 0u;
     lcd_graph_log_summary_valid = true;
+    return true;
 }
 
 static void lcd_graph_build_logs(void)
 {
     uint8_t *values = lcd_text_glyph;
     uint32_t maximum = 1u;
-    if (lcd_graph_loading) {
-        memset(lcd_graph_stat_values, '-', sizeof(lcd_graph_stat_values));
-        return;
-    }
-    lcd_graph_update_log_summary();
-    if (!lcd_graph_log_window_valid &&
-        !lcd_graph_load_log_window(lcd_graph_log_window_start)) {
-        lcd_graph_log_visible = 0u;
-    }
-    if (lcd_graph_log_refresh_pending && lcd_graph_log_window_start == 0u &&
-        lcd_graph_log_type != 4u) {
-        const uint8_t type = (uint8_t)(lcd_graph_log_type - 1u);
-        const uint32_t period = log_record_period_seconds((log_record_kind_t)type);
-        log_cursor_t cursor;
-        log_point_t current;
-        log_history_begin(&cursor);
-        if (lcd_graph_log_visible != 0u &&
-            log_history_next(type, period, &cursor, 0u, &current)) {
-            const log_point_t *previous = &lcd_graph_log_points[0];
-            if (current.period_start != previous->period_start ||
-                current.epoch != previous->epoch) {
-                uint8_t selected_record = lcd_graph_selected_record;
-                if (lcd_graph_cursor_mode)
-                    ++selected_record;
-                lcd_graph_reset_log_window();
-                lcd_graph_update_log_summary();
-                (void)lcd_graph_load_log_window(0u);
-                if (lcd_graph_log_available != 0u &&
-                    selected_record >= lcd_graph_log_available)
-                    selected_record =
-                        (uint8_t)(lcd_graph_log_available - 1u);
-                lcd_graph_selected_record = selected_record;
-                lcd_graph_selected = lcd_graph_selected_record;
-            } else {
-                lcd_graph_log_points[0] = current;
-                lcd_graph_log_summary_valid = false;
-                lcd_graph_update_log_summary();
-            }
-        }
-        lcd_graph_log_refresh_pending = false;
-    }
     for (uint16_t x = 0u; x < LCD_WIDTH; ++x) {
         lcd_graph_column_y[x] = UINT8_MAX;
     }
+    if (lcd_graph_loading || !lcd_graph_log_summary_valid) {
+        memset(lcd_graph_stat_values, '-', sizeof(lcd_graph_stat_values));
+        return;
+    }
+    if (!lcd_graph_log_window_valid) lcd_graph_log_visible = 0u;
     if (lcd_graph_selected >= lcd_graph_log_visible) lcd_graph_selected = 0u;
     for (uint8_t age = 0u; age < lcd_graph_log_visible; ++age) {
         const log_point_t *point = &lcd_graph_log_points[age];
@@ -3889,11 +3873,15 @@ bool board_display_graph_enter(void)
     lcd_graph_cursor_mode = false;
     lcd_graph_partial_pending = false;
     lcd_graph_partial_kind = 0u;
-    if (lcd_graph_log_type != 0u && !lcd_graph_log_summary_valid) {
+    if (lcd_graph_log_type != 0u) {
+        /* Re-enter through the same WAIT frame used when changing graph type.
+         * Cached log windows made the next header render rebuild/refresh an
+         * entire log synchronously, which could stall the UI after returning
+         * from Dose. */
+        lcd_graph_reset_log_window();
         lcd_graph_loading = true;
     }
-    lcd_graph_log_refresh_pending =
-        lcd_graph_log_type != 0u && !lcd_graph_loading;
+    lcd_graph_log_summary_work_active = false;
     lcd_graph_refresh_deadline = board_millis + (lcd_graph_log_type ? 5000u : 500u);
     lcd_graph_input_locked = true;
     lcd_text_active = false;
@@ -4020,6 +4008,8 @@ void board_display_extra_exit(void)
     lcd_screen_page = lcd_main_return_page;
     lcd_graph_input_locked = false;
     lcd_graph_pending_action = 0;
+    lcd_graph_log_summary_work_active = false;
+    lcd_graph_loading = false;
     lcd_settings_list_active = false;
     lcd_settings_editing = false;
     lcd_graph_column_y[0] = UINT8_MAX;
@@ -4044,7 +4034,8 @@ void board_display_force_home(void)
     lcd_main_return_page = 0u;
     lcd_graph_input_locked = false;
     lcd_graph_pending_action = 0;
-    lcd_graph_log_refresh_pending = false;
+    lcd_graph_log_summary_work_active = false;
+    lcd_graph_loading = false;
     lcd_settings_list_active = false;
     lcd_settings_editing = false;
     lcd_text_active = false;
@@ -5823,15 +5814,15 @@ void board_display_history_updated(void)
         !lcd_text_active && !lcd_background_pending && !lcd_fill_active &&
         !lcd_dma_active && deadline_reached(lcd_graph_refresh_deadline)) {
         if (lcd_graph_log_type &&
-            (lcd_graph_log_window_start != 0u || lcd_graph_log_type == 4u)) {
+            (lcd_graph_log_window_start != 0u || lcd_graph_log_type == 4u ||
+             lcd_graph_cursor_mode || lcd_graph_selected_record != 0u)) {
             lcd_graph_refresh_deadline = board_millis + 15000u;
             return;
         }
-        lcd_graph_log_refresh_pending = lcd_graph_log_type != 0u;
         lcd_graph_input_locked = true;
-        if (lcd_graph_log_type != 0u) {
-            lcd_graph_partial_kind = LCD_GRAPH_PARTIAL_LIVE;
-            lcd_graph_partial_pending = true;
+        if (lcd_graph_log_type) {
+            lcd_graph_reset_log_window();
+            lcd_graph_log_summary_work_active = true;
         } else {
             lcd_cpm_redraw_pending = true;
         }
@@ -6305,6 +6296,7 @@ void board_display_service(void)
     /* Never interrupt an active DMA transfer. At the next chunk boundary,
      * discard the stale frame and render the most recent user action. */
     if (lcd_graph_pending_action != 0 && !lcd_graph_loading &&
+        !lcd_graph_log_summary_work_active &&
         lcd_screen_page == LCD_GRAPH_PAGE && !lcd_dma_active &&
         lcd_queue_drained() && !lcd_fill_active &&
         !lcd_background_pending) {
@@ -6357,12 +6349,22 @@ void board_display_service(void)
         lcd_begin_fill();
     }
     lcd_text_render_service();
-    if (lcd_graph_loading && !lcd_graph_input_locked &&
-        lcd_screen_page == LCD_GRAPH_PAGE) {
-        lcd_graph_loading = false;
+    if (lcd_screen_page == LCD_GRAPH_PAGE && lcd_graph_log_type != 0u &&
+        lcd_graph_loading && !lcd_graph_input_locked &&
+        !lcd_graph_log_summary_work_active) {
+        /* The WAIT frame has completed. Start bounded preparation now. */
+        lcd_graph_log_summary_work_active = true;
         lcd_graph_input_locked = true;
-        lcd_graph_update_log_summary();
-        lcd_cpm_redraw_pending = true;
+    }
+    if (lcd_screen_page == LCD_GRAPH_PAGE &&
+        lcd_graph_log_summary_work_active && !rgb_flash_active &&
+        !click_sound_active) {
+        if (lcd_graph_update_log_summary()) {
+            lcd_graph_log_summary_work_active = false;
+            lcd_graph_loading = false;
+            lcd_graph_input_locked = true;
+            lcd_cpm_redraw_pending = true;
+        }
     }
     if (lcd_cleanup_working_pending && lcd_ready &&
         !lcd_text_active && !lcd_settings_redraw_pending &&
@@ -6395,7 +6397,9 @@ bool board_display_busy(void)
          (lcd_screen_page == 3u && lcd_debug_redraw_pending));
     return !lcd_ready || !lcd_queue_drained() || lcd_background_pending ||
            lcd_fill_start_pending ||
-           lcd_fill_active || lcd_text_active || redraw_pending;
+           lcd_fill_active || lcd_text_active || redraw_pending ||
+           (lcd_screen_page == LCD_GRAPH_PAGE &&
+            (lcd_graph_loading || lcd_graph_log_summary_work_active));
 }
 
 void board_display_init(void)
