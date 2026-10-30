@@ -184,14 +184,6 @@ jobs:
           - Reset dose counters with the active logs and block log erasure over unrecognized SPI contents, including stock assets.
           - Added a smooth backlight fade after the configured screen timeout.
           - Kept log table headers and totals visible during scrolling, with ten records by default and vertical resizing.
-          - Reduced power use with low-frequency operation while the display is off.
-          - Stabilized the battery percentage using linear ADC mapping and hysteresis.
-          - Separated LED TIME pulse duration from LED BRIGHT PWM level; both settings support solar-controlled AUTO and persist independently.
-          - Removed the unit suffix from AUTO values and kept POWER actions within three settings columns in the app.
-          - Reduced firmware flash usage with shared setting values and newlib-nano.
-          - Adjusted the sound timer for low-frequency operation so clicks and alarms can sound with the display off.
-          - Reordered settings and added a two-column picker for longer option lists.
-          - Refreshed the manual and screen illustrations; identified known older firmware images with different LED settings as partially compatible.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded; used for app compatibility checks): ${canonical_sha256}
