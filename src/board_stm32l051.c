@@ -3957,7 +3957,6 @@ void board_display_extra_enter(void)
     lcd_main_return_page = lcd_screen_page;
     lcd_screen_page = lcd_last_extra_page;
     if (lcd_screen_page == 3u) lcd_debug_probe_spi();
-    lcd_settings_selected = lcd_settings_visible_to_item(0u);
     lcd_settings_list_active = false;
     lcd_settings_editing = false;
     lcd_text_active = false;
@@ -3986,9 +3985,6 @@ void board_display_extra_step(bool forward)
     }
     lcd_last_extra_page = lcd_screen_page;
     if (lcd_screen_page == 3u) lcd_debug_probe_spi();
-    if (lcd_screen_page == 2u) {
-        lcd_settings_selected = lcd_settings_visible_to_item(0u);
-    }
     lcd_settings_list_active = false;
     lcd_settings_editing = false;
     lcd_text_active = false;
@@ -5539,7 +5535,6 @@ void board_display_settings_list_activate(void)
     }
     if (lcd_screen_page != 2u ||
         lcd_settings_list_active) return;
-    lcd_settings_selected = lcd_settings_visible_to_item(0u);
     lcd_settings_list_active = true;
     lcd_settings_editing = false;
     board_display_settings_redraw();
