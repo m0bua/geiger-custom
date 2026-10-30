@@ -281,7 +281,7 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
 [hidden] { display: none !important; }
 @keyframes pulse { 50% { opacity: .35; } }
 @media (min-width: 1180px) {
-  .settings-pair { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(9, auto); column-gap: 56px; }
+  .settings-pair { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(10, auto); column-gap: 56px; }
 }
 @media (max-width: 650px) {
   .shell { width: calc(100% - 28px); }
