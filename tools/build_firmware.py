@@ -61,7 +61,8 @@ def main():
     startup = out / 'startup.o'
     subprocess.run([gcc, '-mcpu=cortex-m0plus', '-mthumb', '-c', str(ROOT / 'startup_stm32l051.S'), '-o', str(startup)], check=True)
     elf = out / 'firmware.elf'
-    subprocess.run([gcc, '-mcpu=cortex-m0plus', '-mthumb', '-nostartfiles', '-Wl,--gc-sections',
+    subprocess.run([gcc, '-mcpu=cortex-m0plus', '-mthumb', '-nostartfiles',
+                    '-specs=nano.specs', '-specs=nosys.specs', '-Wl,--gc-sections',
                     f'-Wl,-Map,{out / "firmware.map"}',
                     *(['-Wl,--undefined=test_feed_seconds', '-Wl,--undefined=second_log_get'] if args.test_support else []),
                     '-T', str(ROOT / 'linker/STM32L051C8TX_FLASH.ld'),
