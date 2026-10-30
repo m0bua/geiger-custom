@@ -1,2 +1,2 @@
 BUG: fake hight rate after start
-APP: always show log table header on scroll.
+FEAT: cleanup total and day dose with logs
