@@ -36,7 +36,7 @@ def main() -> int:
             if response.status != 200:
                 raise RuntimeError(f"UI returned HTTP {response.status}")
         webview.create_window(
-            "Dosimeter App", address, width=1180, height=820,
+            "Dosimeter App", address, width=1416, height=984,
             min_size=(720, 560), text_select=True,
         )
         webview.start(debug=False)
