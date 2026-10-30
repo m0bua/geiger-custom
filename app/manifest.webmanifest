@@ -1,7 +1,7 @@
 {
   "id": "./index.html",
-  "name": "Device Monitor",
-  "short_name": "Monitor",
+  "name": "Dosimetr",
+  "short_name": "Dosimetr",
   "description": "Live readings, settings, diagnostics, and logs for the device.",
   "start_url": "./index.html",
   "scope": "./",

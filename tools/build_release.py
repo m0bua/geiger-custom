@@ -1,4 +1,4 @@
-"""Build a standalone, single-file dosimeter app with its matching firmware."""
+"""Build a standalone, single-file Dosimetr app with its matching firmware."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "app"
 DEFAULT_FIRMWARE = ROOT / ".pio/scratch/geiger2_manual/firmware.bin"
 DEFAULT_SPI_MINI = ROOT / ".pio/build/geiger2_spi_mini/firmware.bin"
-DEFAULT_OUTPUT = ROOT / "dist/Dosimeter-App.html"
+DEFAULT_OUTPUT = ROOT / "dist/Dosimetr.html"
 TERSER_VERSION = "5.44.0"
 
 

@@ -1,4 +1,4 @@
-name: Deploy Device Monitor portal
+name: Deploy Dosimetr portal
 
 on:
   workflow_run:

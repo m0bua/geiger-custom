@@ -12,7 +12,7 @@ from geiger2_windows_bridge import BridgeHandler, LocalBridgeServer
 
 
 def show_error(message: str) -> None:
-    ctypes.windll.user32.MessageBoxW(None, message, "Dosimeter App", 0x10)
+    ctypes.windll.user32.MessageBoxW(None, message, "Dosimetr", 0x10)
 
 
 def main() -> int:
@@ -36,14 +36,14 @@ def main() -> int:
             if response.status != 200:
                 raise RuntimeError(f"UI returned HTTP {response.status}")
         webview.create_window(
-            "Dosimeter App", address, width=1416, height=984,
+            "Dosimetr", address, width=1416, height=984,
             min_size=(720, 560), text_select=True,
         )
         webview.start(debug=False)
         return 0
     except Exception as error:
         traceback.print_exc()
-        show_error(f"Could not start Dosimeter App.\n\n{error}")
+        show_error(f"Could not start Dosimetr.\n\n{error}")
         return 1
     finally:
         server.shutdown()

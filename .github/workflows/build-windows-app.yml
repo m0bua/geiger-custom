@@ -48,8 +48,8 @@ jobs:
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
-          name: Dosimeter-App-Windows
-          path: dist/windows/Dosimeter-App.exe
+          name: Dosimetr-Windows
+          path: dist/windows/Dosimetr.exe
           if-no-files-found: error
           compression-level: 0
           retention-days: 30

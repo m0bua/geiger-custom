@@ -63,7 +63,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dev-release-html
-          path: dist/Dosimeter-App.html
+          path: dist/Dosimetr.html
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -136,7 +136,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dev-release-windows
-          path: dist/windows/Dosimeter-App.exe
+          path: dist/windows/Dosimetr.exe
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -189,7 +189,7 @@ jobs:
           firmware="firmware-staging/firmware.bin"
           firmware_sha256="$(sha256sum "$firmware" | cut -d ' ' -f1)"
           canonical_sha256="$(python -c 'from pathlib import Path; import hashlib; b=Path("firmware-staging/firmware.bin").read_bytes(); print(hashlib.sha256(b.ljust(65536, bytes([255]))).hexdigest())')"
-          windows_sha256="$(sha256sum dist/windows/Dosimeter-App.exe | cut -d ' ' -f1)"
+          windows_sha256="$(sha256sum dist/windows/Dosimetr.exe | cut -d ' ' -f1)"
           cat > /tmp/prerelease-notes.md <<EOF
           Development pre-release built from the selected branch.
 
@@ -210,10 +210,10 @@ jobs:
           Built from commit ${SOURCE_SHA}. Tag timestamp is UTC.
           EOF
           gh release create "$RELEASE_TAG" \
-            dist/Dosimeter-App.html \
+            dist/Dosimetr.html \
             "$firmware" \
             dist/spi-service-firmware.bin \
-            dist/windows/Dosimeter-App.exe \
+            dist/windows/Dosimetr.exe \
             --title "$RELEASE_TITLE" \
             --target "$SOURCE_SHA" \
             --prerelease \
