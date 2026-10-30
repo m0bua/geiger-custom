@@ -1,11 +1,10 @@
 #include "font_large.h"
 
 /* Bitmap glyphs adapted from Anonymous Pro Regular; see docs/reference/ANONYMOUS_PRO_LICENSE.txt. */
-/* Store each 24-pixel row in three bytes; no padding byte in Flash. */
+/* Three bytes per 24-pixel row. Omit two blank top rows and one bottom
+ * row from digits; font_large_pixel restores the unchanged cell spacing. */
 #define ROW24(v) { (uint8_t)(v), (uint8_t)((v) >> 8u), (uint8_t)((v) >> 16u) }
-static const uint8_t digit_rows[10][FONT_LARGE_CELL_HEIGHT][3] = {    { /* 0 */
-        ROW24(0x000000u),
-        ROW24(0x000000u),
+static const uint8_t digit_rows[10][FONT_LARGE_CELL_HEIGHT - 3u][3] = {    { /* 0 */
         ROW24(0x007F00u),
         ROW24(0x03FFC0u),
         ROW24(0x07FFE0u),
@@ -35,12 +34,9 @@ static const uint8_t digit_rows[10][FONT_LARGE_CELL_HEIGHT][3] = {    { /* 0 */
         ROW24(0x0F81F0u),
         ROW24(0x07FFE0u),
         ROW24(0x03FFC0u),
-        ROW24(0x00FF00u),
-        ROW24(0x000000u)
+        ROW24(0x00FF00u)
     },
     { /* 1 */
-        ROW24(0x000000u),
-        ROW24(0x000000u),
         ROW24(0x007000u),
         ROW24(0x007000u),
         ROW24(0x007000u),
@@ -70,12 +66,9 @@ static const uint8_t digit_rows[10][FONT_LARGE_CELL_HEIGHT][3] = {    { /* 0 */
         ROW24(0x007000u),
         ROW24(0x0FFF80u),
         ROW24(0x0FFF80u),
-        ROW24(0x0FFF80u),
-        ROW24(0x000000u)
+        ROW24(0x0FFF80u)
     },
     { /* 2 */
-        ROW24(0x000000u),
-        ROW24(0x000000u),
         ROW24(0x00FF00u),
         ROW24(0x03FFC0u),
         ROW24(0x07FFE0u),
@@ -105,12 +98,9 @@ static const uint8_t digit_rows[10][FONT_LARGE_CELL_HEIGHT][3] = {    { /* 0 */
         ROW24(0x380078u),
         ROW24(0x3FFFFCu),
         ROW24(0x3FFFFCu),
-        ROW24(0x3FFFFCu),
-        ROW24(0x000000u)
+        ROW24(0x3FFFFCu)
     },
     { /* 3 */
-        ROW24(0x000000u),
-        ROW24(0x000000u),
         ROW24(0x00FE00u),
         ROW24(0x03FF80u),
         ROW24(0x0FFFE0u),
@@ -140,12 +130,9 @@ static const uint8_t digit_rows[10][FONT_LARGE_CELL_HEIGHT][3] = {    { /* 0 */
         ROW24(0x1F81F0u),
         ROW24(0x0FFFE0u),
         ROW24(0x03FF80u),
-        ROW24(0x00FE00u),
-        ROW24(0x000000u)
+        ROW24(0x00FE00u)
     },
     { /* 4 */
-        ROW24(0x000000u),
-        ROW24(0x000000u),
         ROW24(0x03C000u),
         ROW24(0x03E000u),
         ROW24(0x03F000u),
@@ -175,12 +162,9 @@ static const uint8_t digit_rows[10][FONT_LARGE_CELL_HEIGHT][3] = {    { /* 0 */
         ROW24(0x038000u),
         ROW24(0x7FFC00u),
         ROW24(0x7FFC00u),
-        ROW24(0x7FFC00u),
-        ROW24(0x000000u)
+        ROW24(0x7FFC00u)
     },
     { /* 5 */
-        ROW24(0x000000u),
-        ROW24(0x000000u),
         ROW24(0x1FFFFCu),
         ROW24(0x1FFFFCu),
         ROW24(0x1FFFFCu),
@@ -210,12 +194,9 @@ static const uint8_t digit_rows[10][FONT_LARGE_CELL_HEIGHT][3] = {    { /* 0 */
         ROW24(0x0F81F0u),
         ROW24(0x07FFE0u),
         ROW24(0x03FFC0u),
-        ROW24(0x007F00u),
-        ROW24(0x000000u)
+        ROW24(0x007F00u)
     },
     { /* 6 */
-        ROW24(0x000000u),
-        ROW24(0x000000u),
         ROW24(0x01FC00u),
         ROW24(0x07FF00u),
         ROW24(0x0FFFC0u),
@@ -245,12 +226,9 @@ static const uint8_t digit_rows[10][FONT_LARGE_CELL_HEIGHT][3] = {    { /* 0 */
         ROW24(0x1F81F0u),
         ROW24(0x0FFFE0u),
         ROW24(0x03FF80u),
-        ROW24(0x00FE00u),
-        ROW24(0x000000u)
+        ROW24(0x00FE00u)
     },
     { /* 7 */
-        ROW24(0x000000u),
-        ROW24(0x000000u),
         ROW24(0x3FFFFCu),
         ROW24(0x3FFFFCu),
         ROW24(0x3FFFFCu),
@@ -280,12 +258,9 @@ static const uint8_t digit_rows[10][FONT_LARGE_CELL_HEIGHT][3] = {    { /* 0 */
         ROW24(0x003C00u),
         ROW24(0x003C00u),
         ROW24(0x003C00u),
-        ROW24(0x003C00u),
-        ROW24(0x000000u)
+        ROW24(0x003C00u)
     },
     { /* 8 */
-        ROW24(0x000000u),
-        ROW24(0x000000u),
         ROW24(0x00FF00u),
         ROW24(0x03FFC0u),
         ROW24(0x0FFFF0u),
@@ -315,12 +290,9 @@ static const uint8_t digit_rows[10][FONT_LARGE_CELL_HEIGHT][3] = {    { /* 0 */
         ROW24(0x1F81F8u),
         ROW24(0x0FFFF0u),
         ROW24(0x07FFE0u),
-        ROW24(0x00FF00u),
-        ROW24(0x000000u)
+        ROW24(0x00FF00u)
     },
     { /* 9 */
-        ROW24(0x000000u),
-        ROW24(0x000000u),
         ROW24(0x007F00u),
         ROW24(0x01FFC0u),
         ROW24(0x07FFF0u),
@@ -350,8 +322,7 @@ static const uint8_t digit_rows[10][FONT_LARGE_CELL_HEIGHT][3] = {    { /* 0 */
         ROW24(0x07C078u),
         ROW24(0x03FFF0u),
         ROW24(0x00FFE0u),
-        ROW24(0x003F80u),
-        ROW24(0x000000u)
+        ROW24(0x003F80u)
     }
 };
 
@@ -373,7 +344,9 @@ bool font_large_pixel(char glyph, uint8_t x, uint8_t y)
 {
     if (x >= FONT_LARGE_CELL_WIDTH || y >= FONT_LARGE_CELL_HEIGHT) return false;
     if (glyph >= '0' && glyph <= '9') {
-        return (digit_rows[(uint8_t)(glyph - '0')][y][x / 8u] &
+        const uint8_t row = (uint8_t)(y - 2u);
+        if (row >= FONT_LARGE_CELL_HEIGHT - 3u) return false;
+        return (digit_rows[(uint8_t)(glyph - '0')][row][x / 8u] &
             (uint8_t)(1u << (x % 8u))) != 0u;
     }
     /* Colon and point contain only solid 4-pixel-wide rectangles. */

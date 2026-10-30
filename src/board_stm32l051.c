@@ -1305,12 +1305,8 @@ static bool lcd_queue_byte(uint8_t value, bool is_data)
         lcd_queue_tail = 0u;
     }
     if (lcd_queue_tail >= LCD_QUEUE_CAPACITY) {
-        if (lcd_queue_head != lcd_queue_tail) {
-            lcd_spi_ready = false;
-            return false;
-        }
-        lcd_queue_head = 0u;
-        lcd_queue_tail = 0u;
+        lcd_spi_ready = false;
+        return false;
     }
     lcd_queue[lcd_queue_tail].value = value;
     lcd_queue[lcd_queue_tail].is_data = is_data ? 1u : 0u;
@@ -1421,8 +1417,7 @@ static bool lcd_spi_send_byte(uint8_t value)
 }
 
 static void lcd_spi_dma_start(const uint16_t *pixels, uint32_t pixel_count,
-                              bool increment_source, bool text_row,
-                              uint8_t text_glyph_advance)
+                              bool text_row)
 {
     /* DMA1 channel 5 is SPI2_TX. Repeat the background pixel for the base
      * frame; increment through a short RGB565 row buffer for glyphs. */
@@ -1433,7 +1428,7 @@ static void lcd_spi_dma_start(const uint16_t *pixels, uint32_t pixel_count,
     DMA1_CH5_CMAR = (uint32_t)(uintptr_t)pixels;
     DMA1_CH5_CNDTR = pixel_count;
     DMA1_CH5_CCR = (1u << 4u) | (1u << 8u) | (1u << 10u) |
-                   (2u << 12u) | (increment_source ? (1u << 7u) : 0u);
+                   (2u << 12u) | (text_row ? (1u << 7u) : 0u);
     REG32(SPI2_BASE + SPI_CR1) &= ~(1u << 6u);
     REG32(SPI2_BASE + SPI_CR1) |= 1u << 11u; /* DFF: 16-bit frames */
     REG32(SPI2_BASE + SPI_CR1) |= 1u << 6u;
@@ -1442,7 +1437,7 @@ static void lcd_spi_dma_start(const uint16_t *pixels, uint32_t pixel_count,
     lcd_dma_active = true;
     lcd_dma_deadline = board_millis + 100u;
     lcd_dma_is_text_row = text_row;
-    lcd_dma_text_glyph_advance = text_glyph_advance;
+    lcd_dma_text_glyph_advance = text_row ? lcd_text_stream_advance : 0u;
 }
 
 static void lcd_text_stream_next(void)
@@ -1452,7 +1447,7 @@ static void lcd_text_stream_next(void)
     for (uint16_t i = 0u; i < count; ++i)
         lcd_text_dma_pixels[i] = lcd_text_palette[lcd_text_glyph[lcd_text_stream_offset + i]];
     lcd_text_stream_offset = (uint16_t)(lcd_text_stream_offset + count);
-    lcd_spi_dma_start(lcd_text_dma_pixels, count, true, true, lcd_text_stream_advance);
+    lcd_spi_dma_start(lcd_text_dma_pixels, count, true);
 }
 
 static __attribute__((noinline)) void lcd_spi_pump(void)
@@ -1549,7 +1544,7 @@ static __attribute__((noinline)) void lcd_spi_pump(void)
         REG32(GPIOB_BASE + GPIO_BSRR) = 1u << 11u; /* PB11 D/C data */
         lcd_spi_dma_start(&lcd_draw_pixel,
             LCD_WIDTH * (LCD_Y_OFFSET + LCD_HEIGHT - LCD_PANEL_Y_OFFSET),
-            false, false, 0u);
+            false);
     }
 }
 
@@ -3308,32 +3303,9 @@ static __attribute__((noinline)) bool lcd_text_prepare_glyph(void)
                     item == 13u || item == 14u;
                 const char *row_label = LCD_CLEANUP_MENU_ACTIVE ?
                     lcd_cleanup_labels[item] : lcd_settings_labels[item];
-                const char *row_value = LCD_CLEANUP_MENU_ACTIVE ?
-                    (LCD_CLEANUP_CONFIRM_PENDING &&
-                     item == lcd_cleanup_selected ?
-                        (!settings_spi_enabled &&
-                         (item == 1u || item == 2u || item == 4u ||
-                          item == 5u || item == 8u) ? "SPI OFF?" : "SURE?") :
-                        (lcd_cleanup_status != 0u &&
-                         item == lcd_cleanup_selected ?
-                            (lcd_cleanup_status == 1u ? "SUCCESS" :
-                             (lcd_cleanup_status == 2u ? "FAILED" :
-                              "WORKING...")) :
-                            "")) : lcd_settings_value_text(item);
                 uint8_t label_length = 0u;
-                uint8_t value_length = 0u;
-                uint8_t value_start;
                 while (row_label[label_length] != '\0' &&
                        label_length < 13u) ++label_length;
-                while (row_value[value_length] != '\0' &&
-                       value_length < (LCD_CLEANUP_MENU_ACTIVE ? 10u : 9u)) {
-                    ++value_length;
-                }
-                value_start = value_length < 20u ?
-                    (uint8_t)(20u - value_length) : 0u;
-                if (value_start <= label_length + 1u) {
-                    value_start = (uint8_t)(label_length + 2u);
-                }
                 text_color = LCD_CLEANUP_MENU_ACTIVE &&
                     selected_row && lcd_cleanup_status == 1u ?
                     LCD_TEXT_GREEN : (LCD_CLEANUP_MENU_ACTIVE &&
@@ -3498,24 +3470,10 @@ settings_line_draw:
             y_window[2] = 0u;
             y_window[3] = (uint8_t)(y_window[1] +
                 FONT_SMALL_CELL_HEIGHT - 1u);
-            lcd_text_glyph_pixels = (uint16_t)(text_width *
-                FONT_SMALL_CELL_HEIGHT);
+            lcd_render_small_line(disabled_text, text_width, LCD_COUNTER_RED,
+                UINT8_MAX, 0u, UINT8_MAX, 0u, LCD_TEXT_FOREGROUND);
             lcd_text_dma_glyph_advance =
                 (uint8_t)(rate_label_glyph - lcd_text_glyph_index);
-            for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
-                for (uint16_t x = 0u; x < text_width; ++x) {
-                    const uint8_t column = (uint8_t)(x /
-                        (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
-                    const uint8_t glyph_x = (uint8_t)(x %
-                        (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
-                    const uint16_t pixel =
-                        (uint16_t)y * text_width + x;
-                    lcd_glyph_put(pixel, column < text_length &&
-                        glyph_x < FONT_SMALL_CELL_WIDTH &&
-                        font_small_pixel(disabled_text[column], glyph_x, y) ?
-                            LCD_COUNTER_RED : LCD_TEXT_BACKGROUND);
-                }
-            }
             lcd_submit_text_window(x_window, y_window);
             return true;
         }
@@ -3565,24 +3523,9 @@ settings_line_draw:
             y_window[3] = (uint8_t)(LCD_Y_OFFSET + y_start +
                 FONT_SMALL_CELL_HEIGHT - 1u);
 
-            lcd_text_glyph_pixels = (uint16_t)(label_width *
-                FONT_SMALL_CELL_HEIGHT);
-            lcd_text_dma_glyph_advance = 1u;
-            for (uint8_t y = 0u; y < FONT_SMALL_CELL_HEIGHT; ++y) {
-                for (uint8_t x = 0u; x < label_width; ++x) {
-                    uint8_t column = (uint8_t)(x /
-                        (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
-                    uint8_t glyph_x = (uint8_t)(x %
-                        (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP));
-                    uint16_t pixel_index = (uint16_t)y * label_width + x;
-
-                    lcd_glyph_put(pixel_index, column < label_length &&
-                        glyph_x < FONT_SMALL_CELL_WIDTH &&
-                        font_small_pixel(label[column], glyph_x, y) ?
-                            (lcd_screen_page == 0u ? lcd_rate_color :
-                                LCD_TEXT_FOREGROUND) : LCD_TEXT_BACKGROUND);
-                }
-            }
+            lcd_render_small_line(label, label_width,
+                lcd_screen_page == 0u ? lcd_rate_color : LCD_TEXT_FOREGROUND,
+                UINT8_MAX, 0u, UINT8_MAX, 0u, LCD_TEXT_FOREGROUND);
 
             lcd_submit_text_window(x_window, y_window);
             return true;
@@ -3804,16 +3747,8 @@ void board_display_left_short(void)
         board_display_extra_step(false);
         return;
     }
-    if (lcd_screen_page == 1u) {
-        lcd_indication_mode_next();
-        lcd_dose_row_hidden = false;
-        lcd_text_active = false;
-        lcd_text_row_commands_queued = false;
-        lcd_background_pending = true;
-        lcd_cpm_redraw_pending = true;
-        return;
-    }
     lcd_indication_mode_next();
+    if (lcd_screen_page == 1u) lcd_dose_row_hidden = false;
     lcd_text_active = false;
     lcd_text_row_commands_queued = false;
     lcd_background_pending = true;
@@ -6330,7 +6265,7 @@ void board_display_service(void)
             REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 11u; /* CS high */
             lcd_ready = true;
             lcd_init_state = LCD_INIT_READY;
-            /* Clear the panel before drawing the large-glyph test screen. */
+            /* Clear the panel before drawing the first screen. */
             lcd_background_pending = true;
         }
         break;
