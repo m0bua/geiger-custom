@@ -1215,8 +1215,13 @@ static void lcd_format_dose_row(void)
             const uint32_t dose_fraction =
                 (uint32_t)(dose_x3600 % 3600u);
             lcd_settings_value_index[SETTING_UNIT] = row_unit;
+            if (saved_unit == 1u) {
+                lcd_settings_value_index[SETTING_DOSE_PREFIX] = 1u;
+            }
             lcd_format_dose(dose_thousandths, dose_fraction);
-            lcd_rate_label[2] = ' ';
+            if (saved_unit == 1u) lcd_rate_label[0] = (char)0xB5u;
+            lcd_rate_label[1] = row_unit == 2u ? 'R' : 'S';
+            lcd_rate_label[2] = row_unit == 2u ? ' ' : 'v';
             lcd_rate_label[3] = ' ';
             lcd_rate_label[4] = ' ';
         }
