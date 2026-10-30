@@ -119,6 +119,7 @@ void board_display_set_adc(uint16_t channel2, uint16_t channel8,
 bool board_display_battery_below_3_percent(void);
 bool board_display_busy(void);
 void board_lcd_backlight_set(bool enabled);
+void board_lcd_backlight_fade_out(void);
 void board_lcd_backlight_set_brightness(uint8_t percent);
 
 #endif

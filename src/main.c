@@ -635,7 +635,7 @@ int main(void)
                 !board_display_cleanup_feedback_active() &&
                 (int32_t)(now - inactivity_deadline) >= 0) {
                 backlight_on = false;
-                board_lcd_backlight_set(false);
+                board_lcd_backlight_fade_out();
             }
 
         }

@@ -44,6 +44,7 @@ static uint32_t lcd_search_mode_started;
 #define LCD_BATTERY_PERCENT_STABLE_MS 90000u
 #define LCD_SOLAR_BRIGHTNESS_SAMPLE_COUNT 34u
 #define LCD_BACKLIGHT_RAMP_INTERVAL_MS 200u
+#define LCD_BACKLIGHT_FADE_INTERVAL_MS 50u
 
 #define REG32(address) (*(volatile uint32_t *)(uintptr_t)(address))
 
@@ -207,6 +208,7 @@ static bool adc_enable(void);
 static void adc_disable(void);
 static void lcd_apply_brightness_settings(void);
 static void lcd_backlight_auto_ramp_service(void);
+static void lcd_backlight_fade_service(void);
 static void lcd_format_dose(uint32_t dose_thousandths,
                             uint32_t dose_fraction);
 static void lcd_format_dose_uptime_row(void);
@@ -225,6 +227,9 @@ static uint8_t rgb_brightness_percent = 100u;
 static uint8_t backlight_brightness_percent = 100u;
 static bool backlight_pwm_running;
 static bool backlight_requested_on;
+static bool backlight_fade_active;
+static uint8_t backlight_fade_restore_percent;
+static uint32_t backlight_fade_last_ms;
 static uint8_t rgb_channels;
 static uint8_t rgb_level[3] = {255u, 255u, 255u};
 static bool lcd_spi_ready = true;
@@ -1296,6 +1301,23 @@ static void backlight_force_gpio_on(void)
         (1u << (BOARD_LCD_BACKLIGHT_PIN * 2u));
 }
 
+static bool backlight_pwm_update(void)
+{
+    uint32_t compare = ((uint32_t)backlight_brightness_percent *
+                        BACKLIGHT_PWM_PERIOD) / 100u;
+    if (compare >= BACKLIGHT_PWM_PERIOD) {
+        compare = BACKLIGHT_PWM_PERIOD - 1u;
+    }
+    LPTIM_ICR = 1u << 3u;
+    LPTIM_CMP = compare;
+    if (!lptim_wait_flag(1u << 3u)) {
+        backlight_force_gpio_on();
+        return false;
+    }
+    LPTIM_ICR = 1u << 3u;
+    return true;
+}
+
 static bool lcd_queue_byte(uint8_t value, bool is_data)
 {
     /* The last queued byte may have drained in this same service pass,
@@ -1600,17 +1622,15 @@ static void lcd_send_controller_config(void)
 void board_lcd_backlight_set(bool enabled)
 {
     if (enabled) {
+        if (backlight_fade_active) {
+            backlight_fade_active = false;
+            backlight_brightness_percent = backlight_fade_restore_percent;
+        }
         if (!backlight_requested_on) {
             /* Keep the rolling solar average across screen-off intervals. */
             lcd_backlight_ramp_last_ms = board_millis;
         }
         backlight_requested_on = true;
-        uint32_t compare = ((uint32_t)backlight_brightness_percent *
-                            BACKLIGHT_PWM_PERIOD) / 100u;
-        if (compare >= BACKLIGHT_PWM_PERIOD) {
-            compare = BACKLIGHT_PWM_PERIOD - 1u;
-        }
-
         /* Preload the GPIO low/off level before connecting PWM output. */
         REG32(GPIOB_BASE + GPIO_BSRR) =
             1u << (16u + BOARD_LCD_BACKLIGHT_PIN);
@@ -1624,6 +1644,11 @@ void board_lcd_backlight_set(bool enabled)
             (2u << (BOARD_LCD_BACKLIGHT_PIN * 2u));
 
         if (!backlight_pwm_running) {
+            uint32_t compare = ((uint32_t)backlight_brightness_percent *
+                                BACKLIGHT_PWM_PERIOD) / 100u;
+            if (compare >= BACKLIGHT_PWM_PERIOD) {
+                compare = BACKLIGHT_PWM_PERIOD - 1u;
+            }
             LPTIM_CR = 0u;
             LPTIM_CFGR = 1u << 21u; /* APB /1, PWM mode, inverted waveform */
             LPTIM_CR = 1u;   /* enable peripheral */
@@ -1643,15 +1668,10 @@ void board_lcd_backlight_set(bool enabled)
             LPTIM_CR |= 1u << 2u; /* continuous counter start */
             backlight_pwm_running = true;
         } else {
-            LPTIM_ICR = 1u << 3u;
-            LPTIM_CMP = compare;
-            if (!lptim_wait_flag(1u << 3u)) {
-                backlight_force_gpio_on();
-                return;
-            }
-            LPTIM_ICR = 1u << 3u;
+            if (!backlight_pwm_update()) return;
         }
     } else {
+        backlight_fade_active = false;
         backlight_requested_on = false;
         REG32(GPIOB_BASE + GPIO_BSRR) =
             1u << (16u + BOARD_LCD_BACKLIGHT_PIN);
@@ -1664,6 +1684,18 @@ void board_lcd_backlight_set(bool enabled)
     }
 }
 
+void board_lcd_backlight_fade_out(void)
+{
+    if (!backlight_pwm_running) {
+        board_lcd_backlight_set(false);
+        return;
+    }
+    backlight_fade_restore_percent = backlight_brightness_percent;
+    backlight_fade_last_ms = board_millis;
+    backlight_fade_active = true;
+    backlight_requested_on = false;
+}
+
 void board_lcd_backlight_set_brightness(uint8_t percent)
 {
     if (percent > 100u) {
@@ -1672,6 +1704,11 @@ void board_lcd_backlight_set_brightness(uint8_t percent)
     backlight_brightness_percent = percent;
     if (backlight_requested_on) {
         board_lcd_backlight_set(true);
+    } else if (backlight_fade_active && backlight_pwm_running &&
+               !backlight_pwm_update()) {
+        backlight_fade_active = false;
+        board_lcd_backlight_set(false);
+        backlight_brightness_percent = backlight_fade_restore_percent;
     }
 }
 
@@ -5955,6 +5992,27 @@ static void lcd_backlight_auto_ramp_service(void)
     }
 }
 
+static void lcd_backlight_fade_service(void)
+{
+    if (!backlight_fade_active) return;
+
+    const uint32_t now = board_millis;
+    const uint32_t elapsed = now - backlight_fade_last_ms;
+    if (elapsed < LCD_BACKLIGHT_FADE_INTERVAL_MS) return;
+
+    backlight_fade_last_ms = now;
+    const uint8_t current = backlight_brightness_percent;
+    const uint8_t next = current > 20u ?
+        (uint8_t)(current - 2u) : (uint8_t)(current - 1u);
+    board_lcd_backlight_set_brightness(next);
+    if (next == 0u) {
+        backlight_fade_active = false;
+        board_lcd_backlight_set(false);
+        /* Keep the last chosen brightness for the next wake. */
+        backlight_brightness_percent = backlight_fade_restore_percent;
+    }
+}
+
 static void lcd_format_percent(uint16_t value, uint8_t offset)
 {
     if (value > 999u) {
@@ -6153,6 +6211,7 @@ void board_display_service(void)
         lcd_cpm_redraw_pending = true;
         lcd_configure();
     }
+    lcd_backlight_fade_service();
     lcd_backlight_auto_ramp_service();
     lcd_spi_pump();
     if (lcd_init_state == LCD_INIT_FAILED || !lcd_spi_ready) {
