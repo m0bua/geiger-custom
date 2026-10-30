@@ -5446,7 +5446,7 @@ void board_click_sound_service(void)
 
 bool board_click_sound_busy(void)
 {
-    return click_sound_active && !sound_alarm_mode;
+    return click_sound_active;
 }
 
 static bool rate_alarm_for_mode(uint8_t mode)

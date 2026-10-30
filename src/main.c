@@ -13,7 +13,7 @@
 #define BATTERY_ACTIVE_SAMPLE_INTERVAL_MS 30000u
 #define BATTERY_IDLE_SAMPLE_INTERVAL_MS 1800000u
 #define BATTERY_CRITICAL_SAMPLE_INTERVAL_MS 30000u
-#define USB_SAMPLE_INTERVAL_MS 60000u
+#define USB_SAMPLE_INTERVAL_MS 5000u
 #define TOTAL_PULSE_CHECKPOINT_MS 60000u
 
 /* Stable image marker used by the browser flasher to recognize project builds. */
@@ -252,6 +252,10 @@ int main(void)
 
         if ((uint32_t)(now - next_sample) >= 10u) {
             now = board_millis;
+            if (idle_clock_active &&
+                (int32_t)(now - next_minute_tick) >= 0) {
+                idle_clock_active = !board_set_idle_clock(false);
+            }
             uint8_t events = board_buttons_sample_10ms();
             uint32_t detected_pulses = board_detector_count();
             const uint8_t button_events = BOARD_BUTTON_LEFT_DOWN |
@@ -691,7 +695,8 @@ int main(void)
         }
 
         {
-            const bool read_solar = (backlight_on || board_display_led_auto()) &&
+            const bool read_solar =
+                (backlight_on | event_led_on | board_display_led_auto()) &&
                 (int32_t)(now - next_solar_sample) >= 0;
             const bool battery_due =
                 (int32_t)(now - next_battery_sample) >= 0;
@@ -699,12 +704,13 @@ int main(void)
                 (int32_t)(now - next_usb_sample) >= 0;
             /* Defer routine reads during short pulses, but bound the delay
              * when detector events arrive continuously. */
-            if ((read_solar || read_usb) &&
-                ((!event_led_on && !board_click_sound_busy()) || battery_due ||
-                 (read_solar &&
-                  (int32_t)(now - next_solar_sample) >= 1000) ||
-                 (read_usb &&
-                  (int32_t)(now - next_usb_sample) >= 1000))) {
+            if ((read_solar | read_usb) &
+                ((!event_led_on & !board_click_sound_busy()) | battery_due |
+                 (read_solar & event_led_on) |
+                 (read_solar &
+                  ((int32_t)(now - next_solar_sample) >= 1000)) |
+                 (read_usb &
+                  ((int32_t)(now - next_usb_sample) >= 1000)))) {
                 uint16_t channel2;
                 uint16_t channel8;
                 uint16_t channel9;
@@ -735,10 +741,12 @@ int main(void)
             }
         }
 
+        const bool display_busy = board_display_busy();
+
         /* Short flashes and clicks need a 1 ms tick even at the idle clock. */
         {
             const bool should_use_idle_tick =
-                !backlight_on && !board_display_busy() && !event_led_on &&
+                !backlight_on && !display_busy && !event_led_on &&
                 !board_click_sound_busy();
             if (should_use_idle_tick != idle_tick_active) {
                 board_set_idle_tick(should_use_idle_tick);
@@ -747,8 +755,8 @@ int main(void)
         }
 
         {
-            const bool high_speed_needed = backlight_on ||
-                board_display_busy() || startup_led_active ||
+            const bool high_speed_needed = backlight_on | display_busy |
+                event_led_on | board_click_sound_busy() |
                 board_display_usb_connected();
             if (high_speed_needed && idle_clock_active) {
                 (void)board_set_idle_clock(false);
