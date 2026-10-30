@@ -48,7 +48,7 @@ jobs:
         run: |
           source_sha="$(git rev-parse HEAD)"
           version="$(date -u +%Y%m%d%H%M)-dev"
-          release_title="DEV-${version%-dev}-${source_sha:0:7}"
+          release_title="DEV-${version%-dev}-${source_sha:0:7} - Startup fixes and dose sync"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=${version}-${source_sha:0:7}" >> "$GITHUB_OUTPUT"
@@ -196,6 +196,12 @@ jobs:
           The HTML and Windows apps identify themselves as Version: ${RELEASE_VERSION}. This build is for testing and may change without notice.
 
           ## Changes
+          - Fixed LTO firmware startup by preserving the real SysTick handler; startup has been confirmed on the device.
+          - Unified standalone and PlatformIO build settings, added startup/interrupt vector validation, and enabled verified Intel HEX uploads over UART.
+          - Reconcile DAY and TOTAL doses with stored logs after each completed hour and when changing log storage, preserving newly counted pulses.
+          - Reset dose counters with the active logs and block log erasure over unrecognized SPI contents, including stock assets.
+          - Added a smooth backlight fade after the configured screen timeout.
+          - Kept log table headers and totals visible during scrolling, with ten records by default and vertical resizing.
           - Improved sleep behavior while the display is off.
           - Reduced battery percentage fluctuations with linear ADC mapping and hysteresis.
           - Separated LED TIME pulse duration from LED BRIGHT PWM level; both settings support solar-controlled AUTO and persist independently.

@@ -457,8 +457,14 @@
           <div class="release-history-content">
         <ul class="release-list">
           <li>
-            <time datetime="2026-10-30">2026-10-30</time> — Pre-release: LED settings and app layout:
+            <time datetime="2026-10-30">2026-10-30</time> — Pre-release: startup fixes, dose sync, and log tools:
             <ul>
+              <li><strong>Startup:</strong> fixed the missing SysTick handler in LTO builds; firmware startup has been confirmed on the device.</li>
+              <li><strong>Builds:</strong> aligned standalone and PlatformIO settings, added startup and interrupt vector checks, and enabled verified Intel HEX uploads over UART.</li>
+              <li><strong>Dose:</strong> reconcile DAY and TOTAL with stored logs after each completed hour and when changing log storage, while preserving pulses counted during reconciliation.</li>
+              <li><strong>Log maintenance:</strong> reset dose counters with the active logs and protect unrecognized SPI contents, including stock assets, from log erasure.</li>
+              <li><strong>Display:</strong> smoothly fade the backlight after the selected screen timeout before turning the display off.</li>
+              <li><strong>Logs app:</strong> keep the table header and totals visible while scrolling; show ten records by default and allow vertical resizing.</li>
               <li><strong>LED:</strong> split pulse duration (LED TIME) from PWM level (LED BRIGHT); both settings persist independently without increasing the EEPROM record size. AUTO is shown without a unit suffix.</li>
               <li><strong>Firmware size:</strong> shared repeated setting values and enabled newlib-nano to fit the 64 KiB flash limit.</li>
               <li><strong>Settings app:</strong> kept POWER actions within the third column on wide windows.</li>

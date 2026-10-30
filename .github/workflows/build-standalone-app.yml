@@ -178,6 +178,12 @@ jobs:
           The HTML and EXE include a recovery-backed SPI NOR dump flow and the matching temporary SPI service firmware.
 
           ## Changes
+          - Fixed LTO firmware startup by preserving the real SysTick handler; startup has been confirmed on the device.
+          - Unified standalone and PlatformIO build settings, added startup/interrupt vector validation, and enabled verified Intel HEX uploads over UART.
+          - Reconcile DAY and TOTAL doses with stored logs after each completed hour and when changing log storage, preserving newly counted pulses.
+          - Reset dose counters with the active logs and block log erasure over unrecognized SPI contents, including stock assets.
+          - Added a smooth backlight fade after the configured screen timeout.
+          - Kept log table headers and totals visible during scrolling, with ten records by default and vertical resizing.
           - Reduced power use with low-frequency operation while the display is off.
           - Stabilized the battery percentage using linear ADC mapping and hysteresis.
           - Separated LED TIME pulse duration from LED BRIGHT PWM level; both settings support solar-controlled AUTO and persist independently.
