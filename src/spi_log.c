@@ -806,6 +806,50 @@ uint32_t spi_log_count(log_record_kind_t kind)
 bool spi_log_clear(void)
 {
     if (!spi_nor_is_ready()) return false;
+    const uint32_t capacity = spi_nor_size_bytes();
+    const uint32_t sector_count = capacity / SPI_LOG_SECTOR_SIZE;
+    const uint32_t partition_counts[3] = {
+        (sector_count * 90u) / 256u,
+        (sector_count * 30u) / 256u,
+        (sector_count * 50u) / 256u
+    };
+    uint32_t base = 0u;
+    if (sector_count < 18u || capacity % SPI_LOG_SECTOR_SIZE != 0u) {
+        return false;
+    }
+    /* Never erase unrecognized content (for example stock graphics assets). */
+    for (uint8_t stream = 0u; stream < 4u; ++stream) {
+        const uint16_t count = (uint16_t)(stream < 3u ?
+            partition_counts[stream] : sector_count - base / SPI_LOG_SECTOR_SIZE);
+        for (uint16_t sector = 0u; sector < count; ++sector) {
+            uint8_t header[SPI_LOG_HEADER_RETIRE_OFFSET + 1u];
+            bool erased = true;
+            const uint32_t address = base +
+                (uint32_t)sector * SPI_LOG_SECTOR_SIZE;
+            if (!spi_nor_read(address, header, sizeof(header))) return false;
+            for (uint8_t i = 0u; i < sizeof(header); ++i) {
+                if (header[i] != 0xFFu) erased = false;
+            }
+            if (erased) {
+                if (!sector_fully_erased(address)) return false;
+                continue;
+            }
+            if (header[0] != SPI_LOG_MAGIC_0 ||
+                header[1] != SPI_LOG_MAGIC_1 ||
+                header[2] != SPI_LOG_MAGIC_2 ||
+                header[3] != SPI_LOG_MAGIC_3 ||
+                (header[4] != SPI_LOG_VERSION &&
+                 header[4] != SPI_LOG_LEGACY_VERSION) ||
+                header[5] != stream_kind(stream) ||
+                header[6] >= LOG_SEGMENT_ID_COUNT ||
+                (header[7] & 0xC0u) != 0u ||
+                read_u16_le(&header[14]) != crc16(header, 14u) ||
+                (header[SPI_LOG_HEADER_RETIRE_OFFSET] != 0xFFu &&
+                 header[SPI_LOG_HEADER_RETIRE_OFFSET] !=
+                    SPI_LOG_HEADER_RETIRED)) return false;
+        }
+        base += (uint32_t)count * SPI_LOG_SECTOR_SIZE;
+    }
     log_read_fault = false;
     for (uint32_t address = 0u; address < spi_nor_size_bytes(); address += SPI_LOG_SECTOR_SIZE) {
         if (!sector_fully_erased(address) &&

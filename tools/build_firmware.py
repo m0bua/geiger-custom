@@ -9,6 +9,9 @@ import os
 import shutil
 import subprocess
 
+from firmware_build_config import RUNTIME_LINK_FLAGS, project_build_flags
+from check_firmware import check_firmware
+
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = Path.home() / '.platformio/packages'
 # Match the GCC 7.2.1 package selected by the current PlatformIO environment.
@@ -42,13 +45,19 @@ def main():
     args = parser.parse_args()
     out = ROOT / '.pio/scratch' / ('geiger2_test' if args.test_support else 'geiger2_manual')
     out.mkdir(parents=True, exist_ok=True)
+    # A failed build must not leave an older image looking ready to flash.
+    for suffix in ('.elf', '.bin', '.hex'):
+        (out / ('firmware' + suffix)).unlink(missing_ok=True)
     toolchain = args.toolchain
     gcc = executable(toolchain, 'arm-none-eabi-gcc')
     print(f'Toolchain: {toolchain}', flush=True)
-    flags = ['-std=gnu11', '-mcpu=cortex-m0plus', '-mthumb', '-Os', '-g2',
-             '-ffunction-sections', '-fdata-sections', '-fstack-usage', '-Wall', '-Wextra', '-Werror',
-             '-fno-inline-small-functions', '-fno-tree-switch-conversion',
-             '-I', str(ROOT / 'include')]
+    shared_flags = project_build_flags(ROOT)
+    flags = [flag for flag in shared_flags if not flag.startswith('-Wl,')]
+    flags += [
+             '-DF_CPU=16000000L', '-DPLATFORMIO=60200', '-DSTM32L051xx',
+             '-I', str(ROOT / 'include'), '-I', str(ROOT)]
+    if args.test_support:
+        flags.append('-fstack-usage')
     sources = sorted(source for source in (ROOT / 'src').glob('*.c')
                      if not source.name.startswith('spi_mini_'))
     if args.test_support:
@@ -61,13 +70,19 @@ def main():
     startup = out / 'startup.o'
     subprocess.run([gcc, '-mcpu=cortex-m0plus', '-mthumb', '-c', str(ROOT / 'startup_stm32l051.S'), '-o', str(startup)], check=True)
     elf = out / 'firmware.elf'
-    subprocess.run([gcc, '-mcpu=cortex-m0plus', '-mthumb', '-nostartfiles',
-                    '-specs=nano.specs', '-specs=nosys.specs', '-Wl,--gc-sections',
-                    f'-Wl,-Map,{out / "firmware.map"}',
+    platform_ldscripts = PACKAGES.parent / 'platforms/ststm32/ldscripts'
+    link_flags = [flag.replace('$BUILD_DIR', str(out)) for flag in shared_flags
+                  if flag.startswith(('-Wl,', '-O', '-mcpu=', '-mthumb', '-flto'))]
+    subprocess.run([gcc, *RUNTIME_LINK_FLAGS, '-Wl,--gc-sections,--relax',
+                    *link_flags,
                     *(['-Wl,--undefined=test_feed_seconds', '-Wl,--undefined=second_log_get'] if args.test_support else []),
                     '-T', str(ROOT / 'linker/STM32L051C8TX_FLASH.ld'),
-                    *objects, str(startup), '-o', str(elf)], check=True)
+                    *objects, str(startup), '-L' + str(platform_ldscripts),
+                    '-L' + str(out), '-Wl,--start-group', '-lc', '-lgcc', '-lm',
+                    '-lstdc++', '-Wl,--end-group', '-o', str(elf)], check=True)
+    check_firmware(elf)
     subprocess.run([executable(toolchain, 'arm-none-eabi-objcopy'), '-O', 'binary', str(elf), str(out / 'firmware.bin')], check=True)
+    subprocess.run([executable(toolchain, 'arm-none-eabi-objcopy'), '-O', 'ihex', str(elf), str(out / 'firmware.hex')], check=True)
     subprocess.run([executable(toolchain, 'arm-none-eabi-size'), str(elf)], check=True)
     image_size = (out / 'firmware.bin').stat().st_size
     print(f'Flash image: {image_size} / 65536 bytes; {65536 - image_size} bytes free')

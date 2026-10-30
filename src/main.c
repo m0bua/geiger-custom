@@ -1,6 +1,7 @@
 #include "board.h"
 #include "cpm_history.h"
 #include "daily_dose.h"
+#include "dose_reconcile.h"
 #include "log_writer.h"
 #include "protocol_v1.h"
 #include "second_log.h"
@@ -90,6 +91,7 @@ int main(void)
     uint32_t total_pulse_saved = 0u;
     uint32_t next_total_checkpoint;
     uint8_t total_pulse_sequence = 0u;
+    uint8_t last_dose_log_memory;
     uint16_t calendar_day_key = UINT16_MAX;
     bool calendar_day_valid = false;
     uint32_t next_minute_tick;
@@ -141,6 +143,7 @@ int main(void)
     board_lcd_backlight_set_brightness(10u);
     board_lcd_backlight_set(false);
     board_display_init();
+    last_dose_log_memory = board_display_log_memory();
     (void)log_writer_init();
     second_log_init();
     daily_dose_init(UINT16_MAX, 0u);
@@ -207,6 +210,54 @@ int main(void)
     for (;;) {
         protocol_v1_service();
         uint32_t now = board_millis;
+        {
+            uint8_t memory = board_display_log_memory();
+            uint32_t reconciled_day;
+            uint32_t reconciled_total;
+            if (memory != last_dose_log_memory) {
+                last_dose_log_memory = memory;
+                dose_reconcile_cancel();
+                dose_reconcile_invalidate_history();
+                if (memory != BOARD_LOG_MEMORY_OFF &&
+                    calendar_day_valid) {
+                    uint32_t uptime_seconds = 0u;
+                    uint32_t calendar_seconds = 0u;
+                    bool calendar_valid = false;
+                    if (board_rtc_log_time(&uptime_seconds,
+                            &calendar_seconds, &calendar_valid) &&
+                        calendar_valid &&
+                        calendar_day_key == (uint16_t)(
+                            calendar_seconds / 86400u)) {
+                        const uint32_t day_start = calendar_seconds -
+                            (calendar_seconds % 86400u);
+                        dose_reconcile_begin(memory, calendar_day_key,
+                            day_start, today_pulse_count);
+                    }
+                }
+            }
+            if (memory == BOARD_LOG_MEMORY_OFF) {
+                memory = board_display_log_source();
+            }
+            const dose_reconcile_result_t result = dose_reconcile_step(
+                memory, calendar_day_key, today_pulse_count,
+                &reconciled_day, &reconciled_total);
+            if (result == DOSE_RECONCILE_COMPLETE) {
+                daily_dose_set_day(calendar_day_key, reconciled_day);
+                today_pulse_count = daily_dose_count();
+                total_pulse_count = reconciled_total;
+                daily_dose_set_total(total_pulse_count);
+                if (daily_dose_checkpoint()) {
+                    total_pulse_saved = total_pulse_count;
+                }
+                dose_from_pulse_count(selected_dose_pulses(
+                        board_display_dose_period(), session_pulses_total,
+                        today_pulse_count, total_pulse_count),
+                    &dose_thousandths, &dose_fraction);
+                board_display_set_dose(dose_thousandths, dose_fraction,
+                    session_pulses_total, today_pulse_count,
+                    total_pulse_count, dose_measurement_seconds);
+            }
+        }
         if ((int32_t)(now - next_total_checkpoint) >= 0) {
             if (total_pulse_count != total_pulse_saved &&
                 total_pulse_save(total_pulse_count, &total_pulse_sequence)) {
@@ -573,6 +624,18 @@ int main(void)
                 log_writer_second(second_pulses, cpm,
                     log_uptime_seconds, log_calendar_seconds,
                     log_calendar_valid);
+                if (log_writer_take_hour_closed() && log_calendar_valid) {
+                    uint8_t memory = board_display_log_memory();
+                    if (memory == BOARD_LOG_MEMORY_OFF) {
+                        memory = board_display_log_source();
+                    }
+                    if (memory <= BOARD_LOG_MEMORY_SPI) {
+                        const uint32_t day_start = log_calendar_seconds -
+                            (log_calendar_seconds % 86400u);
+                        dose_reconcile_begin(memory, calendar_day_key,
+                            day_start, today_pulse_count);
+                    }
+                }
                 if (board_display_dose_period() == 1u) {
                     if (dose_measurement_seconds < UINT32_MAX) {
                         ++dose_measurement_seconds;

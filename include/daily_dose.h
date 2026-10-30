@@ -11,5 +11,6 @@ uint32_t daily_dose_count(void);
 bool daily_dose_checkpoint(void);
 uint32_t daily_dose_total(void);
 void daily_dose_set_total(uint32_t count);
+void daily_dose_clear(void);
 
 #endif

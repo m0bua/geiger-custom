@@ -1541,7 +1541,7 @@ function formatLogRadiation(valueUsv, isRate = false) {
 }
 function logValueCells(record) {
   const cnt = (deviceSettings?.[9] ?? 0) === 1;
-  const dose = formatLogRadiation(record.dose * 0.000111);
+  const dose = formatLogRadiation(record.dose / 9000);
   const average = formatLogRadiation(record.average * 0.00666, true);
   const maximum = formatLogRadiation(record.maximum * 0.00666, true);
   const values = [cnt ? `${formatGroupedNumber(record.dose)} CNT` : `${dose.value} ${dose.unit}`,
@@ -1616,7 +1616,7 @@ function renderLogTotal(type) {
   const maximum = logRecords.reduce((max, record) => Math.max(max, record.maximum), 0);
   const isCnt = (deviceSettings?.[9] ?? 0) === 1;
   const dose = isCnt ? `${formatGroupedNumber(totalDose)} CNT` :
-    `${formatLogRadiation(totalDose * 0.000111).value} ${formatLogRadiation(totalDose * 0.000111).unit}`;
+    `${formatLogRadiation(totalDose / 9000).value} ${formatLogRadiation(totalDose / 9000).unit}`;
   const average = isCnt ? `${formatGroupedNumber(weightedAverage)} CPM` :
     `${formatLogRadiation(weightedAverage * 0.00666, true).value} ${formatLogRadiation(weightedAverage * 0.00666, true).unit}`;
   const maximumText = isCnt ? `${formatGroupedNumber(maximum)} CPM` :
@@ -2604,15 +2604,15 @@ async function runDeviceAction(action, value, button) {
   if (!serial || (protocolCapabilities & CAP_DEVICE_ACTION) === 0) return;
   const resetWarnings = [
     'Reset all settings to defaults? The device will reboot.',
-    'Clear all log records in EEPROM and SPI? Erasing SPI also removes stock assets, so stock firmware may no longer work.',
+    'Clear all log records in EEPROM and SPI? SPI is erased only if every non-empty sector matches the log format; unrecognized contents are left intact. Daily and lifetime dose counters are reset.',
     deviceSettings?.[13] === 1 ?
       'Clear inactive EEPROM logs? Active SPI logs will remain.' :
       deviceSettings?.[13] === 0 ?
-        'Clear inactive SPI logs? This erases the entire SPI chip, including stock assets; stock firmware may no longer work.' :
-        'LOG MEMORY is OFF: clear all logs in EEPROM and SPI? SPI erasure also removes stock assets.',
-    'Erase the entire EEPROM, including settings and logs? The device will restart.',
-    'Erase the entire SPI chip, including assets needed by stock firmware? This cannot be undone.',
-    'Erase all EEPROM and SPI data, including stock assets? This cannot be undone; the device will restart.',
+        'Clear inactive SPI logs? The chip is erased only if its contents match the log format; unrecognized contents are left intact.' :
+        'LOG MEMORY is OFF: clear all logs in EEPROM and SPI? SPI is erased only if every non-empty sector matches the log format; unrecognized contents are left intact.',
+    'Erase the entire EEPROM, including settings and dose checkpoints? The device will restart.',
+    'Erase SPI log contents? The chip is erased only if every non-empty sector matches the log format; unrecognized contents are left intact.',
+    'Erase all EEPROM and SPI data? The SPI chip is erased only if every non-empty sector matches the log format; unrecognized contents are left intact.',
   ];
   if (action === 0 && !window.confirm(resetWarnings[value] ||
       'Perform this reset? This cannot be undone.')) return;

@@ -45,7 +45,11 @@ pio run
 
 The output files are under `.pio/build/geiger2/` (`firmware.elf`, `firmware.hex`, and `firmware.bin`). The project uses a local board definition and its own startup file and linker script; it is bare metal and does not require Arduino or STM32 HAL.
 
+The standalone fallback is `python tools/build_firmware.py`; its output is under `.pio/scratch/geiger2_manual/`. It reads the same firmware `build_flags` as PlatformIO and uses the same bare-metal link settings. Both builders check the startup and interrupt vectors before producing HEX. With the same toolchain and `SOURCE_DATE_EPOCH`, their BIN/HEX files are byte-identical; otherwise the initial RTC timestamp can differ. See [build handoff](docs/docs/VSCODE_HANDOFF.md) for the comparison commands and current Flash budget.
+
 The committed default upload profile uses ST-LINK over SWD. On this workstation, the ignored `platformio.local.ini` selects UART bootloader upload on COM4 instead. Put the board in UART bootloader mode manually before starting the upload.
+
+For UART uploads, PlatformIO now generates `firmware.hex` from the just-linked ELF and passes that Intel HEX image to `stm32flash` with write verification enabled. The upload log should report `Using Parser : Intel HEX` and finish with a successful verify before starting the firmware. ST-LINK uploads continue to use the ELF through the default platform uploader.
 
 To use the committed ST-LINK profile, connect an ST-LINK to SWDIO, SWCLK, GND, and preferably NRST, then select **Upload** or run:
 
@@ -53,7 +57,7 @@ To use the committed ST-LINK profile, connect an ST-LINK to SWDIO, SWCLK, GND, a
 pio run --target upload
 ```
 
-The UART upload requires STM32CubeProgrammer CLI. The helper searches `PATH` and the standard Program Files locations. The USB-C connector and its boot-mode wiring have not been independently verified. For ST-LINK, keep the board powered normally and do not connect a second 3.3 V supply from the probe.
+The UART profile uses PlatformIO's `stm32flash` package. Enter the ROM bootloader manually before upload. For ST-LINK, keep the board powered normally and do not connect a second 3.3 V supply from the probe.
 
 ## Alternative CMake build
 

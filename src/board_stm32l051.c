@@ -2,6 +2,7 @@
 #include "board_config.h"
 #include "button_input.h"
 #include "cpm_history.h"
+#include "daily_dose.h"
 #include "font_large.h"
 #include "font_small.h"
 #include "protocol_v1.h"
@@ -5231,7 +5232,11 @@ static bool lcd_cleanup_execute(void)
         if (ok) board_reboot();
         return ok;
     case 1u:
-        ok = log_eeprom_reset(false) && lcd_cleanup_clear_spi();
+        ok = lcd_cleanup_clear_spi() && log_eeprom_reset(false);
+        if (ok) {
+            daily_dose_clear();
+            ok = daily_dose_checkpoint();
+        }
         if (ok) board_reboot();
         return ok;
     case 2u:
@@ -5240,7 +5245,11 @@ static bool lcd_cleanup_execute(void)
         } else if (settings_log_memory == BOARD_LOG_MEMORY_EEPROM) {
             ok = lcd_cleanup_clear_spi();
         } else {
-            ok = log_eeprom_reset(false) && lcd_cleanup_clear_spi();
+            ok = lcd_cleanup_clear_spi() && log_eeprom_reset(false);
+            if (ok) {
+                daily_dose_clear();
+                ok = daily_dose_checkpoint();
+            }
         }
         if (ok) board_reboot();
         return ok;
@@ -5250,10 +5259,14 @@ static bool lcd_cleanup_execute(void)
         return ok;
     case 4u:
         ok = lcd_cleanup_clear_spi();
+        if (ok && board_display_log_source() == BOARD_LOG_MEMORY_SPI) {
+            daily_dose_clear();
+            ok = daily_dose_checkpoint();
+        }
         if (ok) board_reboot();
         return ok;
     case 5u:
-        ok = board_eeprom_clear_all() && lcd_cleanup_clear_spi();
+        ok = lcd_cleanup_clear_spi() && board_eeprom_clear_all();
         if (ok) board_reset();
         return ok;
     default:

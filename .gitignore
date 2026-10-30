@@ -4,3 +4,4 @@ build/
 dist/
 tmp/
 platformio.local.ini
+__pycache__/

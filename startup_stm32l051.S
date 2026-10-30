@@ -72,7 +72,9 @@ Default_Handler:
     b Default_Handler
 .size Default_Handler, .-Default_Handler
 
-.weak SysTick_Handler
-.thumb_set SysTick_Handler,Default_Handler
+/* Keep this reference undefined until link time. A weak alias here lets the
+ * LTO plugin discard the real C handler and leaves SysTick in Default_Handler.
+ * Every firmware target supplies SysTick_Handler from board_stm32l051.c. */
+.extern SysTick_Handler
 
 .section .note.GNU-stack,"",%progbits

@@ -148,3 +148,10 @@ void daily_dose_set_total(uint32_t count)
 {
     if (count != total_count) { total_count = count; dirty = true; }
 }
+
+void daily_dose_clear(void)
+{
+    pulse_count = 0u;
+    total_count = 0u;
+    dirty = true;
+}

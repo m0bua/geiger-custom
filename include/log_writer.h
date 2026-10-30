@@ -17,4 +17,5 @@ bool log_writer_fault(void);
 bool log_writer_live(log_record_kind_t kind, log_stored_t *item);
 bool log_writer_change_memory(uint8_t target);
 void log_writer_memory_committed(uint8_t target);
+bool log_writer_take_hour_closed(void);
 #endif
