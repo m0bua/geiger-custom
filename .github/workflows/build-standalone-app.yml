@@ -180,10 +180,14 @@ jobs:
           ## Changes
           - Fixed LTO firmware startup by preserving the real SysTick handler; startup has been confirmed on the device.
           - Unified standalone and PlatformIO build settings, added startup/interrupt vector validation, and enabled verified Intel HEX uploads over UART.
-          - Reconcile DAY and TOTAL doses with stored logs after each completed hour and when changing log storage, preserving newly counted pulses.
+          - DOSE ROW 2 CPM now uses measured CPM. DAY and TOTAL counters are corrected after the DAY graph loads; background hourly resynchronization is disabled to keep minute writes on schedule.
           - Reset dose counters with the active logs and block log erasure over unrecognized SPI contents, including stock assets.
           - Added a smooth backlight fade after the configured screen timeout.
           - Kept log table headers and totals visible during scrolling, with ten records by default and vertical resizing.
+          - SEARCH now refreshes the rate every 100 ms, responds immediately to detector pulses, eases down between pulses, shows up to five decimal places for Sv/R, and uses a brighter LED. NORMAL refreshes every 500 ms; with the display off, updates follow pulses.
+          - Extended live rate graphs to 3, 5, and 10 minutes with separate history resolutions; fixed cursor cleanup at graph edges.
+          - Improved minute-log coverage tracking so delayed second sampling does not create false partial-minute records.
+          - Enabled complementary CPM/CPS choices in CNT mode and kept log rows stable during live refresh to prevent hover flicker.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded; used for app compatibility checks): ${canonical_sha256}
