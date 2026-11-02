@@ -114,6 +114,7 @@ int main(void)
     bool screen_alarm_active = false;
     bool light_alarm_active = false;
     bool sound_alarm_active = false;
+    bool rate_click_pending = false;
     bool alarms_acknowledged = false;
     bool light_alarm_on = false;
     bool event_led_on = false;
@@ -504,8 +505,15 @@ int main(void)
             }
 
             if (detected_pulses != event_count) {
+                const uint32_t pulse_delta = detected_pulses - event_count;
                 event_count = detected_pulses;
+                if (board_display_search_mode()) {
+                    display_rate_cpm_tenths += pulse_delta * 10u;
+                }
                 board_display_set_count(detected_pulses);
+                if (!backlight_on || board_display_invisible_mode()) {
+                    rate_click_pending = true;
+                }
                 if (!sound_alarm_active &&
                     board_display_click_sound_enabled(backlight_on)) {
                     board_click_sound_start();
@@ -632,32 +640,46 @@ int main(void)
                     ((uint64_t)latest_cpm * 666u + 50u) / 100u);
                 board_display_set_rate_alarm(measured_rate_thousandths,
                     latest_cpm, pulses_since_start >= 30u);
+                if (board_display_search_mode()) {
+                    display_rate_cpm_tenths =
+                        (display_rate_cpm_tenths * 63u) >> 6u;
+                }
                 next_minute_tick += 1000u;
             }
 
-            if ((int32_t)(now - next_rate_display_tick) >= 0) {
-                const uint32_t target_cpm_tenths = latest_display_cpm * 10u;
-                if (!backlight_on) {
-                    display_rate_cpm_tenths = target_cpm_tenths;
-                } else {
-                    const int32_t difference = (int32_t)target_cpm_tenths -
-                        (int32_t)display_rate_cpm_tenths;
-                    int32_t step = difference / 2;
-                    if (difference != 0 && step == 0) {
-                        step = difference > 0 ? 1 : -1;
+            {
+                const bool per_click = !backlight_on ||
+                    board_display_invisible_mode();
+                const uint32_t interval_ms =
+                    board_display_search_mode() ? 100u : 500u;
+                const bool search_mode = board_display_search_mode();
+                const bool due = per_click ? rate_click_pending :
+                    (int32_t)(now - next_rate_display_tick) >= 0;
+                if (due) {
+                    const uint32_t target_cpm_tenths = latest_display_cpm * 10u;
+                    if (per_click) {
+                        display_rate_cpm_tenths = target_cpm_tenths;
+                    } else if (!search_mode) {
+                        const int32_t difference =
+                            (int32_t)target_cpm_tenths -
+                            (int32_t)display_rate_cpm_tenths;
+                        int32_t step = difference / 2;
+                        if (difference != 0 && step == 0)
+                            step = difference > 0 ? 1 : -1;
+                        display_rate_cpm_tenths = (uint32_t)(
+                            (int32_t)display_rate_cpm_tenths + step);
                     }
-                    display_rate_cpm_tenths = (uint32_t)(
-                        (int32_t)display_rate_cpm_tenths + step);
+                    const uint32_t display_rate_100000ths = (uint32_t)(
+                        ((uint64_t)display_rate_cpm_tenths * 666u + 5u) /
+                        10u);
+                    const uint32_t display_cpm =
+                        (display_rate_cpm_tenths + 5u) / 10u;
+                    board_display_set_rate(display_rate_100000ths,
+                        display_cpm, pulses_since_start,
+                        pulses_since_start >= 30u);
+                    next_rate_display_tick = now + interval_ms;
+                    rate_click_pending = false;
                 }
-                const uint32_t display_cpm =
-                    (display_rate_cpm_tenths + 5u) / 10u;
-                const uint32_t display_rate_thousandths = (uint32_t)(
-                    ((uint64_t)display_rate_cpm_tenths * 666u + 500u) /
-                    1000u);
-                board_display_set_rate(display_rate_thousandths,
-                    display_cpm, pulses_since_start,
-                    pulses_since_start >= 30u);
-                next_rate_display_tick = now + 500u;
             }
 
             if ((int32_t)(now - next_cpm_history_tick) >= 0) {

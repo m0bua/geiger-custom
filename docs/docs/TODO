@@ -1,5 +1,6 @@
 BUG: battery % grows on discharge sometimes.
 BUG: APP logs blinking
 
-FEAT: search mode 100ms rate upd.
 FEAT: portal builder manual run.
+
+BUG: second row limits (CPM+CPS)
