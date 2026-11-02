@@ -2199,20 +2199,27 @@ function updateSpiDumpAvailability() {
 }
 
 function settingsOptions(setting, currentSettings = deviceSettings) {
-  if ((setting.id === 10 || setting.id === 11) && currentSettings?.[9] === 1) {
+  const unit = Number(currentSettings?.[9] ?? 0);
+  if (setting.id === 11 && unit === 1) {
+    return [{label: 'CNT', value: Number(currentSettings?.[11] ?? 0), disabled: true}];
+  }
+  if (setting.id === 10 && unit === 1) {
     return ['CPM', 'CPS'];
   }
   if (setting.id === 12) {
-    const unit = currentSettings?.[9] ?? 0;
-    const ratePrefix = currentSettings?.[10] ?? 1;
+    const ratePrefix = Number(currentSettings?.[10] ?? 1);
+    const cntMode = unit === 1;
+    const mainCountRate = ratePrefix === 1 ? 'CPS' : 'CPM';
     return [
-      {label: 'CPM', value: unit === 1 ? 4 : 0,
-        disabled: unit === 1 && ratePrefix === 0},
-      {label: 'CPS', value: unit === 1 ? 3 : 1,
-        disabled: unit === 1 && ratePrefix === 1},
+      // Firmware row values are CPS=3 and CPM=4 in CNT mode. Keep the
+      // complementary format selectable (CPS + CPM or CPM + CPS).
+      {label: 'CPM', value: cntMode ? 4 : 0,
+        disabled: cntMode && mainCountRate === 'CPM'},
+      {label: 'CPS', value: cntMode ? 3 : 1,
+        disabled: cntMode && mainCountRate === 'CPS'},
       {label: 'OFF', value: 2, disabled: false},
-      {label: 'SV', value: unit === 1 ? 0 : (unit === 0 ? 'duplicate-sv' : 3), disabled: unit === 0},
-      {label: 'R', value: unit === 1 ? 1 : (unit === 2 ? 'duplicate-r' : 3), disabled: unit === 2},
+      {label: 'SV', value: cntMode ? 0 : (unit === 0 ? 'duplicate-sv' : 3), disabled: unit === 0},
+      {label: 'R', value: cntMode ? 1 : (unit === 2 ? 'duplicate-r' : 3), disabled: unit === 2},
     ];
   }
   if (setting.id === 22) {
@@ -2384,7 +2391,7 @@ function renderSettings() {
               ['EEPROM', 'SPI', 'OFF'][nextValue] || 'EEPROM';
           }
           if (setting.id === 23) demoSettings[22] = nextValue === 0 ? 3 : 1;
-          if (setting.id === 9 || setting.id === 23) {
+          if (setting.id === 9 || setting.id === 10 || setting.id === 23) {
             renderSettings();
             document.querySelector(`#setting-${setting.id}`)?.focus();
           }
