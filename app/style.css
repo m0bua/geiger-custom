@@ -213,6 +213,15 @@ button { font: inherit; }
 .settings-clock > p[data-level="success"] { color: var(--green); }
 .settings-clock > p[data-level="error"] { color: #ff7474; }
 .logs-panel { padding: 18px; border: 1px solid var(--line); border-radius: 11px; background: rgba(17,26,31,.8); }
+.logs-heading-actions { min-width: 0; }
+.logs-heading-actions > #logs-status { min-width: 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.logs-fullscreen-button { min-width: 36px; min-height: 32px; padding: 0 8px; font-size: 18px; line-height: 1; }
+.logs-panel.is-fullscreen { position: fixed; z-index: 1000; inset: 0; display: flex; width: 100%; height: 100vh; height: 100dvh; max-height: none; flex-direction: column; overflow: hidden; padding: 12px 18px 0; border: 0; border-radius: 0; background: #0b1115; }
+.logs-panel.is-fullscreen > .panel-heading,
+.logs-panel.is-fullscreen > .log-tabs,
+.logs-panel.is-fullscreen > .logs-diagnostics { display: none; }
+.logs-panel.is-fullscreen .log-content { height: auto; min-height: 0; max-height: none; flex: 1 1 auto; resize: none; }
+.logs-panel.is-fullscreen #exit-logs-fullscreen { display: inline-flex; }
 .log-tabs { display: flex; gap: 5px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .log-tab { padding: 7px 11px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; cursor: pointer; }
 .log-tab.active { color: var(--green); background: rgba(0,229,139,.09); }
@@ -349,7 +358,9 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .panel-heading { align-items: flex-start; flex-wrap: wrap; gap: 9px; }
   .panel-heading-actions { width: 100%; min-width: 0; justify-content: space-between; gap: 8px; }
   .panel-heading-actions > #settings-status { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; line-height: 1.4; }
-  .logs-panel > .panel-heading > #logs-status { min-width: 0; flex: 1 1 100%; overflow-wrap: anywhere; line-height: 1.4; }
+  .logs-heading-actions { width: auto; flex: 1 1 auto; }
+  .logs-heading-actions > #logs-status { flex: 1 1 auto; overflow-wrap: anywhere; white-space: normal; }
+  .logs-panel.is-fullscreen { padding: 10px 12px 0; }
   .log-tabs { overflow-x: auto; }
   .log-tab { padding-inline: 8px; }
   .logs-tools { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }

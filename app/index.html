@@ -119,7 +119,13 @@
     </section>
 
     <section id="logs-page" class="page logs-panel" hidden>
-      <div class="panel-heading"><h2>Logs</h2><span id="logs-status">Connect to read logs.</span></div>
+      <div class="panel-heading">
+        <h2>Logs</h2>
+        <div class="panel-heading-actions logs-heading-actions">
+          <span id="logs-status">Connect to read logs.</span>
+          <button id="toggle-logs-fullscreen" class="button button-quiet logs-fullscreen-button" type="button" aria-label="Expand logs to full screen" title="Expand logs to full screen" aria-pressed="false">⛶</button>
+        </div>
+      </div>
       <nav id="log-tabs" class="log-tabs" aria-label="Log types"></nav>
       <div class="logs-tools">
         <div class="logs-left-tools">
@@ -146,6 +152,7 @@
           <button id="load-log-selection" class="button button-quiet" type="button" disabled>Load</button>
           <button id="load-more-logs" class="button button-quiet" type="button" disabled>More</button>
           <button id="export-logs-csv" class="button button-quiet" type="button" disabled>Export</button>
+          <button id="exit-logs-fullscreen" class="button button-quiet logs-fullscreen-button" type="button" aria-label="Exit full screen" title="Exit full screen" hidden>↙</button>
         </div>
       </div>
       <div id="log-content" class="log-content"></div>
@@ -312,15 +319,15 @@
           <li><strong>Without a connection:</strong> Overview, Logs, and Debug show clearly marked illustrative zero data. Settings use factory defaults and can be changed for preview, but preview changes are not saved and reset after reloading the page. Options unsupported by the connected firmware remain visible but disabled.</li>
         </ul>
         <h3>Logs</h3>
-        <p>The Logs page reads the same history used by the device's log graphs. Select a log type and range, then press <strong>Load</strong>. You can choose the type and range before connecting; switching tabs keeps each loaded view. The app requests the maximum number of records supported by the connected firmware in each serial exchange, up to ten, and adds returned records and refreshes totals after every response. While loading, <strong>Stop</strong> lets the current device request finish, processes its response, and then stops further requests. <strong>More</strong> extends Latest by another default period, adds 100 records to Count, or resumes an incomplete All or Dates load. It stays visible and is disabled while disconnected, loading, or when no more records are available. The current record may refresh while the page is open.</p>
+        <p>The Logs page reads the same history used by the device's log graphs. Select a log type and range, then press <strong>Load</strong>. You can choose the type and range before connecting; switching tabs keeps each loaded view. Use the expand button beside the Logs heading to fill the screen; in full-screen mode the type tabs and diagnostics are hidden, and the ↙ button or Escape returns to normal view. The app requests the maximum number of records supported by the connected firmware in each serial exchange, up to ten, and adds returned records and refreshes totals after every response. While loading, <strong>Stop</strong> lets the current device request finish, processes its response, and then stops further requests. <strong>More</strong> extends Latest by another default period, adds 100 records to Count, or resumes an incomplete All or Dates load. It stays visible and is disabled while disconnected, loading, or when no more records are available. The current record may refresh while the page is open.</p>
         <ul>
           <li><strong>MINUTES:</strong> one record per minute, with dose, average rate, maximum rate, and coverage.</li>
           <li><strong>HOURS:</strong> one record per hour with the same values. The newest unfinished hour is assembled from minute data.</li>
           <li><strong>DAYS:</strong> one record per day. The newest unfinished day is assembled from smaller intervals.</li>
-          <li><strong>ALERTS:</strong> one record per alert episode, showing duration, dose, average rate, and maximum rate.</li>
+          <li><strong>ALERTS:</strong> one record per alert episode, showing compact duration (seconds, M:SS, or H:MM:SS with zero leading fields omitted), dose, average rate, and maximum rate.</li>
         </ul>
         <p>Dose is accumulated detector counts converted to the selected <strong>UNIT</strong> and prefix. In <strong>CNT</strong> mode, dose is shown as CNT and rates as CPM. Average rate uses the record's actual covered time; missing time is not treated as zero activity.</p>
-        <p><strong>Coverage</strong> applies to minute, hour, and day records. It shows the represented percentage and seconds, followed by the state: <em>full</em>, <em>partial</em>, or <em>live</em>. A partial record's dose and average describe only the time actually measured. A live record is the current in-progress interval and can change until it closes. Alert records show duration instead of coverage.</p>
+        <p><strong>Coverage</strong> applies to minute, hour, and day records. It shows the represented percentage and a compact elapsed time: seconds below one minute, minutes and seconds below one hour, then <code>hh:mm:ss</code> and an optional day field for longer spans. Zero leading fields are omitted. The state follows as <em>full</em>, <em>partial</em>, or <em>live</em>. A partial record's dose and average describe only the time actually measured. A live record is the current in-progress interval and can change until it closes. Alert records show duration instead of coverage.</p>
         <p>The <strong>Fill</strong> selector changes the shaded bar behind table values. For MINUTES, HOURS, and DAYS it can compare Dose, Average, Maximum, or Coverage; for ALERTS it can compare Duration, Dose, Average, or Maximum. The shading is scaled against the largest value in the currently loaded records. Metric text is highlighted when it reaches a warning or red level.</p>
         <p><strong>Range</strong> offers Latest, All, Dates, and Count. Latest loads up to 60 minutes, 24 hours, 30 days, or 5 alerts, depending on the selected type. All loads the complete available history. Dates loads an inclusive calendar interval; the newer bound must be later than the older bound. Count loads the requested number of newest records. Minute ranges use minute precision and hour ranges use hour precision. Calendar ranges require a valid device clock. The current firmware supports up to ten records per request.</p>
         <p><strong>Export</strong> saves only the records currently loaded for the selected log type; it does not fetch the rest of the selected range. Load the full range you need first. The CSV includes timestamp, type, dose and units, average and maximum rate, covered seconds, coverage percentage, and record status.</p>
@@ -478,7 +485,7 @@
             <ul>
               <li><strong>Search and display:</strong> SEARCH refreshes the rate every 100 ms, reacts immediately to pulses, eases down between pulses, shows up to five decimal places for Sv/R, and uses a brighter LED. NORMAL refreshes every 500 ms; with the display off, rate updates follow pulses. Fixed rate/dose secondary-row rendering and kept warm-up CNT aligned with the dose row.</li>
               <li><strong>Graphs and logs:</strong> added dedicated live histories for 3, 5, and 10 minutes and fixed cursor cleanup at graph edges. Minute coverage now follows elapsed time, avoiding false partial records when sampling is delayed. Dose calculations follow logged pulse counts; automatic hourly dose resynchronization is disabled, with DAY/TOTAL correction available after loading the DAY graph.</li>
-              <li><strong>Log viewer:</strong> requests up to ten records per device exchange and updates rows and totals as each response arrives. Stop finishes the current request before halting. More extends Latest by one period, Count by 100 records, or resumes All/Dates; it remains visible but disables when unavailable. Live refresh no longer rebuilds rows under the pointer.</li>
+              <li><strong>Log viewer:</strong> expands to full screen; displays coverage as compact elapsed time and alert duration without unit suffixes, omitting zero leading fields. Requests up to ten records per device exchange and updates rows and totals as each response arrives. Stop finishes the current request before halting. More extends Latest by one period, Count by 100 records, or resumes All/Dates; it remains visible but disables when unavailable. Live refresh no longer rebuilds rows under the pointer.</li>
               <li><strong>Firmware and backups:</strong> Quick, Firmware, and SPI operations save a permanent full FLASH backup in browser storage before the first write and offer restore actions. Manual FLASH dumps have a separate browser-stored restore copy. SPI service operations use a temporary recovery backup. Actions are grouped in the persistent activity log; older actions collapse when a new one starts.</li>
               <li><strong>Windows and interface:</strong> added F5 page refresh to the desktop app, refined overview metrics and setting controls, and removed an unavailable demo clock status message.</li>
             </ul>

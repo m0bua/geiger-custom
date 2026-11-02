@@ -251,6 +251,8 @@ const elements = {
   debugPage: document.querySelector('#debug-page'),
   settingsPage: document.querySelector('#settings-page'),
   logsPage: document.querySelector('#logs-page'),
+  toggleLogsFullscreen: document.querySelector('#toggle-logs-fullscreen'),
+  exitLogsFullscreen: document.querySelector('#exit-logs-fullscreen'),
   logTabs: document.querySelector('#log-tabs'),
   logContent: document.querySelector('#log-content'),
   logRangeMode: document.querySelector('#log-range-mode'),
@@ -1175,6 +1177,7 @@ function selectPage(page, updateUrl = true) {
   if (page === 'instructions') page = 'manual';
   const pages = ['overview', 'debug', 'settings', 'logs', 'firmware', 'manual', 'about'];
   if (!pages.includes(page)) return;
+  if (page !== 'logs') setLogsFullscreen(false);
   for (const name of pages) {
     const active = name === page;
     elements[`${name}Page`].hidden = !active;
@@ -1197,6 +1200,21 @@ function selectPage(page, updateUrl = true) {
   } else if (page === 'logs' && !serial) {
     updateLogRangeControls();
   }
+}
+
+function setLogsFullscreen(enabled) {
+  const active = Boolean(enabled);
+  elements.logsPage.classList.toggle('is-fullscreen', active);
+  elements.exitLogsFullscreen.hidden = !active;
+  elements.toggleLogsFullscreen.setAttribute('aria-pressed', String(active));
+  elements.toggleLogsFullscreen.textContent = active ? '↙' : '⛶';
+  const label = active ? 'Exit full screen' : 'Expand logs to full screen';
+  elements.toggleLogsFullscreen.setAttribute('aria-label', label);
+  elements.toggleLogsFullscreen.title = label;
+}
+
+function toggleLogsFullscreen() {
+  setLogsFullscreen(!elements.logsPage.classList.contains('is-fullscreen'));
 }
 
 function renderDebugLogInfo() {
@@ -1597,7 +1615,7 @@ function logValueCells(record) {
   const values = [cnt ? `${formatGroupedNumber(record.dose)} CNT` : `${dose.value} ${dose.unit}`,
     cnt ? `${record.average} CPM` : `${average.value} ${average.unit}`,
     cnt ? `${record.maximum} CPM` : `${maximum.value} ${maximum.unit}`];
-  const duration = `${Math.floor(record.covered / 60)}:${String(record.covered % 60).padStart(2, '0')}`;
+  const duration = formatAlertDuration(record.covered);
   return selectedLogType === 'alerts' ? [duration, ...values] :
     [...values, formatLogCoverage(record)];
 }
@@ -1605,15 +1623,30 @@ function formatLogCoverage(record) {
   const type = logTypes.find((item) => item.id === selectedLogType);
   const percent = logCoveragePercent(record, type);
   const state = record.live ? 'live' : (record.partial ? 'partial' : 'full');
-  return `${percent}% · ${record.covered}s · ${state}`;
+  return `${percent}% · ${formatCoverageDuration(record.covered)} · ${state}`;
+}
+function formatCoverageDuration(seconds) {
+  let remaining = Math.max(0, Math.floor(seconds));
+  const days = Math.floor(remaining / 86400);
+  remaining %= 86400;
+  const hours = Math.floor(remaining / 3600);
+  remaining %= 3600;
+  const minutes = Math.floor(remaining / 60);
+  const secs = remaining % 60;
+  const mm = String(minutes).padStart(2, '0');
+  const ss = String(secs).padStart(2, '0');
+  if (days) return `${days}d ${String(hours).padStart(2, '0')}:${mm}:${ss}`;
+  if (hours) return `${String(hours).padStart(2, '0')}:${mm}:${ss}`;
+  if (minutes) return `${minutes}:${ss}`;
+  return `${secs}s`;
 }
 function logCoveragePercent(record, type = logTypes.find((item) => item.id === selectedLogType)) {
   return Math.round(Math.min(record.covered, type.period) * 100 / type.period);
 }
 function logCoverageClass(record, type = logTypes.find((item) => item.id === selectedLogType)) {
   const percent = logCoveragePercent(record, type);
-  return percent < 30 ? 'coverage-red' :
-    (percent < 50 ? 'coverage-yellow' : (percent > 90 ? 'coverage-green' : ''));
+  return percent >= 100 ? 'coverage-green' :
+    (percent >= 90 ? 'coverage-yellow' : 'coverage-red');
 }
 function logRateClass(cpm) {
   return cpm * 666 > 90000 ? 'level-red' :
@@ -1651,12 +1684,14 @@ function logFillValue(record, type) {
     default: return record.dose;
   }
 }
-function formatTotalDuration(seconds) {
-  if (seconds >= 3600) {
-    const hours = Math.floor(seconds / 3600);
-    return `${hours}:${String(Math.floor(seconds / 60) % 60).padStart(2, '0')}h`;
-  }
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}m`;
+function formatAlertDuration(seconds) {
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor(total / 60) % 60;
+  const secs = total % 60;
+  if (hours) return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  if (minutes) return `${minutes}:${String(secs).padStart(2, '0')}`;
+  return String(secs).padStart(2, '0');
 }
 function renderLogTotal(type) {
   const totalDose = logRecords.reduce((sum, record) => sum + record.dose, 0);
@@ -1672,8 +1707,8 @@ function renderLogTotal(type) {
   const maximumText = isCnt ? `${formatGroupedNumber(maximum)} CPM` :
     `${formatLogRadiation(maximum * 0.00666, true).value} ${formatLogRadiation(maximum * 0.00666, true).unit}`;
   const values = type.id === 'alerts' ?
-    [`TOTAL (${logRecords.length})`, formatTotalDuration(covered), dose, average, maximumText] :
-    [`TOTAL (${logRecords.length})`, dose, average, maximumText, `${formatGroupedNumber(covered)}s total`];
+    [`TOTAL (${logRecords.length})`, formatAlertDuration(covered), dose, average, maximumText] :
+    [`TOTAL (${logRecords.length})`, dose, average, maximumText, `${formatCoverageDuration(covered)} total`];
   const row = elements.logContent.querySelector('.log-total') ?? document.createElement('div');
   row.className = 'log-grid log-record log-total';
   while (row.children.length > values.length) row.lastElementChild.remove();
@@ -2588,8 +2623,8 @@ function renderOfflinePreview() {
       covered: alert ? 0 : demoType.period, live: false, partial: false};
     const fillValue = logFillValue(demoRecord, demoType);
     record.style.setProperty('--bar-width', `${fillValue ? 100 : 0}%`);
-    const values = alert ? ['—', '0:00', '0 µSv', '0 µSv/h', '0 µSv/h'] :
-      ['—', '0 µSv', '0 µSv/h', '0 µSv/h', `100% · ${demoType.period}s · full`];
+    const values = alert ? ['—', formatAlertDuration(0), '0 µSv', '0 µSv/h', '0 µSv/h'] :
+      ['—', '0 µSv', '0 µSv/h', '0 µSv/h', `100% · ${formatCoverageDuration(demoType.period)} · full`];
     values.forEach((text, index) => {
       const cell = document.createElement('span');
       if (!alert && index === values.length - 1) cell.className = 'coverage-green';
@@ -2597,7 +2632,19 @@ function renderOfflinePreview() {
       cell.textContent = text;
       record.append(cell);
     });
-    elements.logContent.append(header, record);
+    const total = document.createElement('div');
+    total.className = 'log-grid log-record log-total';
+    const totalValues = alert ?
+      ['TOTAL (1)', formatAlertDuration(0), '0 µSv', '0 µSv/h', '0 µSv/h'] :
+      ['TOTAL (1)', '0 µSv', '0 µSv/h', '0 µSv/h', `${formatCoverageDuration(demoType.period)} total`];
+    totalValues.forEach((text, index) => {
+      const cell = document.createElement('span');
+      if (alert ? index >= 2 : index >= 1 && index <= 3) cell.className = 'log-metric';
+      else if (!alert && index === 4) cell.className = 'coverage-green';
+      cell.textContent = text;
+      total.append(cell);
+    });
+    elements.logContent.append(header, total, record);
     elements.logsStatus.textContent = `DEMO DATA · 1 illustrative ${type} record`;
   };
   demoLogRenderer = renderDemoLog;
@@ -3022,6 +3069,13 @@ document.querySelector('#settings-refresh').addEventListener('click', refreshSet
 document.querySelector('#debug-refresh').addEventListener('click', refreshDebugPage);
 elements.syncClock.addEventListener('click', synchronizeDeviceClock);
 elements.logsTab.addEventListener('click', () => selectPage('logs'));
+elements.toggleLogsFullscreen.addEventListener('click', toggleLogsFullscreen);
+elements.exitLogsFullscreen.addEventListener('click', () => setLogsFullscreen(false));
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && elements.logsPage.classList.contains('is-fullscreen')) {
+    setLogsFullscreen(false);
+  }
+});
 elements.loadMoreLogs.addEventListener('click', loadMoreLogRecords);
 elements.loadLogSelection.addEventListener('click', () => {
   if (logPageLoading) {
