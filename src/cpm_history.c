@@ -2,59 +2,95 @@
 
 #include <stddef.h>
 
-static uint8_t cpm_samples[CPM_HISTORY_CAPACITY *
-    CPM_HISTORY_BYTES_PER_SAMPLE];
-static uint8_t cpm_head;
-static uint8_t cpm_count;
+#define CPM_HISTORY_SAMPLE_BITS 18u
+#define CPM_HISTORY_SAMPLE_MASK 0x3FFFFu
+#define CPM_HISTORY_TOTAL_SAMPLES (CPM_HISTORY_FAST_CAPACITY + \
+    CPM_HISTORY_MEDIUM_CAPACITY + CPM_HISTORY_SLOW_CAPACITY)
+#define CPM_HISTORY_STORAGE_BYTES ((CPM_HISTORY_TOTAL_SAMPLES * \
+    CPM_HISTORY_SAMPLE_BITS + 7u) / 8u)
+
+static const uint16_t cpm_tier_offsets[CPM_HISTORY_TIER_COUNT] = {
+    0u, CPM_HISTORY_FAST_CAPACITY,
+    CPM_HISTORY_FAST_CAPACITY + CPM_HISTORY_MEDIUM_CAPACITY
+};
+static const uint8_t cpm_tier_capacities[CPM_HISTORY_TIER_COUNT] = {
+    CPM_HISTORY_FAST_CAPACITY, CPM_HISTORY_MEDIUM_CAPACITY,
+    CPM_HISTORY_SLOW_CAPACITY
+};
+static uint8_t cpm_samples[CPM_HISTORY_STORAGE_BYTES];
+static uint8_t cpm_head[CPM_HISTORY_TIER_COUNT];
+static uint8_t cpm_count[CPM_HISTORY_TIER_COUNT];
+static uint8_t cpm_tick_phase;
+
+static void cpm_history_store(uint16_t sample_index, uint32_t cpm)
+{
+    const uint32_t bit_index = (uint32_t)sample_index * CPM_HISTORY_SAMPLE_BITS;
+    const uint16_t byte_index = (uint16_t)(bit_index >> 3u);
+    /* 18-bit samples begin at even bit offsets, so three bytes always suffice. */
+    const uint8_t shift = (uint8_t)(bit_index & 7u);
+    uint32_t packed = (uint32_t)cpm_samples[byte_index] |
+        ((uint32_t)cpm_samples[byte_index + 1u] << 8u) |
+        ((uint32_t)cpm_samples[byte_index + 2u] << 16u);
+    const uint32_t mask = CPM_HISTORY_SAMPLE_MASK << shift;
+    packed = (packed & ~mask) | ((cpm & CPM_HISTORY_SAMPLE_MASK) << shift);
+    cpm_samples[byte_index] = (uint8_t)packed;
+    cpm_samples[byte_index + 1u] = (uint8_t)(packed >> 8u);
+    cpm_samples[byte_index + 2u] = (uint8_t)(packed >> 16u);
+}
+
+static uint32_t cpm_history_load(uint16_t sample_index)
+{
+    const uint32_t bit_index = (uint32_t)sample_index * CPM_HISTORY_SAMPLE_BITS;
+    const uint16_t byte_index = (uint16_t)(bit_index >> 3u);
+    const uint8_t shift = (uint8_t)(bit_index & 7u);
+    uint32_t packed = (uint32_t)cpm_samples[byte_index] |
+        ((uint32_t)cpm_samples[byte_index + 1u] << 8u) |
+        ((uint32_t)cpm_samples[byte_index + 2u] << 16u);
+    return (packed >> shift) & CPM_HISTORY_SAMPLE_MASK;
+}
 
 void cpm_history_init(void)
 {
-    for (size_t i = 0u; i < sizeof(cpm_samples); ++i) {
-        cpm_samples[i] = 0u;
+    for (uint8_t tier = 0u; tier < CPM_HISTORY_TIER_COUNT; ++tier) {
+        cpm_head[tier] = 0u;
+        cpm_count[tier] = 0u;
     }
-    cpm_head = 0u;
-    cpm_count = 0u;
+    cpm_tick_phase = 0u;
 }
 
 void cpm_history_push(uint32_t cpm)
 {
-    uint8_t *sample;
-
-    if (cpm > 0xFFFFFFu) {
-        cpm = 0xFFFFFFu;
+    if (cpm > CPM_HISTORY_SAMPLE_MASK) cpm = CPM_HISTORY_SAMPLE_MASK;
+    const uint8_t fast = cpm_head[CPM_HISTORY_FAST];
+    cpm_history_store((uint16_t)(cpm_tier_offsets[CPM_HISTORY_FAST] + fast), cpm);
+    cpm_head[CPM_HISTORY_FAST] = (uint8_t)((fast + 1u) % cpm_tier_capacities[CPM_HISTORY_FAST]);
+    if (cpm_count[CPM_HISTORY_FAST] < cpm_tier_capacities[CPM_HISTORY_FAST]) ++cpm_count[CPM_HISTORY_FAST];
+    if (cpm_tick_phase % 5u == 0u) {
+        const uint8_t index = cpm_head[CPM_HISTORY_MEDIUM];
+        cpm_history_store((uint16_t)(cpm_tier_offsets[CPM_HISTORY_MEDIUM] + index), cpm);
+        cpm_head[CPM_HISTORY_MEDIUM] = (uint8_t)((index + 1u) % cpm_tier_capacities[CPM_HISTORY_MEDIUM]);
+        if (cpm_count[CPM_HISTORY_MEDIUM] < cpm_tier_capacities[CPM_HISTORY_MEDIUM]) ++cpm_count[CPM_HISTORY_MEDIUM];
     }
-
-    sample = &cpm_samples[(uint16_t)cpm_head *
-        CPM_HISTORY_BYTES_PER_SAMPLE];
-    sample[0] = (uint8_t)cpm;
-    sample[1] = (uint8_t)(cpm >> 8u);
-    sample[2] = (uint8_t)(cpm >> 16u);
-
-    cpm_head = (uint8_t)((cpm_head + 1u) % CPM_HISTORY_CAPACITY);
-    if (cpm_count < CPM_HISTORY_CAPACITY) {
-        ++cpm_count;
+    if (cpm_tick_phase % 18u == 0u) {
+        const uint8_t index = cpm_head[CPM_HISTORY_SLOW];
+        cpm_history_store((uint16_t)(cpm_tier_offsets[CPM_HISTORY_SLOW] + index), cpm);
+        cpm_head[CPM_HISTORY_SLOW] = (uint8_t)((index + 1u) % cpm_tier_capacities[CPM_HISTORY_SLOW]);
+        if (cpm_count[CPM_HISTORY_SLOW] < cpm_tier_capacities[CPM_HISTORY_SLOW]) ++cpm_count[CPM_HISTORY_SLOW];
     }
+    cpm_tick_phase = (uint8_t)((cpm_tick_phase + 1u) % 90u);
 }
 
-uint8_t cpm_history_count(void)
+uint8_t cpm_history_count(uint8_t tier)
 {
-    return cpm_count;
+    return tier < CPM_HISTORY_TIER_COUNT ? cpm_count[tier] : 0u;
 }
 
-bool cpm_history_get(uint8_t age, uint32_t *cpm)
+bool cpm_history_get(uint8_t tier, uint8_t age, uint32_t *cpm)
 {
-    uint8_t index;
-    uint16_t offset;
-
-    if (cpm == NULL || age >= cpm_count) {
+    if (cpm == NULL || tier >= CPM_HISTORY_TIER_COUNT || age >= cpm_count[tier])
         return false;
-    }
-
-    index = (uint8_t)((cpm_head + CPM_HISTORY_CAPACITY - 1u - age) %
-        CPM_HISTORY_CAPACITY);
-    offset = (uint16_t)index * CPM_HISTORY_BYTES_PER_SAMPLE;
-    *cpm = (uint32_t)cpm_samples[offset] |
-        ((uint32_t)cpm_samples[offset + 1u] << 8u) |
-        ((uint32_t)cpm_samples[offset + 2u] << 16u);
+    const uint8_t index = (uint8_t)((cpm_head[tier] +
+        cpm_tier_capacities[tier] - 1u - age) % cpm_tier_capacities[tier]);
+    *cpm = cpm_history_load((uint16_t)(cpm_tier_offsets[tier] + index));
     return true;
 }

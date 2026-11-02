@@ -95,6 +95,7 @@ int main(void)
     bool calendar_day_valid = false;
     uint32_t next_minute_tick;
     uint32_t next_rate_display_tick;
+    uint32_t next_cpm_history_tick;
     uint32_t latest_cpm = 23u;
     uint32_t latest_display_cpm = 23u;
     uint32_t display_rate_cpm_tenths = 230u;
@@ -196,6 +197,7 @@ int main(void)
     next_usb_sample = board_millis;
     next_minute_tick = board_millis + 1000u;
     next_rate_display_tick = board_millis + 500u;
+    next_cpm_history_tick = board_millis + 150u;
     next_total_checkpoint = board_millis + TOTAL_PULSE_CHECKPOINT_MS;
     cpm_history_init();
     screen_timeout_ms = board_display_screen_timeout_ms();
@@ -655,9 +657,13 @@ int main(void)
                 board_display_set_rate(display_rate_thousandths,
                     display_cpm, pulses_since_start,
                     pulses_since_start >= 30u);
-                cpm_history_push(display_cpm);
-                board_display_history_updated();
                 next_rate_display_tick = now + 500u;
+            }
+
+            if ((int32_t)(now - next_cpm_history_tick) >= 0) {
+                cpm_history_push((display_rate_cpm_tenths + 5u) / 10u);
+                board_display_history_updated();
+                next_cpm_history_tick += 150u;
             }
 
             if (backlight_on && !screen_alarm_active &&

@@ -1,7 +1,5 @@
-BUG: fake high rate after start.
 BUG: battery % grows on discharge sometimes.
+BUG: APP logs blinking
 
 FEAT: search mode 100ms rate upd.
-FEAT: more direct graph (3/5/10min)
-
 FEAT: portal builder manual run.

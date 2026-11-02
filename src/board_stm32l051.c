@@ -173,7 +173,7 @@ static uint32_t lcd_search_mode_started;
     (FONT_SMALL_CELL_HEIGHT / 2u))
 #define LCD_GRAPH_BASELINE (LCD_HEIGHT - 10u)
 #define LCD_GRAPH_HEIGHT (LCD_GRAPH_BASELINE - LCD_GRAPH_TOP + 1u)
-#define LCD_GRAPH_STATS_WIDTH ((7u * 7u) + 4u)
+#define LCD_GRAPH_STATS_WIDTH ((7u * 7u) + 5u)
 #define LCD_GRAPH_PLOT_WIDTH (LCD_WIDTH - LCD_GRAPH_STATS_WIDTH)
 #define LCD_GRAPH_YELLOW_THRESHOLD_CPM 61u
 #define LCD_GRAPH_RED_THRESHOLD_CPM 136u
@@ -304,12 +304,23 @@ static bool lcd_graph_loading;
 static bool lcd_graph_log_summary_work_active;
 static uint8_t lcd_graph_log_visible;
 static uint8_t lcd_graph_log_available;
-static log_point_t lcd_graph_log_points[LCD_GRAPH_VISIBLE_BARS];
-static log_cursor_t lcd_graph_log_record_cursors[LCD_GRAPH_LOG_MAX_RECORDS];
+typedef struct __attribute__((packed)) {
+    uint32_t time;
+    uint16_t epoch;
+    uint8_t skip;
+} lcd_graph_log_cursor_t;
+static uint32_t lcd_graph_log_bar_counts[LCD_GRAPH_VISIBLE_BARS];
+static log_point_t lcd_graph_selected_point;
+static bool lcd_graph_selected_point_valid;
+static uint32_t lcd_graph_first_day_start;
+static uint32_t lcd_graph_first_day_count;
+static bool lcd_graph_first_day_calendar_valid;
+static lcd_graph_log_cursor_t lcd_graph_log_record_cursors[
+    LCD_GRAPH_LOG_MAX_RECORDS];
 static log_cursor_t lcd_graph_log_summary_cursor;
 static uint32_t lcd_graph_log_summary_count;
 static uint8_t lcd_graph_log_summary_memory;
-static uint8_t lcd_graph_column_y[LCD_WIDTH];
+static uint8_t lcd_graph_column_y[LCD_GRAPH_PLOT_WIDTH];
 static char lcd_graph_stat_values[4][5];
 static bool lcd_graph_input_locked;
 static int8_t lcd_graph_pending_action;
@@ -2685,9 +2696,9 @@ static uint32_t lcd_graph_interpolate(uint32_t a, uint32_t b,
     return rising ? a + part : a - part;
 }
 
-static void lcd_graph_build_series(uint8_t requested)
+static void lcd_graph_build_series(uint8_t tier, uint8_t requested)
 {
-    const uint8_t available = cpm_history_count();
+    const uint8_t available = cpm_history_count(tier);
     const uint8_t visible = available < requested ? available : requested;
     uint32_t maximum = 0u;
     uint32_t candidate;
@@ -2698,11 +2709,11 @@ static void lcd_graph_build_series(uint8_t requested)
     uint64_t sum = 0u;
     uint8_t stat_unit;
 
-    for (uint16_t x = 0u; x < LCD_WIDTH; ++x) {
+    for (uint16_t x = 0u; x < LCD_GRAPH_PLOT_WIDTH; ++x) {
         lcd_graph_column_y[x] = UINT8_MAX;
     }
     for (uint8_t age = 0u; age < visible; ++age) {
-        const bool got_value = cpm_history_get(age, &candidate);
+        const bool got_value = cpm_history_get(tier, age, &candidate);
         if (got_value) {
             if (candidate > maximum) maximum = candidate;
             if (candidate < minimum) minimum = candidate;
@@ -2750,7 +2761,7 @@ static void lcd_graph_build_series(uint8_t requested)
              ++plot_x) {
             uint32_t value;
             if (visible == 1u || span == 0u) {
-                (void)cpm_history_get(0u, &value);
+                (void)cpm_history_get(tier, 0u, &value);
             } else {
                 const uint32_t position =
                     (uint32_t)(plot_x - data_start) * (visible - 1u);
@@ -2760,9 +2771,9 @@ static void lcd_graph_build_series(uint8_t requested)
                 uint32_t older_value = 0u;
                 uint32_t newer_value = 0u;
 
-                (void)cpm_history_get(age, &older_value);
+                (void)cpm_history_get(tier, age, &older_value);
                 if (age != 0u) {
-                    (void)cpm_history_get((uint8_t)(age - 1u),
+                    (void)cpm_history_get(tier, (uint8_t)(age - 1u),
                                           &newer_value);
                 } else {
                     newer_value = older_value;
@@ -2770,7 +2781,7 @@ static void lcd_graph_build_series(uint8_t requested)
                 value = lcd_graph_interpolate(older_value, newer_value,
                     remainder, span);
             }
-            lcd_graph_column_y[plot_x + LCD_GRAPH_STATS_WIDTH] =
+            lcd_graph_column_y[plot_x] =
                 (uint8_t)(plot_bottom -
                 ((uint64_t)value * (plot_height - 1u)) / maximum);
         }
@@ -2801,13 +2812,16 @@ static uint8_t lcd_graph_log_record_limit(void)
     return 50u;
 }
 
-static bool lcd_graph_read_log_point(uint8_t index, log_point_t *point)
+static bool lcd_graph_read_log_point(uint8_t index,
+                                    log_point_t *point)
 {
     if (index >= lcd_graph_log_available || point == NULL) return false;
     const uint8_t type = (uint8_t)(lcd_graph_log_type - 1u);
     const uint32_t period = type == LOG_RECORD_ALERT ? 60u :
         log_record_period_seconds((log_record_kind_t)type);
-    log_cursor_t cursor = lcd_graph_log_record_cursors[index];
+    const lcd_graph_log_cursor_t *saved = &lcd_graph_log_record_cursors[index];
+    log_cursor_t cursor = {.time = saved->time, .epoch = saved->epoch,
+        .skip = saved->skip};
     return log_history_next(type, period, &cursor, 0u, point);
 }
 
@@ -2818,12 +2832,15 @@ static bool lcd_graph_load_log_window(uint8_t start)
     lcd_graph_log_visible = 0u;
     while (lcd_graph_log_visible < LCD_GRAPH_VISIBLE_BARS &&
            (uint16_t)start + lcd_graph_log_visible < lcd_graph_log_available) {
+        log_point_t point;
         if (!lcd_graph_read_log_point(
-                (uint8_t)(start + lcd_graph_log_visible),
-                &lcd_graph_log_points[lcd_graph_log_visible])) break;
+                (uint8_t)(start + lcd_graph_log_visible), &point)) break;
+        lcd_graph_log_bar_counts[lcd_graph_log_visible] =
+            (point.count & 0x7FFFFFFFu) | (point.partial ? 0x80000000u : 0u);
         ++lcd_graph_log_visible;
     }
     lcd_graph_log_window_valid = lcd_graph_log_visible != 0u;
+    lcd_graph_selected_point_valid = false;
     return lcd_graph_log_window_valid;
 }
 
@@ -2856,27 +2873,34 @@ static bool lcd_graph_move_bar(bool older)
     if (new_window > max_start) new_window = max_start;
     if (new_window != old_window) {
         if (new_window == (uint8_t)(old_window + 1u)) {
-            for (uint8_t i = 0u; i + 1u < lcd_graph_log_visible; ++i)
-                lcd_graph_log_points[i] = lcd_graph_log_points[i + 1u];
+            for (uint8_t i = 0u; i + 1u < lcd_graph_log_visible; ++i) {
+                lcd_graph_log_bar_counts[i] = lcd_graph_log_bar_counts[i + 1u];
+            }
             lcd_graph_log_window_start = new_window;
             const uint8_t next_index = (uint8_t)(new_window +
                 lcd_graph_log_visible - 1u);
-            if (!lcd_graph_read_log_point(next_index,
-                    &lcd_graph_log_points[lcd_graph_log_visible - 1u])) {
+            log_point_t point;
+            if (!lcd_graph_read_log_point(next_index, &point)) {
                 lcd_graph_selected_record = old_record;
                 lcd_graph_log_window_start = old_window;
                 return false;
             }
+            lcd_graph_log_bar_counts[lcd_graph_log_visible - 1u] =
+                (point.count & 0x7FFFFFFFu) |
+                (point.partial ? 0x80000000u : 0u);
         } else if (old_window == (uint8_t)(new_window + 1u)) {
-            for (uint8_t i = lcd_graph_log_visible - 1u; i != 0u; --i)
-                lcd_graph_log_points[i] = lcd_graph_log_points[i - 1u];
+            for (uint8_t i = lcd_graph_log_visible - 1u; i != 0u; --i) {
+                lcd_graph_log_bar_counts[i] = lcd_graph_log_bar_counts[i - 1u];
+            }
             lcd_graph_log_window_start = new_window;
-            if (!lcd_graph_read_log_point(new_window,
-                    &lcd_graph_log_points[0])) {
+            log_point_t point;
+            if (!lcd_graph_read_log_point(new_window, &point)) {
                 lcd_graph_selected_record = old_record;
                 lcd_graph_log_window_start = old_window;
                 return false;
             }
+            lcd_graph_log_bar_counts[0] = (point.count & 0x7FFFFFFFu) |
+                (point.partial ? 0x80000000u : 0u);
         } else if (!lcd_graph_load_log_window(new_window)) {
             lcd_graph_selected_record = old_record;
             (void)lcd_graph_load_log_window(old_window);
@@ -2890,6 +2914,7 @@ static bool lcd_graph_move_bar(bool older)
         lcd_graph_partial_kind = wrapped ? LCD_GRAPH_PARTIAL_WINDOW :
             LCD_GRAPH_PARTIAL_CURSOR;
     }
+    lcd_graph_selected_point_valid = false;
     lcd_graph_input_locked = true;
     lcd_graph_refresh_deadline = board_millis + 5000u;
     lcd_graph_partial_pending = true;
@@ -2910,6 +2935,7 @@ static void lcd_graph_reset_log_window(void)
     lcd_graph_log_summary_count = UINT32_MAX;
     lcd_graph_partial_pending = false;
     lcd_graph_partial_kind = 0u;
+    lcd_graph_selected_point_valid = false;
 }
 
 static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
@@ -2927,6 +2953,9 @@ static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
         lcd_graph_log_summary_coverage = 0u;
         lcd_graph_log_summary_max = 0u;
         lcd_graph_log_summary_bar_max = 0u;
+        lcd_graph_first_day_start = 0u;
+        lcd_graph_first_day_count = 0u;
+        lcd_graph_first_day_calendar_valid = false;
         lcd_graph_log_summary_memory = board_display_log_memory();
         if (lcd_graph_log_summary_memory == BOARD_LOG_MEMORY_OFF)
             lcd_graph_log_summary_memory = board_display_log_source();
@@ -2938,8 +2967,14 @@ static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
     while (lcd_graph_log_summary_count < batch_end) {
         log_point_t point;
         const uint32_t index = lcd_graph_log_summary_count;
-        if (index < lcd_graph_log_available)
-            lcd_graph_log_record_cursors[index] = lcd_graph_log_summary_cursor;
+        if (index < lcd_graph_log_available) {
+            lcd_graph_log_record_cursors[index].time =
+                lcd_graph_log_summary_cursor.time;
+            lcd_graph_log_record_cursors[index].epoch =
+                lcd_graph_log_summary_cursor.epoch;
+            lcd_graph_log_record_cursors[index].skip =
+                (uint8_t)lcd_graph_log_summary_cursor.skip;
+        }
         if (!log_history_next(type, period, &lcd_graph_log_summary_cursor,
                 0u, &point)) {
             if (index < lcd_graph_log_available)
@@ -2947,8 +2982,15 @@ static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
             exhausted = true;
             break;
         }
-        if (index < LCD_GRAPH_VISIBLE_BARS)
-            lcd_graph_log_points[index] = point;
+        if (index < LCD_GRAPH_VISIBLE_BARS) {
+            lcd_graph_log_bar_counts[index] =
+                (point.count & 0x7FFFFFFFu) | (point.partial ? 0x80000000u : 0u);
+        }
+        if (all_days && index == 0u) {
+            lcd_graph_first_day_start = point.period_start;
+            lcd_graph_first_day_count = point.count;
+            lcd_graph_first_day_calendar_valid = point.calendar_valid;
+        }
         lcd_graph_log_summary_dose += point.count;
         lcd_graph_log_summary_coverage += point.covered_seconds;
         if (point.maximum_cpm > lcd_graph_log_summary_max)
@@ -2969,11 +3011,12 @@ static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
             lcd_graph_log_summary_coverage) : 0u;
     lcd_graph_log_window_valid = lcd_graph_log_visible != 0u;
     lcd_graph_log_summary_valid = true;
+    lcd_graph_selected_point_valid = false;
     if (all_days && lcd_graph_log_visible != 0u &&
-        lcd_graph_log_points[0].calendar_valid) {
+        lcd_graph_first_day_calendar_valid) {
         dose_reconcile_use_summary(lcd_graph_log_summary_memory,
-            (uint16_t)(lcd_graph_log_points[0].period_start / 86400u),
-            lcd_graph_log_points[0].count,
+            (uint16_t)(lcd_graph_first_day_start / 86400u),
+            lcd_graph_first_day_count,
             lcd_graph_log_summary_dose > UINT32_MAX ? UINT32_MAX :
                 (uint32_t)lcd_graph_log_summary_dose);
     }
@@ -2982,9 +3025,8 @@ static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
 
 static void lcd_graph_build_logs(void)
 {
-    uint8_t *values = lcd_text_glyph;
     uint32_t maximum = 1u;
-    for (uint16_t x = 0u; x < LCD_WIDTH; ++x) {
+    for (uint16_t x = 0u; x < LCD_GRAPH_PLOT_WIDTH; ++x) {
         lcd_graph_column_y[x] = UINT8_MAX;
     }
     if (lcd_graph_loading || !lcd_graph_log_summary_valid) {
@@ -2993,29 +3035,28 @@ static void lcd_graph_build_logs(void)
     }
     if (!lcd_graph_log_window_valid) lcd_graph_log_visible = 0u;
     if (lcd_graph_selected >= lcd_graph_log_visible) lcd_graph_selected = 0u;
-    for (uint8_t age = 0u; age < lcd_graph_log_visible; ++age) {
-        const log_point_t *point = &lcd_graph_log_points[age];
-        uint32_t packed = point->count & 0x7FFFFFFFu;
-        if (point->partial) packed |= 0x80000000u;
-        memcpy(&values[(uint16_t)age * sizeof(packed)], &packed, sizeof(packed));
-    }
     if (lcd_graph_log_summary_bar_max > maximum)
         maximum = lcd_graph_log_summary_bar_max;
     for (uint8_t age = 0u; age < lcd_graph_log_visible; ++age) {
-        uint32_t packed;
-        memcpy(&packed, &values[(uint16_t)age * sizeof(packed)], sizeof(packed));
+        const uint32_t packed = lcd_graph_log_bar_counts[age];
         const uint32_t count = packed & 0x7FFFFFFFu;
         const uint8_t y = (uint8_t)(LCD_GRAPH_BASELINE -
             ((uint64_t)count * (LCD_GRAPH_HEIGHT - 1u)) / maximum);
         const uint16_t x = (uint16_t)(LCD_GRAPH_STATS_WIDTH +
             (uint16_t)age * LCD_GRAPH_BAR_STEP);
         for (uint8_t pixel = 0u; pixel < FONT_SMALL_CELL_WIDTH; ++pixel) {
-            lcd_graph_column_y[x + pixel] =
+            lcd_graph_column_y[x + pixel - LCD_GRAPH_STATS_WIDTH] =
                 (uint8_t)(y | ((packed & 0x80000000u) ? 0x80u : 0u));
         }
     }
-    const log_point_t *selected = lcd_graph_log_visible == 0u ? NULL :
-        &lcd_graph_log_points[lcd_graph_selected];
+    const log_point_t *selected = NULL;
+    if (lcd_graph_cursor_mode && lcd_graph_log_visible != 0u) {
+        if (!lcd_graph_selected_point_valid) {
+            lcd_graph_selected_point_valid = lcd_graph_read_log_point(
+                lcd_graph_selected_record, &lcd_graph_selected_point);
+        }
+        if (lcd_graph_selected_point_valid) selected = &lcd_graph_selected_point;
+    }
     lcd_graph_selected_time = selected == NULL ? 0u : selected->period_start;
     lcd_graph_selected_calendar = selected != NULL && selected->calendar_valid;
     lcd_graph_stat_max = lcd_graph_cursor_mode && selected ? selected->maximum_cpm :
@@ -3072,7 +3113,7 @@ static uint16_t lcd_graph_log_pixel(uint16_t x, uint16_t y)
             x >= left && x < left + FONT_SMALL_CELL_WIDTH ?
                 LCD_SETTINGS_SELECTED_COLOR : LCD_TEXT_BACKGROUND;
     }
-    const uint8_t column = lcd_graph_column_y[x];
+    const uint8_t column = lcd_graph_column_y[x - LCD_GRAPH_STATS_WIDTH];
     const bool selected = lcd_graph_cursor_mode &&
         x >= LCD_GRAPH_STATS_WIDTH +
             (uint16_t)lcd_graph_selected * LCD_GRAPH_BAR_STEP &&
@@ -3107,7 +3148,7 @@ static uint16_t lcd_graph_pixel(uint16_t x, uint16_t y)
         return LCD_TEXT_BACKGROUND;
     }
     if (x == LCD_GRAPH_STATS_WIDTH - 1u) return LCD_GRAPH_DIM_COLOR;
-    const uint8_t column = lcd_graph_column_y[x];
+    const uint8_t column = lcd_graph_column_y[x - LCD_GRAPH_STATS_WIDTH];
     if (y == lcd_graph_red_threshold_y) return LCD_COUNTER_RED;
     if (y == lcd_graph_yellow_threshold_y) return LCD_COUNTER_YELLOW;
     return column != UINT8_MAX && y >= column ?
@@ -3117,21 +3158,41 @@ static uint16_t lcd_graph_pixel(uint16_t x, uint16_t y)
 static void lcd_graph_prepare_header(void)
 {
     static const uint8_t seconds_table[4] = {10u, 30u, 60u, 90u};
+    static const uint8_t minute_table[3] = {3u, 5u, 10u};
+    static const uint8_t history_tier[7] = {
+        CPM_HISTORY_FAST, CPM_HISTORY_FAST,
+        CPM_HISTORY_MEDIUM, CPM_HISTORY_MEDIUM,
+        CPM_HISTORY_SLOW, CPM_HISTORY_SLOW, CPM_HISTORY_SLOW
+    };
+    static const uint8_t sample_count[7] = {68u, 201u, 81u, 121u, 68u, 113u, 224u};
     static const char *const titles[] = {"SEC", "MIN", "HOUR", "DAY", "ALRT"};
-    const uint8_t seconds = seconds_table[lcd_graph_range_index];
     char line[20];
     for (uint8_t i = 0u; i < 20u; ++i) line[i] = ' ';
     if (!lcd_graph_log_type) {
-        line[0] = (char)('0' + seconds / 10u);
-        line[1] = (char)('0' + seconds % 10u);
-        line[2] = 's';
+        if (lcd_graph_range_index < 4u) {
+            const uint8_t seconds = seconds_table[lcd_graph_range_index];
+            line[0] = (char)('0' + seconds / 10u);
+            line[1] = (char)('0' + seconds % 10u);
+            line[2] = 's';
+        } else {
+            const uint8_t minutes = minute_table[lcd_graph_range_index - 4u];
+            if (minutes < 10u) {
+                line[0] = (char)('0' + minutes);
+                line[1] = 'm';
+            } else {
+                line[0] = (char)('0' + minutes / 10u);
+                line[1] = (char)('0' + minutes % 10u);
+                line[2] = 'm';
+            }
+        }
     }
     const char *title = titles[lcd_graph_log_type];
     if (lcd_graph_log_type) {
         lcd_graph_build_logs();
         if (lcd_graph_loading) memcpy(line, "WAIT...", 7u);
     }
-    else lcd_graph_build_series((uint8_t)(seconds * 2u));
+    else lcd_graph_build_series(history_tier[lcd_graph_range_index],
+        sample_count[lcd_graph_range_index]);
     if (lcd_graph_log_type && lcd_graph_cursor_mode) {
         if (lcd_graph_selected_calendar) {
             rtc_calendar_t calendar;
@@ -3953,7 +4014,7 @@ bool board_display_graph_long_press(void)
         lcd_graph_partial_kind = LCD_GRAPH_PARTIAL_CURSOR;
         lcd_graph_partial_pending = true;
     } else {
-        lcd_graph_range_index = (uint8_t)((lcd_graph_range_index + 1u) % 4u);
+        lcd_graph_range_index = (uint8_t)((lcd_graph_range_index + 1u) % 7u);
         lcd_cpm_redraw_pending = true;
     }
     lcd_graph_input_locked = true;

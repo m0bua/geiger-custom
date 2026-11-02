@@ -2,7 +2,8 @@
 
 #define RATE_STARTUP_BASELINE_CPM 23u
 
-static uint32_t samples[SECOND_LOG_CAPACITY];
+/* The detector's supported CPM ceiling is 262144 (about 4369 pulses/s). */
+static uint16_t samples[SECOND_LOG_CAPACITY];
 static uint32_t rolling_pulses;
 static uint8_t head;
 static uint8_t count;
@@ -28,6 +29,7 @@ void second_log_reset_rate_window(void)
 
 uint32_t second_log_add(uint32_t pulses)
 {
+    if (pulses > UINT16_MAX) pulses = UINT16_MAX;
     if (rate_window_count == 60u) {
         const uint8_t oldest = (uint8_t)((head + SECOND_LOG_CAPACITY - 60u) %
             SECOND_LOG_CAPACITY);
@@ -35,7 +37,7 @@ uint32_t second_log_add(uint32_t pulses)
     } else if (rate_window_count < 60u) {
         ++rate_window_count;
     }
-    samples[head] = pulses;
+    samples[head] = (uint16_t)pulses;
     rolling_pulses += pulses;
     head = (uint8_t)((head + 1u) % SECOND_LOG_CAPACITY);
     if (count < SECOND_LOG_CAPACITY) ++count;
