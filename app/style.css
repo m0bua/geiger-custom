@@ -133,6 +133,18 @@ button { font: inherit; }
 .local-build-flash { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .quick-flash { max-width: 900px; margin-top: 10px; padding: 14px; border: 1px solid rgba(0,229,139,.25); border-radius: 9px; background: rgba(0,229,139,.045); }
 .quick-flash strong { color: var(--green); font-size: 13px; }
+.stock-firmware { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(74,92,101,.45); }
+.stock-firmware > summary { color: #aebbc0; cursor: pointer; font-size: 12px; }
+.stock-firmware > p { margin: 8px 0; color: #89999f; font-size: 11px; }
+.stock-firmware-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.stock-firmware-list .button { justify-content: flex-start; }
+.stock-firmware-sources { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(74,92,101,.35); color: #89999f; font-size: 11px; }
+.stock-firmware-sources h4 { margin: 0 0 6px; color: #aebbc0; font-size: 11px; font-weight: 600; }
+.stock-firmware-sources ul { display: grid; gap: 5px; margin: 0; padding-left: 18px; }
+.stock-firmware-sources li { padding-left: 2px; }
+.stock-firmware-sources a { color: #65b8e8; margin-right: 6px; }
+.stock-firmware-sources a:hover { color: #91d2f7; }
+.stock-firmware-sources span { color: #89999f; }
 .local-build-copy { display: grid; gap: 7px; }
 .local-build-flash p { margin: 0; color: var(--muted); font-size: 12px; }
 .local-build-flash code { color: #c8d3d6; font: 11px "DM Mono", Consolas, monospace; }
@@ -348,6 +360,7 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .firmware-file-control { grid-column: 1 / -1; }
   .memory-range-controls { grid-template-columns: 1fr 1fr; }
   .memory-range-controls label:first-child { grid-column: 1 / -1; }
+  .stock-firmware-list { grid-template-columns: 1fr; }
   .firmware-tools .verify-option { grid-column: 1 / -1; }
   .local-build-flash { align-items: flex-start; flex-direction: column; }
   .detail:nth-last-child(-n+3) { border-bottom: 1px solid rgba(160,186,194,.08); }

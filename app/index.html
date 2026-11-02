@@ -170,6 +170,12 @@
           <button id="quick-restore-flash" class="button button-danger" type="button" hidden>Restore FLASH</button>
           <button id="quick-flash-firmware" class="button button-primary" type="button">Quick flash</button>
         </div>
+        <details id="stock-firmware-section" class="stock-firmware" hidden>
+          <summary>Stock</summary>
+          <p>Select a stock firmware version to flash. The app saves the permanent FLASH backup first if one is not already available.</p>
+          <div id="stock-firmware-list" class="stock-firmware-list"></div>
+          <div id="stock-firmware-sources" class="stock-firmware-sources" hidden></div>
+        </details>
       </details>
       <details id="firmware-tools" class="firmware-tools firmware-section" name="firmware-sections" open>
         <summary>Firmware</summary>

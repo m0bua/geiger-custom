@@ -1,0 +1,78 @@
+{
+  "format": 1,
+  "api_endpoints": [
+    "https://milerdport.cloud/api/firmware_updates/current?platform=Device&type=E",
+    "https://milerdport.cloud/api/firmware_updates/getLast?platform=Device&type=E",
+    "https://milerdport.cloud/api/firmware_updates/getLast?platform=Device&type=T",
+    "https://milerdport.cloud/api/firmware_updates/current?platform=Device",
+    "https://mainserver.milerd.ru/api/firmware_updates/current?platform=Device&type=u",
+    "https://mainserver.milerd.ru/api/firmware_updates/getLast?platform=Device&type=u"
+  ],
+  "links": [
+    {
+      "label": "EN · current metadata (type E)",
+      "description": "Current English firmware entry published by Milerd PORT.",
+      "url": "https://milerdport.cloud/api/firmware_updates/current?platform=Device&type=E"
+    },
+    {
+      "label": "EN · latest download list (type E)",
+      "description": "API response contains the current English HEX download URL.",
+      "url": "https://milerdport.cloud/api/firmware_updates/getLast?platform=Device&type=E"
+    },
+    {
+      "label": "Device · current/default metadata (type T)",
+      "description": "Default current Device firmware; API reports update type T.",
+      "url": "https://milerdport.cloud/api/firmware_updates/current?platform=Device"
+    },
+    {
+      "label": "Device · latest download list (type T)",
+      "description": "API response contains the current Port HEX download URL.",
+      "url": "https://milerdport.cloud/api/firmware_updates/getLast?platform=Device&type=T"
+    },
+    {
+      "label": "RU · current metadata (type u)",
+      "description": "Current Russian-language firmware entry on the Milerd RU server.",
+      "url": "https://mainserver.milerd.ru/api/firmware_updates/current?platform=Device&type=u"
+    },
+    {
+      "label": "RU · latest download list (type u)",
+      "description": "API response contains the Russian HEX download URL.",
+      "url": "https://mainserver.milerd.ru/api/firmware_updates/getLast?platform=Device&type=u"
+    },
+    {
+      "label": "Port 4.1.16 · archived HEX",
+      "description": "Direct Milerd firmware archive file.",
+      "url": "https://milerdport.cloud/uploads/firmware/Device/T/4.1.16/files/Port-4.1.16-(only-Windows).hex"
+    }
+  ],
+  "files": {
+    "EN-3.1.18-(only-Windows).hex": {
+      "sha256": "8c1af5e2692047ebac1124a3096c2e1a82ade3869d69e08cb558447499c7c571",
+      "version": "3.1.18",
+      "source_urls": [
+        {
+          "api": "https://milerdport.cloud/api/firmware_updates/current?platform=Device&type=E",
+          "download": "https://milerdport.cloud/uploads/firmware/Device/E/3.1.18/files/EN-3.1.18-(only-Windows).hex"
+        },
+        {
+          "api": "https://milerdport.cloud/api/firmware_updates/getLast?platform=Device&type=E",
+          "download": "https://milerdport.cloud/uploads/firmware/Device/E/3.1.18/files/EN-3.1.18-(only-Windows).hex"
+        }
+      ]
+    },
+    "Port-4.1.17.hex": {
+      "sha256": "89368e9b3d8789d641d0d9756971cea92ea10902ea8feffac604745a0791d6d0",
+      "version": "4.1.17",
+      "source_urls": [
+        {
+          "api": "https://milerdport.cloud/api/firmware_updates/getLast?platform=Device&type=T",
+          "download": "https://milerdport.cloud/uploads/firmware/Device/T/4.1.17/files/Port-4.1.17-(only-Windows).hex"
+        },
+        {
+          "api": "https://milerdport.cloud/api/firmware_updates/current?platform=Device",
+          "download": "https://milerdport.cloud/uploads/firmware/Device/T/4.1.17/files/Port-4.1.17-(only-Windows).hex"
+        }
+      ]
+    }
+  }
+}

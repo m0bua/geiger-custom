@@ -7,6 +7,7 @@ import base64
 from datetime import datetime
 import hashlib
 import html
+import json
 import os
 from pathlib import Path
 import re
@@ -15,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 
+from stock_firmware import STOCK_DIR, stock_hex_files
+
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "app"
@@ -22,6 +25,59 @@ DEFAULT_FIRMWARE = ROOT / ".pio/scratch/geiger2_manual/firmware.bin"
 DEFAULT_SPI_MINI = ROOT / ".pio/build/geiger2_spi_mini/firmware.bin"
 DEFAULT_OUTPUT = ROOT / "dist/Dosimetr.html"
 TERSER_VERSION = "5.44.0"
+
+
+def validate_stock_hex(path: Path, raw: bytes) -> None:
+    text = raw.decode("ascii")
+    present = bytearray(65536)
+    upper_address = 0
+    eof = False
+    for line_number, raw_line in enumerate(text.splitlines(), 1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if eof or not re.fullmatch(r":[0-9a-fA-F]+", line) or (len(line) & 1) != 1:
+            raise ValueError(f"Invalid Intel HEX record in {path.name} line {line_number}.")
+        try:
+            record = bytes.fromhex(line[1:])
+        except ValueError as error:
+            raise ValueError(f"Invalid Intel HEX byte in {path.name} line {line_number}.") from error
+        if len(record) < 5:
+            raise ValueError(f"Incomplete Intel HEX record in {path.name} line {line_number}.")
+        length, address_high, address_low, record_type = record[:4]
+        address = (address_high << 8) | address_low
+        data = record[4:-1]
+        if len(record) != length + 5 or sum(record) & 0xff:
+            raise ValueError(f"Intel HEX length/checksum error in {path.name} line {line_number}.")
+        if record_type == 0:
+            absolute = upper_address + address
+            if absolute < 0x08000000 or absolute + length > 0x08010000:
+                raise ValueError(f"{path.name} contains data outside STM32L051 FLASH.")
+            offset = absolute - 0x08000000
+            if any(present[offset:offset + length]):
+                raise ValueError(f"{path.name} contains overlapping data at 0x{absolute:08x}.")
+            present[offset:offset + length] = b"\x01" * length
+        elif record_type == 0x01:
+            if length != 0 or address != 0:
+                raise ValueError(f"Malformed EOF record in {path.name} line {line_number}.")
+            eof = True
+        elif record_type == 0x02:
+            if length != 2 or address != 0:
+                raise ValueError(f"Malformed segment address in {path.name} line {line_number}.")
+            upper_address = int.from_bytes(data, "big") << 4
+        elif record_type == 0x04:
+            if length != 2 or address != 0:
+                raise ValueError(f"Malformed linear address in {path.name} line {line_number}.")
+            upper_address = int.from_bytes(data, "big") << 16
+        elif record_type in (0x03, 0x05):
+            if length != 4 or address != 0:
+                raise ValueError(f"Malformed start address in {path.name} line {line_number}.")
+        else:
+            raise ValueError(f"Unsupported Intel HEX record type {record_type} in {path.name}.")
+    if not eof:
+        raise ValueError(f"Intel HEX EOF record is missing from {path.name}.")
+    if not all(present[:8]):
+        raise ValueError(f"{path.name} is missing the initial vector table.")
 
 
 def minify_javascript(source: str, required: bool) -> tuple[str, bool]:
@@ -182,6 +238,23 @@ def main() -> int:
     if not spi_mini or len(spi_mini) >= 65536:
         raise ValueError(f"SPI service image has invalid size: {len(spi_mini)} bytes")
 
+    stock_firmware = []
+    stock_sources_path = STOCK_DIR / "sources.json"
+    stock_sources = json.loads(stock_sources_path.read_text(encoding="utf-8"))
+    source_links = stock_sources.get("links", [])
+    if not isinstance(source_links, list):
+        raise ValueError(f"Invalid source links in {stock_sources_path}.")
+    stock_paths = stock_hex_files()
+    if not stock_paths:
+        raise FileNotFoundError(f"No stock HEX images found in {STOCK_DIR}.")
+    for stock_path in stock_paths:
+        stock_hex = stock_path.read_bytes()
+        validate_stock_hex(stock_path, stock_hex)
+        stock_firmware.append([
+            stock_path.name,
+            base64.b64encode(stock_hex).decode("ascii"),
+        ])
+
     document = (APP / "index.html").read_text(encoding="utf-8")
     document, version_count = re.subn(
         r'(<strong id="app-version">).*?(</strong>)',
@@ -216,7 +289,11 @@ def main() -> int:
         + base64.b64encode(firmware).decode("ascii")
         + "\";\nwindow.EMBEDDED_SPI_MINI_B64 = \""
         + base64.b64encode(spi_mini).decode("ascii")
-        + "\";\n"
+        + "\";\nwindow.EMBEDDED_STOCK_FIRMWARES = "
+        + json.dumps(stock_firmware, separators=(",", ":"))
+        + ";\nwindow.EMBEDDED_STOCK_SOURCE_LINKS = "
+        + json.dumps(source_links, separators=(",", ":"))
+        + ";\n"
         + js
     )
     app_script, js_minified = minify_javascript(app_script, args.require_minifier)
@@ -237,6 +314,7 @@ def main() -> int:
     print(f"Standalone app: {output}")
     print(f"Embedded firmware: {len(firmware)} / 65536 bytes")
     print(f"Embedded SPI service firmware: {len(spi_mini)} bytes ({spi_mini_path})")
+    print(f"Embedded stock HEX images: {len(stock_firmware)} ({sum(len(item[1]) for item in stock_firmware):,} base64 bytes)")
     print(f"Firmware SHA-256: {hashlib.sha256(firmware).hexdigest()}")
     print(f"Canonical 64 KiB SHA-256: {canonical_hash}")
     print(f"JavaScript minification: {'Terser with identifier mangling' if js_minified else 'unavailable; whitespace-safe HTML/CSS compaction only'}")

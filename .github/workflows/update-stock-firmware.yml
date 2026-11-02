@@ -1,0 +1,46 @@
+name: Check stock firmware updates
+
+on:
+  schedule:
+    - cron: "37 7 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: stock-firmware-updates
+  cancel-in-progress: false
+
+jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download new stock firmware
+        run: python tools/update_stock_firmware.py
+
+      - name: Open or update firmware archive pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ github.token }}
+          branch: automation/stock-firmware-updates
+          delete-branch: true
+          add-paths: |
+            firmware/stock/*.hex
+            firmware/stock/sources.json
+          commit-message: Add newly published stock firmware
+          title: Add newly published stock firmware
+          body: |
+            Scheduled check of the Milerd PORT firmware update API found new HEX images.
+
+            The updater validates Intel HEX structure, flash address range, and vector table, and records source URLs and SHA-256 hashes in `firmware/stock/sources.json`.

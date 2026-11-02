@@ -49,9 +49,14 @@ const PROJECT_IMAGE_MARKER = Uint8Array.of(0x4d, 0x47, 0x32, 0x46, 0x57, 0x49, 0
 const STOCK_FAMILY_SIGNATURE_OFFSET = 0x106;
 const STOCK_FAMILY_SIGNATURE_LENGTH = 790;
 const STOCK_FAMILY_SIGNATURE_SHA256 = '6dee8762ae06eb90f6400ed805221ea6d4cccf54ae69c9f7d04f7d65e0c401b0';
-const KNOWN_STOCK_IMAGE_SHA256 = 'cee27644cccea4023118f97d1a990be3bf6acb44748d61c0811f4cee0ed53386';
 // SHA-256 of the canonical 64 KiB flash image (gaps filled with 0xFF), not the source file.
 // Maintain these lists for this JS protocol; clear/review them when the protocol changes.
+const KNOWN_STOCK_IMAGE_SHA256S = new Set([
+  'a54c7f6c12f21c483e01c0380781b7dd0fc2812f8aaa247bb37ddf3ba3ea8baa', // EN 3.1.18 (Windows)
+  '1c70cf47d8a4341fafd9948e86d854616042707817c4d9c3b57bc466e2bf5f2c', // Port 4.1.16
+  'cee27644cccea4023118f97d1a990be3bf6acb44748d61c0811f4cee0ed53386', // Port 4.1.17
+  'f033d38158dbff97e0533bd2527a658addb7bbb769ca49d1c84e34b774f0c222', // RU 3.0.19 (Windows)
+]);
 const COMPATIBLE_PROJECT_IMAGE_SHA256 = new Set([
 ]);
 // Known builds with compatible core operations but different settings semantics.
@@ -259,6 +264,9 @@ const elements = {
   clearLogDiagnostics: document.querySelector('#clear-log-diagnostics'),
   firmwarePage: document.querySelector('#firmware-page'),
   embeddedQuickFlash: document.querySelector('#embedded-quick-flash'),
+  stockFirmwareSection: document.querySelector('#stock-firmware-section'),
+  stockFirmwareList: document.querySelector('#stock-firmware-list'),
+  stockFirmwareSources: document.querySelector('#stock-firmware-sources'),
   firmwareTools: document.querySelector('#firmware-tools'),
   quickRestoreFlash: document.querySelector('#quick-restore-flash'),
   quickFlashFirmware: document.querySelector('#quick-flash-firmware'),
@@ -3059,6 +3067,7 @@ if (typeof globalThis.EMBEDDED_FIRMWARE_B64 === 'string' && elements.embeddedQui
   elements.embeddedQuickFlash.open = true;
   elements.firmwareTools.open = false;
 }
+renderEmbeddedStockFirmware();
 
 let activeFirmwareLogAction = null;
 
@@ -3098,6 +3107,86 @@ function appendFirmwareLog(message, level = 'normal') {
   line.textContent = `[${timestamp}] ${message}\n`;
   activeFirmwareLogAction.lines.append(line);
   elements.firmwareLog.scrollTop = elements.firmwareLog.scrollHeight;
+}
+
+function updateStockFirmwareButtons() {
+  if (!elements.stockFirmwareList) return;
+  const disabled = dumpBusy || firmwareFlashBusy || firmwareBackupBusy;
+  for (const button of elements.stockFirmwareList.querySelectorAll('button')) {
+    button.disabled = disabled;
+  }
+}
+
+function renderEmbeddedStockFirmware() {
+  const images = globalThis.EMBEDDED_STOCK_FIRMWARES;
+  if (!Array.isArray(images) || images.length === 0 || !elements.stockFirmwareSection) return;
+  elements.stockFirmwareSection.hidden = false;
+  for (const entry of images) {
+    if (!Array.isArray(entry) || entry.length !== 2 ||
+        typeof entry[0] !== 'string' || typeof entry[1] !== 'string') continue;
+    const [filename, base64] = entry;
+    const label = filename.replace(/\.hex$/i, '').replace(/-\(only-Windows\)/i, ' · Windows').replaceAll('-', ' ');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'button';
+    button.textContent = `Flash ${label}`;
+    button.title = filename;
+    button.addEventListener('click', () => flashEmbeddedStockFirmware(filename, base64));
+    elements.stockFirmwareList.append(button);
+  }
+  renderStockFirmwareSources(globalThis.EMBEDDED_STOCK_SOURCE_LINKS);
+  updateStockFirmwareButtons();
+}
+
+function renderStockFirmwareSources(sources) {
+  const container = elements.stockFirmwareSources;
+  if (!container || !Array.isArray(sources) || sources.length === 0) return;
+  const heading = document.createElement('h4');
+  heading.textContent = 'Sources and downloads';
+  const list = document.createElement('ul');
+  for (const source of sources) {
+    if (!source || typeof source.label !== 'string' ||
+        typeof source.description !== 'string' || typeof source.url !== 'string') continue;
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(source.url);
+    } catch {
+      continue;
+    }
+    if (parsedUrl.protocol !== 'https:') continue;
+    const item = document.createElement('li');
+    const link = document.createElement('a');
+    link.href = parsedUrl.href;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = source.label;
+    const description = document.createElement('span');
+    description.textContent = source.description;
+    item.append(link, description);
+    list.append(item);
+  }
+  if (!list.childElementCount) return;
+  container.replaceChildren(heading, list);
+  container.hidden = false;
+}
+
+async function flashEmbeddedStockFirmware(filename, base64) {
+  if (dumpBusy || firmwareFlashBusy || firmwareBackupBusy) return;
+  const label = filename.replace(/\.hex$/i, '').replace(/-\(only-Windows\)/i, ' · Windows').replaceAll('-', ' ');
+  if (!window.confirm(`Flash stock firmware ${label}? The current firmware will be replaced. The permanent FLASH backup will be captured first if one is not already saved.`)) return;
+  beginFirmwareLogAction(`Stock firmware · ${label}`);
+  try {
+    const binary = atob(base64);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    await loadFirmwareImage(new File([bytes], filename, {type: 'text/plain'}));
+    if (!selectedFirmwareImage || selectedFirmwareImage.identity !== 'stock') {
+      throw new Error('The embedded image did not pass stock firmware classification.');
+    }
+    await flashSelectedFirmware(true);
+  } catch (error) {
+    appendFirmwareLog(`Stock firmware flash failed: ${error.message}`, 'error');
+    setRebootStatus(`Stock firmware flash failed: ${error.message}`, 'error');
+  }
 }
 
 function setRebootStatus(message, level = 'normal') {
@@ -3210,7 +3299,7 @@ async function classifyFirmwareImage(image, present) {
     const signatureHex = [...signatureHash].map((byte) => byte.toString(16).padStart(2, '0')).join('');
     if (signatureHex === STOCK_FAMILY_SIGNATURE_SHA256) return 'stock';
   }
-  if (hash === KNOWN_STOCK_IMAGE_SHA256) return 'stock';
+  if (KNOWN_STOCK_IMAGE_SHA256S.has(hash)) return 'stock';
   if (hasProjectMarker) return 'ours-incompatible';
   return 'unknown';
 }
@@ -3399,6 +3488,7 @@ function setDumpBusy(busy) {
   updateEepromWriteButton();
   updateSpiWriteButton();
   updateSpiDumpAvailability();
+  updateStockFirmwareButtons();
 }
 
 function updateEepromWriteButton() {
@@ -4571,6 +4661,7 @@ async function flashSelectedFirmware(actionAlreadyStarted = false) {
     return;
   }
   firmwareFlashBusy = true;
+  updateStockFirmwareButtons();
   updateSpiWriteButton();
   if (elements.quickRestoreFlash) elements.quickRestoreFlash.disabled = true;
   if (elements.firmwareRestoreFlash) elements.firmwareRestoreFlash.disabled = true;
@@ -4704,6 +4795,7 @@ async function flashSelectedFirmware(actionAlreadyStarted = false) {
     }
     const closed = await disconnectPortAfterAction(port);
     firmwareFlashBusy = false;
+    updateStockFirmwareButtons();
     updateSpiWriteButton();
     if (elements.quickRestoreFlash) elements.quickRestoreFlash.disabled = dumpBusy ||
       (!latestFlashBackup && !spiRecoveryBackup);

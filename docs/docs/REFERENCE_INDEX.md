@@ -6,6 +6,7 @@
 
 ## Вихідні матеріали
 
+- `firmware/stock/` — HEX-каталог для розділу Quick → Stock; збірка вбудовує всі файли, а GitHub Actions щомісяця шукає нові версії через API Milerd і пропонує їх pull request-ом.
 - reference/source-material/Port-4.1.17.hex — оригінальна англомовна стокова прошивка, тільки для читання/аналізу.
 - reference/source-material/Milerd_HiStand_Dosimeter_Manual_19-01-23_WEB.pdf — інструкція приладу.
 - reference/source-material/Geiger2-eeprom.bin — 2 KiB дамп, заповнений нулями.
