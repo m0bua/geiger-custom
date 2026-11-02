@@ -55,7 +55,7 @@
           <div class="metric-label" id="rate-label">RATE · CALCULATED</div>
           <div class="metric-value"><span id="rate-dose">—</span><small id="rate-unit">CPM</small></div>
           <div id="rate-warmup" class="rate-warmup" role="progressbar" aria-label="Warm-up pulses" aria-valuemin="0" aria-valuemax="30" aria-valuenow="0" hidden><span id="rate-warmup-fill"></span></div>
-          <p class="metric-foot" id="rate-foot" hidden></p>
+          <p class="metric-foot" id="rate-foot" hidden><span id="rate-foot-main"></span><span id="rate-foot-count" hidden></span></p>
         </article>
         <article class="metric">
           <div class="metric-label" id="dose-label">DOSE TODAY</div>
@@ -144,11 +144,11 @@
             </select>
           </label>
           <button id="load-log-selection" class="button button-quiet" type="button" disabled>Load</button>
+          <button id="load-more-logs" class="button button-quiet" type="button" disabled>More</button>
           <button id="export-logs-csv" class="button button-quiet" type="button" disabled>Export</button>
         </div>
       </div>
       <div id="log-content" class="log-content"></div>
-      <div class="log-actions"><button id="load-more-logs" class="button button-quiet" type="button" hidden>Load more</button></div>
       <details class="logs-diagnostics">
         <summary>Diagnostics</summary>
         <div class="logs-diagnostics-actions">
@@ -312,7 +312,7 @@
           <li><strong>Without a connection:</strong> Overview, Logs, and Debug show clearly marked illustrative zero data. Settings use factory defaults and can be changed for preview, but preview changes are not saved and reset after reloading the page. Options unsupported by the connected firmware remain visible but disabled.</li>
         </ul>
         <h3>Logs</h3>
-        <p>The Logs page reads the same history used by the device's log graphs. Select a log type and range, then press <strong>Load</strong>. You can choose the type and range before connecting; switching tabs keeps each loaded view. The app requests the maximum number of records supported by the connected firmware in each serial exchange, up to ten, and adds the returned records and refreshes totals after every response. <strong>Load more</strong> adds another 100 records. The current record may refresh while the page is open.</p>
+        <p>The Logs page reads the same history used by the device's log graphs. Select a log type and range, then press <strong>Load</strong>. You can choose the type and range before connecting; switching tabs keeps each loaded view. The app requests the maximum number of records supported by the connected firmware in each serial exchange, up to ten, and adds the returned records and refreshes totals after every response. <strong>More</strong> extends Latest by another default period, adds 100 records to Count, or resumes an incomplete All or Dates load. It stays visible and is disabled while disconnected, loading, or when no more records are available. The current record may refresh while the page is open.</p>
         <ul>
           <li><strong>MINUTES:</strong> one record per minute, with dose, average rate, maximum rate, and coverage.</li>
           <li><strong>HOURS:</strong> one record per hour with the same values. The newest unfinished hour is assembled from minute data.</li>

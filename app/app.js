@@ -320,6 +320,8 @@ const elements = {
   spiConfirmCancel: document.querySelector('#spi-confirm-cancel'),
   spiConfirmAccept: document.querySelector('#spi-confirm-accept'),
   rateFoot: document.querySelector('#rate-foot'),
+  rateFootMain: document.querySelector('#rate-foot-main'),
+  rateFootCount: document.querySelector('#rate-foot-count'),
   rateLabel: document.querySelector('#rate-label'),
   rateDose: document.querySelector('#rate-dose'),
   rateWarmup: document.querySelector('#rate-warmup'),
@@ -937,6 +939,7 @@ let rateHistoryUnit = 'CPM';
 let rateLevel = 'blue';
 let logPageTotal = 0;
 let logPageLoading = false;
+let logStopRequested = false;
 let logPageReloadPending = false;
 let logPageGeneration = 0;
 let logInfoLoading = false;
@@ -1036,7 +1039,8 @@ function formatRadiation(valueUsv, prefixSetting, symbol, perHour, digitLimit = 
     digitLimit - Math.max(1, integerDigits);
   const digits = value === 0 ? 0 : Math.max(0,
     Math.min(maxDecimals, decimalsAvailable));
-  const text = value.toFixed(digits).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  let text = value.toFixed(digits).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  if ((deviceSettings?.[8] ?? 0) === 1) text = text.replace(/^0\./, '.');
   return { value: text, unit: `${selected.name}${symbol}${perHour ? '/h' : ''}` };
 }
 
@@ -1434,9 +1438,13 @@ function updateLogRangeControls() {
   elements.logRangeExtra.querySelectorAll('input,select').forEach((control) => {
     control.disabled = !enabled || logCsvBusy || logPageLoading;
   });
-  elements.loadLogSelection.disabled = !serial || !logInfo || logCsvBusy || logPageLoading ||
-    (datesMode && (!logInfo.calendarValid || !readCustomLogRange(type))) ||
-    (countMode && !validCount);
+  elements.loadLogSelection.textContent = logPageLoading ?
+    (logStopRequested ? 'Stopping…' : 'Stop') : 'Load';
+  elements.loadLogSelection.classList.toggle('button-stop', logPageLoading);
+  elements.loadLogSelection.disabled = logPageLoading ? logStopRequested :
+    (!serial || !logInfo || logCsvBusy ||
+      (datesMode && (!logInfo.calendarValid || !readCustomLogRange(type))) ||
+      (countMode && !validCount));
   elements.exportLogsCsv.disabled = !serial || !logRecords.length || logCsvBusy || logPageLoading;
 }
 
@@ -1688,8 +1696,9 @@ function renderLogSummary(preserveRows = false, prependNewRows = true) {
   }
   if (!preserveRows) elements.logContent.replaceChildren();
   updateLogRangeControls();
-  elements.loadMoreLogs.hidden = !logInfo || !logHasMore;
-  elements.loadMoreLogs.disabled = logPageLoading;
+  elements.loadMoreLogs.hidden = false;
+  elements.loadMoreLogs.disabled = !serial || !logInfo || logPageLoading ||
+    !logHasMore || !logRecords.length;
   if (!logInfo) return;
   const type = logTypes.find((item) => item.id === selectedLogType);
   updateLogFillOptions(type.id);
@@ -1854,7 +1863,12 @@ async function loadRecentLogs(count) {
 }
 
 async function loadMoreLogRecords() {
-  if (logCountLimit) logCountLimit += LOG_LOAD_MORE_COUNT;
+  const type = logTypes.find((item) => item.id === selectedLogType);
+  if (isLatestLogView()) {
+    logCountLimit = logRecords.length + LOG_INITIAL_TARGETS[type.id];
+  } else if (logCountLimit) {
+    logCountLimit += LOG_LOAD_MORE_COUNT;
+  }
   await loadLogPage(false);
 }
 
@@ -1925,20 +1939,23 @@ async function loadLogPage(reset = false) {
   if (logPageLoading) { if (reset) ++logPageGeneration; logPageReloadPending = true; return; }
   if (reset) { ++logPageGeneration; clearLogView(); }
   const generation = logPageGeneration, type = logTypes.find((item) => item.id === selectedLogType);
-  const target = isLatestLogView() ? LOG_INITIAL_TARGETS[type.id] :
+  const target = isLatestLogView() ? (logCountLimit || LOG_INITIAL_TARGETS[type.id]) :
     logRangeActive ? Number.MAX_SAFE_INTEGER : logCountLimit ||
       logRecords.length + LOG_INITIAL_TARGETS[type.id];
   const limit = logDateLimit();
   logDiagnostic(`loadLogPage start type=${type.id} mode=${elements.logRangeMode.value} target=${target} limit=${limit} existing=${logRecords.length}`);
+  logStopRequested = false;
   logPageLoading = true; renderLogSummary();
   let loadFailed = false;
   const keys = new Set(logRecords.map(logRecordKey));
   try {
     let crossedRangeStart = false;
-    while (generation === logPageGeneration && logHasMore && logRecords.length < target) {
+    while (generation === logPageGeneration && !logStopRequested &&
+        logHasMore && logRecords.length < target) {
       const batchSize = LOG_LOAD_MORE_COUNT;
       const batchEnd = Math.min(target, logRecords.length + batchSize);
-      while (generation === logPageGeneration && logHasMore && logRecords.length < batchEnd) {
+      while (generation === logPageGeneration && !logStopRequested &&
+          logHasMore && logRecords.length < batchEnd) {
         const page = await queryLogPage(type, logCursor, limit, Math.min(batchSize, batchEnd - logRecords.length));
         if (generation !== logPageGeneration) break;
         for (const record of page.records) {
@@ -1958,16 +1975,23 @@ async function loadLogPage(reset = false) {
         await new Promise((resolve) => requestAnimationFrame(resolve));
       }
     }
-    if (isLatestLogView() && logRecords.length >= target) logHasMore = false;
   } catch (error) {
     loadFailed = true;
     logDiagnostic('loadLogPage failed', error);
     if (generation === logPageGeneration) elements.logsStatus.textContent = error.message;
   } finally {
+    const stoppedByUser = logStopRequested;
     logPageLoading = false;
+    logStopRequested = false;
+    if (stoppedByUser) logPageReloadPending = false;
     updateLogRangeControls();
     if (!loadFailed && generation === logPageGeneration) renderLogSummary();
-    if (generation === logPageGeneration) { logPageTotal = logRecords.length; saveLogView(); elements.loadMoreLogs.disabled = false; }
+    if (generation === logPageGeneration) {
+      logPageTotal = logRecords.length;
+      saveLogView();
+      elements.loadMoreLogs.disabled = !serial || !logInfo || !logHasMore ||
+        !logRecords.length;
+    }
     if (logPageReloadPending && serial && logInfo) { logPageReloadPending = false; if (!logRecords.length) loadLogPage(false); else if (hasCurrentLogDate()) loadNewerLogRecords(); }
   }
 }
@@ -2494,9 +2518,14 @@ function renderOfflinePreview() {
   elements.rateDose.classList.add('level-green');
   rateLevel = 'green';
   elements.rateUnit.textContent = 'µSv/h';
-  elements.rateFoot.textContent = '0 CPM';
+  elements.rateFootMain.textContent = '0 CPM';
+  elements.rateFootCount.textContent = '';
+  elements.rateFootCount.hidden = true;
   elements.rateFoot.hidden = false;
   elements.rateWarmup.hidden = true;
+  elements.rateWarmupFill.style.width = '0%';
+  elements.loadMoreLogs.hidden = false;
+  elements.loadMoreLogs.disabled = true;
   elements.doseLabel.textContent = 'DOSE TODAY';
   elements.dose.textContent = '0';
   elements.doseUnit.textContent = 'µSv';
@@ -2588,7 +2617,7 @@ function renderOfflinePreview() {
   elements.settingsClockDifference.textContent = '—';
   elements.settingsSystemTime.textContent = new Date().toLocaleTimeString('en-GB');
   elements.settingsSystemDate.textContent = new Date().toLocaleDateString('en-CA');
-  elements.settingsClockStatus.textContent = 'Demo preview · clock controls are unavailable.';
+  elements.settingsClockStatus.textContent = '';
   elements.settingsClockStatus.dataset.level = '';
   elements.syncClock.disabled = true;
   renderSettings();
@@ -2868,12 +2897,15 @@ function handleStatus(payload) {
   const rateRowMode = deviceSettings?.[12] ?? 0;
   const rateRow = rateRowText(rateRowMode, unit, cpm, rateUsvh,
     deviceSettings?.[10] ?? 1);
-  elements.rateFoot.textContent = rateRow;
-  elements.rateFoot.hidden = rateRow.length === 0;
+  elements.rateFootMain.textContent = rateRow;
+  elements.rateFootCount.textContent = rateLevel === 'blue' ? `${formatGroupedNumber(warmupPulses)} CNT` : '';
+  elements.rateFootCount.hidden = rateLevel !== 'blue';
+  elements.rateFoot.hidden = rateRow.length === 0 && rateLevel !== 'blue';
   let doseRow = doseRowText(unit, dosePeriod, doseRowMode, cpm, uptimeSeconds,
     uptimePulses, dayPulses, lifetimePulses, dosePrefix);
   elements.doseFoot.textContent = doseRow;
   elements.doseFoot.hidden = doseRow.length === 0;
+  elements.doseFoot.classList.toggle('align-with-rate-warmup', rateLevel === 'blue');
   elements.debugCount.textContent = formatGroupedNumber(countTotal);
   elements.uptime.textContent = `${uptime.days}D ${uptime.clock}`;
   updateDeviceDateTime(`${uptime.days}D ${uptime.clock}`);
@@ -2991,7 +3023,14 @@ document.querySelector('#debug-refresh').addEventListener('click', refreshDebugP
 elements.syncClock.addEventListener('click', synchronizeDeviceClock);
 elements.logsTab.addEventListener('click', () => selectPage('logs'));
 elements.loadMoreLogs.addEventListener('click', loadMoreLogRecords);
-elements.loadLogSelection.addEventListener('click', loadLogSelection);
+elements.loadLogSelection.addEventListener('click', () => {
+  if (logPageLoading) {
+    logStopRequested = true;
+    updateLogRangeControls();
+    return;
+  }
+  loadLogSelection();
+});
 elements.clearLogDiagnostics.addEventListener('click', () => {
   logDiagnostics.length = 0;
   elements.logDiagnostics.textContent = '';
