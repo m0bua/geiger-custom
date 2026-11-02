@@ -1129,7 +1129,8 @@ static void lcd_format_cpm(uint32_t cpm)
         lcd_settings_value_index[SETTING_RATE_PREFIX] = saved_prefix;
         lcd_rate_value_100000ths = saved_rate;
         lcd_display_unit_prefix = saved_display_prefix;
-    } else if (row_mode < 2u || (row_mode == 3u && selected_unit == 1u)) {
+    } else if (row_mode < 2u ||
+               ((row_mode == 3u || row_mode == 4u) && selected_unit == 1u)) {
         if (row_mode == 1u || row_mode == 3u) {
             uint32_t cps_thousandths = (uint32_t)(
                 ((uint64_t)cpm * 1000u + 30u) / 60u);
@@ -2189,7 +2190,7 @@ static __attribute__((noinline)) uint8_t lcd_settings_value_count(uint8_t item)
         return lcd_settings_value_index[SETTING_UNIT] == 1u ? 2u : 4u;
     }
     if (item == SETTING_RATE_ROW_2) {
-        return 4u;
+        return lcd_settings_value_index[SETTING_UNIT] == 1u ? 5u : 4u;
     }
     if (item == SETTING_DOSE_ROW_2) return lcd_dose_row_option_count();
     return lcd_settings_value_counts[item];
@@ -2237,6 +2238,7 @@ static const char *lcd_settings_value_text(uint8_t item)
             if (value_index == 0u) return unit_values[0u];
             if (value_index == 1u) return unit_values[2u];
             if (value_index == 3u) return prefix_values[5u];
+            if (value_index == 4u) return prefix_values[4u];
         } else if (value_index == 3u) {
             return lcd_settings_value_index[SETTING_UNIT] == 0u ?
                 unit_values[2u] : unit_values[0u];
@@ -4256,7 +4258,7 @@ static bool settings_row_record_read(uint8_t slot, uint8_t *sequence,
     *dose_period = record[4];
     const bool old_format = record[0] == SETTINGS_ROW_EEPROM_LEGACY_MAGIC;
     if (legacy != NULL) *legacy = old_format;
-    return (record[0] == SETTINGS_ROW_EEPROM_MAGIC && *rate_row < 4u &&
+    return (record[0] == SETTINGS_ROW_EEPROM_MAGIC && *rate_row < 5u &&
             *dose_row < 7u && *dose_period < 3u &&
             record[5] == settings_row_crc(*sequence, *rate_row, *dose_row,
                 *dose_period)) ||

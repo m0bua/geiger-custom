@@ -2176,9 +2176,12 @@ function settingsOptions(setting, currentSettings = deviceSettings) {
   }
   if (setting.id === 12) {
     const unit = currentSettings?.[9] ?? 0;
+    const ratePrefix = currentSettings?.[10] ?? 1;
     return [
-      {label: 'CPM', value: unit === 1 ? 'duplicate-cpm' : 0, disabled: unit === 1},
-      {label: 'CPS', value: unit === 1 ? 3 : 1, disabled: false},
+      {label: 'CPM', value: unit === 1 ? 4 : 0,
+        disabled: unit === 1 && ratePrefix === 0},
+      {label: 'CPS', value: unit === 1 ? 3 : 1,
+        disabled: unit === 1 && ratePrefix === 1},
       {label: 'OFF', value: 2, disabled: false},
       {label: 'SV', value: unit === 1 ? 0 : (unit === 0 ? 'duplicate-sv' : 3), disabled: unit === 0},
       {label: 'R', value: unit === 1 ? 1 : (unit === 2 ? 'duplicate-r' : 3), disabled: unit === 2},
