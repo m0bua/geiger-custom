@@ -58,7 +58,6 @@ static uint32_t previous_uptime;
 static uint32_t previous_calendar;
 static bool previous_calendar_valid;
 static uint8_t active_log_memory = 0xFFu;
-static bool hour_closed_event;
 
 static bool minute_location(uint32_t seconds, bool calendar_valid,
                             uint32_t *minute_key, uint32_t *period_index,
@@ -158,7 +157,6 @@ static void close_period(log_record_kind_t kind,
         accumulator->year_descriptor, &record)) {
         writer_fault = true;
     } else if (kind == LOG_RECORD_HOUR) {
-        hour_closed_event = true;
     }
 }
 
@@ -269,7 +267,6 @@ bool log_writer_init(void)
     hour_accumulator.active = false;
     day_accumulator.active = false;
     have_clock_sample = false;
-    hour_closed_event = false;
     active_log_memory = log_memory;
 
     if (!log_eeprom_init()) goto failed;
@@ -497,15 +494,8 @@ void log_writer_memory_committed(uint8_t target)
     hour_accumulator.active = false;
     have_clock_sample = false;
     day_accumulator.active = false;
-    hour_closed_event = false;
 }
 
-bool log_writer_take_hour_closed(void)
-{
-    const bool closed = hour_closed_event;
-    hour_closed_event = false;
-    return closed;
-}
 
 bool log_writer_fault(void)
 {
