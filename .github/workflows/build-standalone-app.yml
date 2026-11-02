@@ -188,6 +188,7 @@ jobs:
           - Extended live rate graphs to 3, 5, and 10 minutes with separate history resolutions; fixed cursor cleanup at graph edges.
           - Improved minute-log coverage tracking so delayed second sampling does not create false partial-minute records.
           - Enabled complementary CPM/CPS choices in CNT mode and kept log rows stable during live refresh to prevent hover flicker.
+          - Firmware and SPI operations reuse a saved full FLASH backup or capture one before the first operation; restore controls appear in Quick, Firmware, and SPI, and changes stop before erase if capture fails.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded; used for app compatibility checks): ${canonical_sha256}

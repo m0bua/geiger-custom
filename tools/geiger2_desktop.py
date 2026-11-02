@@ -25,7 +25,16 @@ def main() -> int:
         )
         return 1
 
-    server = LocalBridgeServer(("127.0.0.1", 0), BridgeHandler)
+    server = None
+    for port in range(8766, 8786):
+        try:
+            server = LocalBridgeServer(("127.0.0.1", port), BridgeHandler)
+            break
+        except OSError:
+            continue
+    if server is None:
+        show_error("Could not reserve a local app port in the range 8766–8785.")
+        return 1
     server_thread = threading.Thread(target=server.serve_forever,
                                      kwargs={"poll_interval": 0.25}, daemon=True)
     server_thread.start()

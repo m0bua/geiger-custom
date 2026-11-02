@@ -165,9 +165,8 @@
       <details id="embedded-quick-flash" class="firmware-section quick-flash" name="firmware-sections" hidden>
         <summary>Quick Firmware</summary>
         <p>Program the firmware embedded in this app. The image is verified after writing.</p>
-        <p class="backup-reminder">Recommended: dump and save a FLASH backup before programming. Quick flash erases the firmware currently on the device.</p>
+        <p class="backup-reminder">Before the first firmware flash or SPI operation, the app automatically reads, downloads, and saves a full FLASH backup. The same saved backup is available to restore from Quick, Firmware, or SPI.</p>
         <div class="actions">
-          <button id="quick-backup-flash" class="button" type="button">Dump FLASH</button>
           <button id="quick-restore-flash" class="button button-danger" type="button" hidden>Restore FLASH</button>
           <button id="quick-flash-firmware" class="button button-primary" type="button">Quick flash</button>
         </div>
@@ -176,9 +175,11 @@
         <summary>Firmware</summary>
         <div class="actions firmware-dump-actions">
           <button id="dump-flash" class="button" type="button">Dump FLASH</button>
+          <button id="restore-manual-flash" class="button button-danger" type="button" hidden>Restore manual dump</button>
           <button id="firmware-restore-flash" class="button button-danger" type="button" hidden>Restore FLASH</button>
           <button id="download-spi-backup" class="button button-danger" type="button" hidden>Download recovery backup</button>
         </div>
+        <p class="backup-reminder">Dump FLASH downloads a file and stores a separate manual copy in the browser. Restore manual dump appears here; this copy does not replace the permanent backup.</p>
         <p id="spi-recovery-controls" class="dump-status" hidden>SPI recovery is pending. Use Restore FLASH here before starting another SPI operation.</p>
         <div id="local-build-flash" class="local-build-flash" hidden>
           <div class="local-build-copy">
@@ -187,7 +188,7 @@
           </div>
           <button id="flash-local-build" class="button button-primary" type="button">Flash current build</button>
         </div>
-        <p class="backup-reminder">Recommended: dump and save a FLASH backup before programming.</p>
+        <p class="backup-reminder">Before a firmware write or SPI operation, the app reuses a saved FLASH backup or captures one automatically if none exists. Use Dump FLASH below to make an additional copy.</p>
         <div class="firmware-controls">
           <div class="firmware-file-control">
             <label for="firmware-file">Firmware image (.hex or .bin)</label>
@@ -249,7 +250,7 @@
       </details>
       <details id="spi-nor-section" class="firmware-section" name="firmware-sections">
         <summary>SPI NOR</summary>
-        <p>Dump uses the inclusive From-to range. Flashing uses From plus the image length; To is ignored. Data outside the image is preserved by saving and restoring affected sectors. If needed, the app temporarily runs the SPI service firmware and restores the device firmware afterward.</p>
+        <p>Dump uses the inclusive From-to range. Flashing uses From plus the image length; To is ignored. Data outside the image is preserved by saving and restoring affected sectors. Before the first SPI operation, the app saves a full FLASH backup if none exists; use Restore FLASH here to restore it. If needed, the app temporarily runs the SPI service firmware and restores the device firmware afterward.</p>
         <div class="memory-range-controls">
           <label for="spi-range-preset">Preset
             <select id="spi-range-preset">
@@ -271,6 +272,7 @@
         </div>
         <div class="dump-controls">
           <button id="dump-spi" class="button" type="button">Dump SPI</button>
+          <button id="spi-restore-flash" class="button button-danger" type="button" hidden>Restore FLASH</button>
           <button id="erase-spi" class="button button-danger" type="button">Erase range</button>
         </div>
         <div class="firmware-controls spi-write-controls">
@@ -464,6 +466,7 @@
               <li><strong>Logging:</strong> minute coverage now follows elapsed time, avoiding false partial-minute records when second sampling is delayed.</li>
               <li><strong>Dose:</strong> DOSE ROW 2 CPM now uses measured CPM. Removed automatic hourly log resynchronization; DAY and TOTAL are corrected after the DAY graph finishes loading.</li>
               <li><strong>Settings and Logs:</strong> enabled the complementary CPM/CPS choice for CNT mode and stopped live log refresh from rebuilding rows under the mouse pointer.</li>
+              <li><strong>Firmware and SPI:</strong> reuse a saved full FLASH backup or capture one before the first firmware/SPI operation. Restore controls appear in Quick, Firmware, and SPI; cancel before erase if backup capture fails.</li>
             </ul>
           </li>
           <li>

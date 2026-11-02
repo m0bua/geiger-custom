@@ -201,6 +201,7 @@ jobs:
           - Improved minute-log coverage tracking so delayed second sampling does not create false partial-minute records.
           - DOSE ROW 2 CPM now uses measured CPM. DAY and TOTAL counters are corrected after the DAY graph loads; background hourly resynchronization is disabled to keep minute writes on schedule.
           - Enabled complementary CPM/CPS choices in CNT mode and kept log rows stable during live refresh to prevent hover flicker.
+          - Firmware and SPI operations reuse a saved full FLASH backup or capture one before the first operation; restore controls appear in Quick, Firmware, and SPI, and changes stop before erase if capture fails.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded): ${canonical_sha256}
