@@ -19,6 +19,14 @@ const CAP_GET_SPI_DUMP = 1 << 5;
 const CAP_SET_RTC = 1 << 6;
 const CAP_DEVICE_ACTION = 1 << 7;
 const MAX_PAYLOAD = 262;
+const PROTOCOL_OPCODE_NAMES = new Map([
+  [OP_HELLO, 'HELLO'], [OP_GET_STATUS, 'GET_STATUS'],
+  [OP_GET_SETTINGS, 'GET_SETTINGS'], [OP_SET_SETTING, 'SET_SETTING'],
+  [OP_GET_LOG_INFO, 'GET_LOG_INFO'], [OP_GET_LOG_PAGE, 'GET_LOG_PAGE'],
+  [OP_GET_SPI_DUMP_PAGE, 'GET_SPI_DUMP_PAGE'], [OP_SET_RTC, 'SET_RTC'],
+  [OP_DEVICE_ACTION, 'DEVICE_ACTION'], [OP_SPI_PROGRAM_PAGE, 'SPI_PROGRAM_PAGE'],
+  [OP_SPI_ERASE_SECTOR, 'SPI_ERASE_SECTOR'],
+]);
 const MAX_ENCODED_FRAME = MAX_PAYLOAD + 10 + Math.ceil((MAX_PAYLOAD + 10) / 254);
 const LOG_MAX_RECORDS_PER_REQUEST = 10;
 const LOG_LOAD_MORE_COUNT = 100;
@@ -263,9 +271,10 @@ const elements = {
   loadLogSelection: document.querySelector('#load-log-selection'),
   logsStatus: document.querySelector('#logs-status'),
   loadMoreLogs: document.querySelector('#load-more-logs'),
-  logDiagnostics: document.querySelector('#log-diagnostics'),
-  copyLogDiagnostics: document.querySelector('#copy-log-diagnostics'),
-  clearLogDiagnostics: document.querySelector('#clear-log-diagnostics'),
+  diagnosticsOutput: document.querySelector('#diagnostics-output'),
+  diagnosticsPanel: document.querySelector('.diagnostics-panel'),
+  copyDiagnostics: document.querySelector('#copy-diagnostics'),
+  clearDiagnostics: document.querySelector('#clear-diagnostics'),
   firmwarePage: document.querySelector('#firmware-page'),
   embeddedQuickFlash: document.querySelector('#embedded-quick-flash'),
   stockFirmwareSection: document.querySelector('#stock-firmware-section'),
@@ -758,6 +767,7 @@ class SerialProtocol {
   }
 
   async connect(portOverride = null, transport = 'serial') {
+    logDiagnostic(`Serial connection opening (${transport}).`);
     if (transport === 'native') {
       this.port = portOverride || new NativeBridgePort(selectedBridgePort);
       await this.port.open({ baudRate: 115200, dataBits: 8, parity: 'none', stopBits: 1 });
@@ -791,6 +801,7 @@ class SerialProtocol {
     this.writer = this.port.writable.getWriter();
     this.closing = false;
     this.readTask = this.readLoop();
+    logDiagnostic(`Serial connection open (${transport}).`);
   }
 
   async readLoop() {
@@ -808,7 +819,11 @@ class SerialProtocol {
         try { this.reader.releaseLock(); } catch { /* already released */ }
         this.reader = null;
       }
-      if (!this.closing) this.onClose(failure || new Error('Serial port closed.'));
+      if (!this.closing) {
+        const error = failure || new Error('Serial port closed.');
+        logDiagnostic('Serial receive loop stopped.', error);
+        this.onClose(error);
+      }
     }
   }
 
@@ -816,7 +831,10 @@ class SerialProtocol {
     if (byte === 0) {
       if (!this.discardFrame && this.frameBytes.length) {
         try { this.onFrame(decodeFrame(Uint8Array.from([...this.frameBytes, 0]))); }
-        catch (error) { showNotice(error.message, 'error'); }
+        catch (error) {
+          logDiagnostic('RX frame decode failed.', error);
+          showNotice(error.message, 'error');
+        }
       }
       this.frameBytes = [];
       this.discardFrame = false;
@@ -838,14 +856,18 @@ class SerialProtocol {
     this.requestId = (this.requestId + 1) & 0xffff;
     if (this.requestId === 0) this.requestId = 1;
     const id = this.requestId;
+    const startedAt = performance.now();
+    const commandName = PROTOCOL_OPCODE_NAMES.get(opcode) || `OP_${opcode}`;
     const promise = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
+        logDiagnostic(`RX timeout ${commandName} id=${id} after ${(performance.now() - startedAt).toFixed(1)} ms.`);
         reject(new Error('Device did not respond. Check the USB connection and try again.'));
       }, requestTimeout);
-      this.pending.set(id, { opcode, resolve, reject, timeout });
+      this.pending.set(id, { opcode, resolve, reject, timeout, startedAt });
     });
     try {
+      logDiagnostic(`TX ${commandName} id=${id} ${formatProtocolPayload(payload)}.`);
       const writeTask = this.writer.write(encodeFrame(KIND_REQUEST, id, opcode, payload));
       this.activeWrites.add(writeTask);
       try { await writeTask; }
@@ -856,6 +878,7 @@ class SerialProtocol {
         clearTimeout(pending.timeout);
         this.pending.delete(id);
       }
+      logDiagnostic(`TX failed ${commandName} id=${id}.`, error);
       throw error;
     }
     return promise;
@@ -863,14 +886,20 @@ class SerialProtocol {
 
   dispatch(frame) {
     const pending = this.pending.get(frame.requestId);
-    if (!pending || pending.opcode !== frame.opcode) return;
+    const commandName = PROTOCOL_OPCODE_NAMES.get(frame.opcode) || `OP_${frame.opcode}`;
+    if (!pending || pending.opcode !== frame.opcode) {
+      logDiagnostic(`RX unmatched ${commandName} id=${frame.requestId} ${formatProtocolPayload(frame.payload)}.`);
+      return;
+    }
     clearTimeout(pending.timeout);
     this.pending.delete(frame.requestId);
+    logDiagnostic(`RX ${commandName} id=${frame.requestId} ${(performance.now() - pending.startedAt).toFixed(1)} ms ${formatProtocolPayload(frame.payload)}.`);
     pending.resolve(frame.payload);
   }
 
   async disconnect() {
     if (this.closing) return;
+    logDiagnostic('Serial disconnect requested.');
     this.closing = true;
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout);
@@ -896,6 +925,9 @@ class SerialProtocol {
       this.port = null;
     }
     this.readTask = null;
+    logDiagnostic(portMayBeOpen ?
+      'Serial disconnect finished, but the port may still be open.' :
+      'Serial connection closed.');
   }
 }
 
@@ -961,7 +993,7 @@ let logRangeEnd = 0;
 let logCsvBusy = false;
 const logRangeDefaults = new Set();
 let logFillMetric = 'dose';
-const logDiagnostics = [];
+const diagnosticsLog = [];
 let demoLogRenderer = null;
 let clockSyncBusy = false;
 const rateHistory = [];
@@ -1166,10 +1198,18 @@ function logDiagnostic(message, error = null) {
   const stamp = new Date().toISOString().slice(11, 23);
   const detail = error ? ` ${error.name || 'Error'}: ${error.message || error}` : '';
   const line = `[${stamp}] ${message}${detail}`;
-  logDiagnostics.push(line);
-  if (logDiagnostics.length > 400) logDiagnostics.shift();
-  if (elements.logDiagnostics) elements.logDiagnostics.textContent = logDiagnostics.join('\n');
+  diagnosticsLog.push(line);
+  if (diagnosticsLog.length > 1000) diagnosticsLog.shift();
+  if (elements.diagnosticsOutput && elements.diagnosticsPanel?.open)
+    elements.diagnosticsOutput.textContent = diagnosticsLog.join('\n');
   if (error) console.error(line, error); else console.debug(line);
+}
+
+function formatProtocolPayload(payload) {
+  const bytes = payload instanceof Uint8Array ? payload : new Uint8Array(payload || []);
+  const visible = bytes.subarray(0, 24);
+  const hex = Array.from(visible, (byte) => byte.toString(16).padStart(2, '0')).join(' ');
+  return `${bytes.length}B${hex ? ` [${hex}${bytes.length > visible.length ? ` … +${bytes.length - visible.length}B` : ''}]` : ''}`;
 }
 
 function selectPage(page, updateUrl = true) {
@@ -3080,13 +3120,17 @@ elements.loadLogSelection.addEventListener('click', () => {
   }
   loadLogSelection();
 });
-elements.clearLogDiagnostics.addEventListener('click', () => {
-  logDiagnostics.length = 0;
-  elements.logDiagnostics.textContent = '';
+elements.clearDiagnostics.addEventListener('click', () => {
+  diagnosticsLog.length = 0;
+  elements.diagnosticsOutput.textContent = '';
 });
-elements.copyLogDiagnostics.addEventListener('click', async () => {
+elements.diagnosticsPanel.addEventListener('toggle', () => {
+  if (elements.diagnosticsPanel.open)
+    elements.diagnosticsOutput.textContent = diagnosticsLog.join('\n');
+});
+elements.copyDiagnostics.addEventListener('click', async () => {
   try {
-    await navigator.clipboard.writeText(logDiagnostics.join('\n'));
+    await navigator.clipboard.writeText(diagnosticsLog.join('\n'));
     logDiagnostic('Diagnostics copied to clipboard.');
   } catch (error) {
     logDiagnostic('Could not copy diagnostics', error);
@@ -3209,6 +3253,7 @@ function beginFirmwareLogAction(title) {
 }
 
 function appendFirmwareLog(message, level = 'normal') {
+  logDiagnostic(`Firmware: ${message}${level === 'normal' ? '' : ` [${level}]`}`);
   if (!activeFirmwareLogAction) beginFirmwareLogAction('Activity');
   const timestamp = new Date().toLocaleTimeString();
   const line = document.createElement('span');

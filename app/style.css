@@ -218,8 +218,7 @@ button { font: inherit; }
 .logs-fullscreen-button { min-width: 36px; min-height: 32px; padding: 0 8px; font-size: 18px; line-height: 1; }
 .logs-panel.is-fullscreen { position: fixed; z-index: 1000; inset: 0; display: flex; width: 100%; height: 100vh; height: 100dvh; max-height: none; flex-direction: column; overflow: hidden; padding: 12px 18px 0; border: 0; border-radius: 0; background: #0b1115; }
 .logs-panel.is-fullscreen > .panel-heading,
-.logs-panel.is-fullscreen > .log-tabs,
-.logs-panel.is-fullscreen > .logs-diagnostics { display: none; }
+.logs-panel.is-fullscreen > .log-tabs { display: none; }
 .logs-panel.is-fullscreen .log-content { height: auto; min-height: 0; max-height: none; flex: 1 1 auto; resize: none; }
 .logs-panel.is-fullscreen #exit-logs-fullscreen { display: inline-flex; }
 .log-tabs { display: flex; gap: 5px; padding: 12px 0; border-bottom: 1px solid var(--line); }
@@ -258,11 +257,11 @@ button { font: inherit; }
 .log-record.log-total { position: sticky; z-index: 2; top: 32px; border-top: 1px solid rgba(0,232,159,.28); border-bottom-color: rgba(0,232,159,.2); color: #eef8f5; background: #111a1f; font-weight: 700; }
 .log-record.log-total::before { width: 100%; background: rgba(0,232,159,.07); }
 .log-record.log-total span:first-child { color: var(--green); }
-.logs-diagnostics { margin-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
-.logs-diagnostics summary { padding: 10px 0; cursor: pointer; }
-.logs-diagnostics-actions { display: flex; gap: 7px; margin-bottom: 7px; }
-.logs-diagnostics-actions .button { min-height: 28px; padding: 0 9px; font-size: 10px; }
-.logs-diagnostics pre { max-height: 220px; overflow: auto; margin: 0 0 10px; padding: 9px; border: 1px solid rgba(160,186,194,.12); border-radius: 6px; color: #aebbc0; background: rgba(0,0,0,.2); font: 10px/1.45 "DM Mono", Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+.diagnostics-panel { margin-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+.diagnostics-panel summary { padding: 10px 0; cursor: pointer; }
+.diagnostics-actions { display: flex; gap: 7px; margin-bottom: 7px; }
+.diagnostics-actions .button { min-height: 28px; padding: 0 9px; font-size: 10px; }
+.diagnostics-panel pre { max-height: 320px; overflow: auto; margin: 0 0 10px; padding: 9px; border: 1px solid rgba(160,186,194,.12); border-radius: 6px; color: #aebbc0; background: rgba(0,0,0,.2); font: 10px/1.45 "DM Mono", Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
 #settings-status { color: var(--muted); font: 10px "DM Mono", Consolas, monospace; }
 .settings-list { display: flex; flex-direction: column; gap: 18px; }
 .settings-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(14, auto); grid-auto-flow: column; column-gap: 54px; }

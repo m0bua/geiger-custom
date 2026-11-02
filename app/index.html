@@ -96,6 +96,14 @@
             <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">STORE</th><td></td><td id="debug-log-store">&#8212;</td></tr>
           </tbody>
         </table>
+        <details class="diagnostics-panel">
+          <summary>Diagnostics</summary>
+          <div class="diagnostics-actions">
+            <button id="copy-diagnostics" class="button button-quiet" type="button">Copy</button>
+            <button id="clear-diagnostics" class="button button-quiet" type="button">Clear</button>
+          </div>
+          <pre id="diagnostics-output" aria-live="polite"></pre>
+        </details>
       </section>
     </section>
 
@@ -154,14 +162,6 @@
         </div>
       </div>
       <div id="log-content" class="log-content"></div>
-      <details class="logs-diagnostics">
-        <summary>Diagnostics</summary>
-        <div class="logs-diagnostics-actions">
-          <button id="copy-log-diagnostics" class="button button-quiet" type="button">Copy</button>
-          <button id="clear-log-diagnostics" class="button button-quiet" type="button">Clear</button>
-        </div>
-        <pre id="log-diagnostics" aria-live="polite"></pre>
-      </details>
     </section>
 
     <section id="firmware-page" class="page placeholder-page" hidden>
@@ -313,11 +313,11 @@
           <li><strong>Overview:</strong> shows the current rate, accumulated dose for today, device date/time and uptime, solar level, and battery level. The rate and dose units follow the device's UNIT and prefix settings. Hover over the rate chart to read a plotted value; it keeps the latest three minutes.</li>
           <li><strong>Logs:</strong> inspect minute, hour, day, and alert records. Choose a range, load records, and export them as CSV. See the detailed Logs guide below for coverage, live records, and storage.</li>
           <li><strong>Settings:</strong> read and change options supported by the connected firmware. Values that depend on another setting may be disabled. The Show checkboxes control which options appear in the device menu; setting and visibility changes are applied immediately. The device clock can be synchronized to the computer's current local time. POWER OFF is always shown and has no visibility checkbox.</li>
-          <li><strong>Debug:</strong> inspect device time, uptime, pulse count, power readings, physical log counts, storage state, and SPI memory size. Sections are in one table and can be collapsed independently.</li>
+          <li><strong>Debug:</strong> inspect device time, uptime, pulse count, power readings, physical log counts, storage state, and SPI memory size. Sections are in one table and can be collapsed independently. Expand Diagnostics to view recent app-device messages, including protocol requests and responses and firmware operations; Copy and Clear manage this rolling log.</li>
           <li><strong>Without a connection:</strong> Overview, Logs, and Debug show clearly marked illustrative zero data. Settings use factory defaults and can be changed for preview, but preview changes are not saved and reset after reloading the page. Options unsupported by the connected firmware remain visible but disabled.</li>
         </ul>
         <h3>Logs</h3>
-        <p>The Logs page reads the same history used by the device's log graphs. Select a log type and range, then press <strong>Load</strong>. You can choose the type and range before connecting; switching tabs keeps each loaded view. Use the expand button beside the Logs heading to fill the screen; in full-screen mode the type tabs and diagnostics are hidden, and the ↙ button or Escape returns to normal view. The app requests the maximum number of records supported by the connected firmware in each serial exchange, up to ten, and adds returned records and refreshes totals after every response. While loading, <strong>Stop</strong> lets the current device request finish, processes its response, and then stops further requests. <strong>More</strong> extends Latest by another default period, adds 100 records to Count, or resumes an incomplete All or Dates load. It stays visible and is disabled while disconnected, loading, or when no more records are available. The current record may refresh while the page is open.</p>
+        <p>The Logs page reads the same history used by the device's log graphs. Select a log type and range, then press <strong>Load</strong>. You can choose the type and range before connecting; switching tabs keeps each loaded view. Use the expand button beside the Logs heading to fill the screen; the ↙ button or Escape returns to normal view. The app requests the maximum number of records supported by the connected firmware in each serial exchange, up to ten, and adds returned records and refreshes totals after every response. While loading, <strong>Stop</strong> lets the current device request finish, processes its response, and then stops further requests. <strong>More</strong> extends Latest by another default period, adds 100 records to Count, or resumes an incomplete All or Dates load. It stays visible and is disabled while disconnected, loading, or when no more records are available. The current record may refresh while the page is open.</p>
         <ul>
           <li><strong>MINUTES:</strong> one record per minute, with dose, average rate, maximum rate, and coverage.</li>
           <li><strong>HOURS:</strong> one record per hour with the same values. The newest unfinished hour is assembled from minute data.</li>
@@ -432,7 +432,7 @@
 
         <section class="manual-chapter">
         <h3>1.2 - Debug</h3>
-        <p>The extra-screen group contains Settings and Debug. Short Left/Right switches between them. Debug has three pages: large HH:MM, date and total pulse count; voltage and power readings plus combined WAKE, SLEEP and uptime; physical MIN/HOUR/DAY/ALERT log counts, SPI capacity and store status. Long Right advances through Debug pages. SPI is probed when Debug opens. The app presents these diagnostics together in one table, with CHARGE and SCREEN durations shown separately alongside total WAKE.</p>
+        <p>The extra-screen group contains Settings and Debug. Short Left/Right switches between them. Debug has three pages: large HH:MM, date and total pulse count; voltage and power readings plus combined WAKE, SLEEP and uptime; physical MIN/HOUR/DAY/ALERT log counts, SPI capacity and store status. Long Right advances through Debug pages. SPI is probed when Debug opens. The app presents these device diagnostics together in one table, with CHARGE and SCREEN durations shown separately alongside total WAKE. The app's Diagnostics panel below the table records recent communication with the device.</p>
         </section>
 
         <section class="manual-chapter">
