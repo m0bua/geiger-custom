@@ -291,8 +291,9 @@ def main() -> int:
         + base64.b64encode(spi_mini).decode("ascii")
         + "\";\nwindow.EMBEDDED_STOCK_FIRMWARES = "
         + json.dumps(stock_firmware, separators=(",", ":"))
-        + ";\nwindow.EMBEDDED_STOCK_SOURCE_LINKS = "
-        + json.dumps(source_links, separators=(",", ":"))
+        + ";\nwindow.EMBEDDED_STOCK_SOURCE_LINKS = JSON.parse("
+        + json.dumps(json.dumps(source_links, separators=(",", ":")))
+        + ")"
         + ";\n"
         + js
     )

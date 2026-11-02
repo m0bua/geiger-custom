@@ -78,11 +78,15 @@ def main() -> int:
         if embedded != expected:
             raise ValueError(f"Embedded stock HEX differs from {path}.")
         print(f"Verified stock HEX {path.name}: SHA-256 {hashlib.sha256(embedded).hexdigest()}")
-    source_match = re.search(r"(?:window|globalThis)\.EMBEDDED_STOCK_SOURCE_LINKS\s*=\s*", document)
+    source_match = re.search(
+        r"(?:window|globalThis)\.EMBEDDED_STOCK_SOURCE_LINKS\s*=\s*JSON\.parse\(\s*",
+        document,
+    )
     if source_match is None:
         raise ValueError("Embedded stock firmware source links were not found.")
     try:
-        embedded_sources, _ = json.JSONDecoder().raw_decode(document[source_match.end():])
+        encoded_sources, _ = json.JSONDecoder().raw_decode(document[source_match.end():])
+        embedded_sources = json.loads(encoded_sources)
     except json.JSONDecodeError as error:
         raise ValueError("Embedded stock firmware source links are incomplete.") from error
     source_manifest = json.loads((STOCK_DIR / "sources.json").read_text(encoding="utf-8"))
