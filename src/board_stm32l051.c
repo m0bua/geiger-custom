@@ -2836,6 +2836,9 @@ static bool lcd_graph_move_bar(bool older)
 
     const uint8_t old_record = lcd_graph_selected_record;
     const uint8_t old_window = lcd_graph_log_window_start;
+    const bool wrapped = older ?
+        old_record == (uint8_t)(lcd_graph_log_available - 1u) :
+        old_record == 0u;
     lcd_graph_previous_selected = lcd_graph_selected;
     if (older) {
         lcd_graph_selected_record = (uint8_t)(
@@ -2884,7 +2887,8 @@ static bool lcd_graph_move_bar(bool older)
         lcd_graph_partial_kind = LCD_GRAPH_PARTIAL_WINDOW;
     } else {
         lcd_graph_selected = (uint8_t)(lcd_graph_selected_record - old_window);
-        lcd_graph_partial_kind = LCD_GRAPH_PARTIAL_CURSOR;
+        lcd_graph_partial_kind = wrapped ? LCD_GRAPH_PARTIAL_WINDOW :
+            LCD_GRAPH_PARTIAL_CURSOR;
     }
     lcd_graph_input_locked = true;
     lcd_graph_refresh_deadline = board_millis + 5000u;
