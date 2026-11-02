@@ -344,16 +344,15 @@ const elements = {
   debugChargeTime: document.querySelector('#debug-charge-time'),
   debugScreenPercent: document.querySelector('#debug-screen-percent'),
   debugScreenTime: document.querySelector('#debug-screen-time'),
+  debugWakePercent: document.querySelector('#debug-wake-percent'),
+  debugWakeTime: document.querySelector('#debug-wake-time'),
   debugSleepPercent: document.querySelector('#debug-sleep-percent'),
   debugSleepTime: document.querySelector('#debug-sleep-time'),
   debugCount: document.querySelector('#debug-count'),
-  debugRtcClock: document.querySelector('#debug-rtc-clock'),
-  debugSeconds: document.querySelector('#debug-seconds'),
   debugDate: document.querySelector('#debug-date'),
   debugTime: document.querySelector('#debug-time'),
   debugModeBadge: document.querySelector('#debug-mode-badge'),
   debugSpi: document.querySelector('#debug-spi'),
-  debugJedec: document.querySelector('#debug-jedec'),
 };
 
 class ProtocolError extends Error {}
@@ -1219,14 +1218,9 @@ function toggleLogsFullscreen() {
 
 function renderDebugLogInfo() {
   if (!logInfo) return;
-  const rtcStatus = logInfo.rtcStatus ||
-    (logInfo.calendarValid ? 'SET' : 'NOT SET');
-  elements.debugRtcClock.textContent = `${rtcStatus} ${logInfo.clockSource || '—'}`;
-  elements.debugSeconds.textContent = formatGroupedNumber(logInfo.seconds);
   const spiError = !logInfo.spiSizeMb;
   elements.debugSpi.textContent = spiError ? 'ERR' : `${logInfo.spiSizeMb} MB`;
   elements.debugSpi.classList.toggle('state-error', spiError);
-  elements.debugJedec.textContent = logInfo.jedec ? logInfo.jedec : '—';
 }
 
 function applyLogInfo(payload) {
@@ -2569,7 +2563,6 @@ function renderOfflinePreview() {
   elements.debugDate.textContent = '---- -- --';
   elements.debugTime.textContent = '--:--:--';
   elements.debugCount.textContent = '0';
-  elements.debugRtcClock.textContent = 'NOT SET LSI';
   elements.debugBatteryPercent.textContent = '0%';
   elements.debugBatteryRaw.textContent = '0';
   elements.debugBatteryStartPercent.textContent = '0%';
@@ -2579,6 +2572,7 @@ function renderOfflinePreview() {
   for (const [percentElement, timeElement] of [
     [elements.debugChargePercent, elements.debugChargeTime],
     [elements.debugScreenPercent, elements.debugScreenTime],
+    [elements.debugWakePercent, elements.debugWakeTime],
     [elements.debugSleepPercent, elements.debugSleepTime],
   ]) {
     const usage = formatDebugUsage(0, 0);
@@ -2592,8 +2586,6 @@ function renderOfflinePreview() {
   document.querySelector('#debug-log-store').textContent = 'EEPROM';
   elements.debugSpi.textContent = '1 MB';
   elements.debugSpi.classList.remove('state-error');
-  elements.debugJedec.textContent = '—';
-  elements.debugSeconds.textContent = '0';
   elements.rateChart.setAttribute('aria-label', 'Illustrative demo graph, not device data');
   elements.logsStatus.textContent = 'Demo preview · no device logs loaded';
   const demoLogTypes = logTypes.map(({ id, label }) => [id, label]);
@@ -2979,6 +2971,8 @@ function handleStatus(payload) {
   for (const [seconds, percentElement, timeElement] of [
     [usbSeconds, elements.debugChargePercent, elements.debugChargeTime],
     [screenSeconds, elements.debugScreenPercent, elements.debugScreenTime],
+    [sleepSeconds === null ? null : Math.max(0, uptimeSeconds - sleepSeconds),
+      elements.debugWakePercent, elements.debugWakeTime],
     [sleepSeconds, elements.debugSleepPercent, elements.debugSleepTime],
   ]) {
     if (seconds === null) {

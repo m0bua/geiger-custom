@@ -95,9 +95,7 @@ void board_display_set_dose_cpm(uint32_t cpm);
 uint8_t board_display_dose_period(void);
 uint16_t board_display_battery_start_raw(void);
 void board_display_set_count(uint32_t count);
-void board_display_set_debug_usage(uint32_t screen_seconds,
-                                  uint32_t sleep_seconds,
-                                  uint32_t usb_seconds);
+void board_display_set_debug_usage(uint32_t sleep_seconds);
 uint32_t board_display_screen_timeout_ms(void);
 bool board_display_cleanup_feedback_active(void);
 bool board_display_take_cleanup_feedback_dismissed(void);

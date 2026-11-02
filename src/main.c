@@ -592,6 +592,7 @@ int main(void)
                 } else {
                     pulses_since_start += second_pulses;
                 }
+                const bool cpm_valid = pulses_since_start >= 30u;
                 if (UINT32_MAX - session_pulses_total < second_pulses) {
                     session_pulses_total = UINT32_MAX;
                 } else {
@@ -609,9 +610,10 @@ int main(void)
                 daily_dose_add(second_pulses);
                 today_pulse_count = calendar_day_valid ?
                     daily_dose_count() : session_pulses_total;
-                log_writer_second(second_pulses, cpm,
-                    log_uptime_seconds, log_calendar_seconds,
-                    log_calendar_valid);
+                /* Keep the live minute available to the app while excluding
+                 * blue warm-up samples from persistent log records. */
+                log_writer_second(second_pulses, cpm, log_uptime_seconds,
+                    log_calendar_seconds, log_calendar_valid, cpm_valid);
                 if (board_display_dose_period() == 1u) {
                     if (dose_measurement_seconds < UINT32_MAX) {
                         ++dose_measurement_seconds;
@@ -843,8 +845,7 @@ int main(void)
             debug_usage_screen_was_on = backlight_on;
             debug_usage_sleep_was_on = idle_clock_active;
             debug_usage_usb_was_on = board_display_usb_connected();
-            board_display_set_debug_usage(debug_screen_seconds,
-                debug_sleep_seconds, debug_usb_seconds);
+            board_display_set_debug_usage(debug_sleep_seconds);
         }
 
         {

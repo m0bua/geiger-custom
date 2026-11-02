@@ -331,7 +331,7 @@ static const uint8_t digit_rows[10][FONT_LARGE_CELL_HEIGHT - 3u][3] = {    { /* 
 bool font_large_has_glyph(char glyph)
 {
     return (glyph >= '0' && glyph <= '9') || glyph == ':' ||
-        glyph == '.' || glyph == ' ';
+        glyph == '.' || glyph == '-' || glyph == ' ';
 }
 
 uint8_t font_large_glyph_width(char glyph)
@@ -349,6 +349,7 @@ bool font_large_pixel(char glyph, uint8_t x, uint8_t y)
         return (digit_rows[(uint8_t)(glyph - '0')][row][x / 8u] &
             (uint8_t)(1u << (x % 8u))) != 0u;
     }
+    if (glyph == '-') return y >= 15u && y < 19u && x >= 4u && x < 20u;
     /* Colon and point contain only solid 4-pixel-wide rectangles. */
     if (x < 10u || x >= 14u) return false;
     if (glyph == ':') return (y >= 9u && y < 13u) || (y >= 21u && y < 25u);

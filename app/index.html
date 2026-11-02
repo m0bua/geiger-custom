@@ -20,8 +20,8 @@
       <nav class="tabs" aria-label="Pages">
         <button class="tab active" id="overview-tab" type="button" aria-selected="true">Overview</button>
         <button class="tab" id="logs-tab" type="button" aria-selected="false">Logs</button>
-        <button class="tab" id="settings-tab" type="button" aria-selected="false">Settings</button>
         <button class="tab" id="debug-tab" type="button" aria-selected="false">Debug</button>
+        <button class="tab" id="settings-tab" type="button" aria-selected="false">Settings</button>
         <button class="tab" id="firmware-tab" type="button" aria-selected="false">Firmware</button>
         <button class="tab" id="manual-tab" type="button" aria-selected="false">Manual</button>
         <button class="tab" id="about-tab" type="button" aria-selected="false">About</button>
@@ -79,22 +79,20 @@
             <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">DATE</th><td id="debug-date">&#8212;</td><td id="debug-time">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">UPTIME</th><td></td><td id="uptime">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">CNT</th><td></td><td id="debug-count">&#8212;</td></tr>
-            <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">RTC</th><td></td><td id="debug-rtc-clock">&#8212;</td></tr>
-            <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">SPI</th><td></td><td id="debug-spi">&#8212;</td></tr>
-            <tr class="debug-data" data-debug-group="debug-clock-rows"><th scope="row">JEDEC</th><td></td><td id="debug-jedec">&#8212;</td></tr>
             <tr class="debug-section"><th colspan="3"><button type="button" class="debug-section-toggle" aria-expanded="true" aria-controls="debug-power-rows">POWER</button></th></tr>
+            <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">SOL</th><td id="debug-solar-percent">&#8212;</td><td id="debug-solar-raw">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">BATT</th><td id="debug-battery-percent">&#8212;</td><td id="debug-battery-raw">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">BATT START</th><td id="debug-battery-start-percent">&#8212;</td><td id="debug-battery-start-raw">&#8212;</td></tr>
-            <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">SOL</th><td id="debug-solar-percent">&#8212;</td><td id="debug-solar-raw">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">CHARGE</th><td id="debug-charge-percent">&#8212;</td><td id="debug-charge-time">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">SCREEN</th><td id="debug-screen-percent">&#8212;</td><td id="debug-screen-time">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">WAKE</th><td id="debug-wake-percent">&#8212;</td><td id="debug-wake-time">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-power-rows"><th scope="row">SLEEP</th><td id="debug-sleep-percent">&#8212;</td><td id="debug-sleep-time">&#8212;</td></tr>
             <tr class="debug-section"><th colspan="3"><button type="button" class="debug-section-toggle" aria-expanded="true" aria-controls="debug-log-rows">LOGS</button></th></tr>
             <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">MIN</th><td></td><td id="debug-minutes">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">HOUR</th><td></td><td id="debug-hours">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">DAY</th><td></td><td id="debug-days">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">ALERT</th><td></td><td id="debug-alerts">&#8212;</td></tr>
-            <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">SEC</th><td></td><td id="debug-seconds">&#8212;</td></tr>
+            <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">SPI</th><td></td><td id="debug-spi">&#8212;</td></tr>
             <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">STORE</th><td></td><td id="debug-log-store">&#8212;</td></tr>
           </tbody>
         </table>
@@ -315,7 +313,7 @@
           <li><strong>Overview:</strong> shows the current rate, accumulated dose for today, device date/time and uptime, solar level, and battery level. The rate and dose units follow the device's UNIT and prefix settings. Hover over the rate chart to read a plotted value; it keeps the latest three minutes.</li>
           <li><strong>Logs:</strong> inspect minute, hour, day, and alert records. Choose a range, load records, and export them as CSV. See the detailed Logs guide below for coverage, live records, and storage.</li>
           <li><strong>Settings:</strong> read and change options supported by the connected firmware. Values that depend on another setting may be disabled. The Show checkboxes control which options appear in the device menu; setting and visibility changes are applied immediately. The device clock can be synchronized to the computer's current local time. POWER OFF is always shown and has no visibility checkbox.</li>
-          <li><strong>Debug:</strong> inspect device time and clock source, uptime, pulse count, power readings, physical log counts, storage state, memory sizes, and SPI identification. Sections are in one table and can be collapsed independently.</li>
+          <li><strong>Debug:</strong> inspect device time, uptime, pulse count, power readings, physical log counts, storage state, and SPI memory size. Sections are in one table and can be collapsed independently.</li>
           <li><strong>Without a connection:</strong> Overview, Logs, and Debug show clearly marked illustrative zero data. Settings use factory defaults and can be changed for preview, but preview changes are not saved and reset after reloading the page. Options unsupported by the connected firmware remain visible but disabled.</li>
         </ul>
         <h3>Logs</h3>
@@ -409,7 +407,7 @@
           <li><strong>Right button:</strong> switches the main screen; in menus it moves forward or confirms.</li>
         </ul>
         <p>At startup, the LED lights white for about one second. On Rate, short Left cycles NORMAL → SEARCH → INVISIBLE. If SEARCH has been active for 10 seconds, the next press returns directly to NORMAL. NORMAL has no mode letter; SEARCH shows a green S, INVISIBLE a red I, and the yellow L appears only while the flashlight is manually on. Short Right switches between Rate and Dose. Long Left toggles the flashlight on either main screen.</p>
-        <p>Long Right on Rate opens the last-used extra screen (Settings is first after startup). The extra screens are Settings and Debug; short Left/Right switches between them. On Settings, long Right opens the settings list; long Left leaves the list, and another long Left returns to the main screen. In Debug, long Right advances through its pages. Long Right on Dose opens Graphs. Holding Left for 3 seconds forces a return to the Rate screen, including from a slow or unresponsive graph. While any alarm is active, the first button press is consumed: it silences the siren, stops alarm light flashing, and acknowledges the alarm. The screen may then time out even if the trigger remains; the alarm can activate again only after the trigger clears and occurs again. If the display is asleep, a button press normally only wakes it. In INVISIBLE, short Left exits the mode and wakes the display in the same press.</p>
+        <p>Long Right on Rate opens the last-used extra screen (Debug is first after startup). The extra screens are Debug and Settings; short Left/Right switches between them. On Settings, long Right opens the settings list; long Left leaves the list, and another long Left returns to the main screen. In Debug, long Right advances through its pages. Long Right on Dose opens Graphs. Holding Left for 3 seconds forces a return to the Rate screen, including from a slow or unresponsive graph. While any alarm is active, the first button press is consumed: it silences the siren, stops alarm light flashing, and acknowledges the alarm. The screen may then time out even if the trigger remains; the alarm can activate again only after the trigger clears and occurs again. If the display is asleep, a button press normally only wakes it. In INVISIBLE, short Left exits the mode and wakes the display in the same press.</p>
         </section>
 
         <section class="manual-chapter">
@@ -434,7 +432,7 @@
 
         <section class="manual-chapter">
         <h3>1.2 - Debug</h3>
-        <p>The extra-screen group contains Settings and Debug. Short Left/Right switches between them. Debug has three pages: time/date, uptime, total pulse count, RTC status and clock source, plus detected SPI capacity and JEDEC ID; voltage and power readings; physical log counts and store status. Long Right advances through Debug pages. SPI is probed when Debug opens. The app presents these diagnostics together in one table.</p>
+        <p>The extra-screen group contains Settings and Debug. Short Left/Right switches between them. Debug has three pages: large HH:MM, date and total pulse count; voltage and power readings plus combined WAKE, SLEEP and uptime; physical MIN/HOUR/DAY/ALERT log counts, SPI capacity and store status. Long Right advances through Debug pages. SPI is probed when Debug opens. The app presents these diagnostics together in one table, with CHARGE and SCREEN durations shown separately alongside total WAKE.</p>
         </section>
 
         <section class="manual-chapter">
@@ -484,7 +482,7 @@
             <time datetime="2026-11-02">2026-11-02</time> — Release: search, graphs, logging, firmware safety, and app updates:
             <ul>
               <li><strong>Search and display:</strong> SEARCH refreshes the rate every 100 ms, reacts immediately to pulses, eases down between pulses, shows up to five decimal places for Sv/R, and uses a brighter LED. NORMAL refreshes every 500 ms; with the display off, rate updates follow pulses. Fixed rate/dose secondary-row rendering and kept warm-up CNT aligned with the dose row.</li>
-              <li><strong>Graphs and logs:</strong> added dedicated live histories for 3, 5, and 10 minutes and fixed cursor cleanup at graph edges. Minute coverage now follows elapsed time, avoiding false partial records when sampling is delayed. Dose calculations follow logged pulse counts; automatic hourly dose resynchronization is disabled, with DAY/TOTAL correction available after loading the DAY graph.</li>
+              <li><strong>Graphs and logs:</strong> added dedicated live histories for 3, 5, and 10 minutes and fixed cursor cleanup at graph edges. Minute coverage now follows elapsed time, avoiding false partial records when sampling is delayed. Persistent logs exclude the 30-pulse blue warm-up while RAM graph history, the app's live minute row, and live dose continue to include it. Automatic hourly dose resynchronization is disabled, with DAY/TOTAL correction available after loading the DAY graph.</li>
               <li><strong>Log viewer:</strong> expands to full screen; displays coverage as compact elapsed time and alert duration without unit suffixes, omitting zero leading fields. Requests up to ten records per device exchange and updates rows and totals as each response arrives. Stop finishes the current request before halting. More extends Latest by one period, Count by 100 records, or resumes All/Dates; it remains visible but disables when unavailable. Live refresh no longer rebuilds rows under the pointer.</li>
               <li><strong>Firmware and backups:</strong> Quick, Firmware, and SPI operations save a permanent full FLASH backup in browser storage before the first write and offer restore actions. Manual FLASH dumps have a separate browser-stored restore copy. SPI service operations use a temporary recovery backup. Actions are grouped in the persistent activity log; older actions collapse when a new one starts.</li>
               <li><strong>Windows and interface:</strong> added F5 page refresh to the desktop app, refined overview metrics and setting controls, and removed an unavailable demo clock status message.</li>

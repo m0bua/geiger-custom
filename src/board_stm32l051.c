@@ -285,11 +285,9 @@ static uint8_t lcd_auto_backlight_target_percent = 1u;
 static uint32_t lcd_backlight_ramp_last_ms;
 static uint8_t lcd_screen_page;
 static uint8_t lcd_main_return_page;
-static uint8_t lcd_last_extra_page = 2u;
+static uint8_t lcd_last_extra_page = 3u;
 static uint8_t lcd_debug_subpage;
-static uint32_t lcd_debug_screen_seconds;
 static uint32_t lcd_debug_sleep_seconds;
-static uint32_t lcd_debug_usb_seconds;
 static uint8_t lcd_graph_range_index = 3u;
 static uint8_t lcd_graph_log_type;
 static uint8_t lcd_graph_selected;
@@ -1878,6 +1876,23 @@ static uint8_t lcd_debug_time_percent(char *text, uint32_t seconds)
     return 12u;
 }
 
+static uint8_t lcd_debug_uptime_text(char *text, uint32_t seconds)
+{
+    const uint32_t days = seconds / 86400u;
+    const uint32_t minutes = (seconds / 60u) % 1440u;
+    uint8_t length = lcd_debug_u32_digits(text, days);
+    text[length++] = 'D'; text[length++] = ' ';
+    text[length++] = (char)('0' + minutes / 600u);
+    text[length++] = (char)('0' + (minutes / 60u) % 10u);
+    text[length++] = ':';
+    text[length++] = (char)('0' + (minutes % 60u) / 10u);
+    text[length++] = (char)('0' + minutes % 10u);
+    text[length++] = ':';
+    text[length++] = (char)('0' + (seconds % 60u) / 10u);
+    text[length++] = (char)('0' + seconds % 10u);
+    return length;
+}
+
 static void lcd_debug_put_right(char *line, uint8_t end, const char *value,
                                 uint8_t length)
 {
@@ -1896,98 +1911,31 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
     for (uint8_t i = 0u; i < 20u; ++i) line[i] = ' ';
 
     if (subpage == 0u) {
-        const uint32_t seconds = board_uptime_seconds;
         if (row == 1u) {
             rtc_calendar_t calendar;
             if (rtc_time_valid && rtc_read_calendar(&calendar)) {
-                line[0] = (char)('0' + calendar.year / 1000u);
-                line[1] = (char)('0' + (calendar.year / 100u) % 10u);
-                line[2] = (char)('0' + (calendar.year / 10u) % 10u);
-                line[3] = (char)('0' + calendar.year % 10u);
-                line[4] = '-';
-                line[5] = (char)('0' + calendar.month / 10u);
-                line[6] = (char)('0' + calendar.month % 10u);
-                line[7] = '-';
-                line[8] = (char)('0' + calendar.day / 10u);
-                line[9] = (char)('0' + calendar.day % 10u);
-                line[12] = (char)('0' + calendar.hour / 10u);
-                line[13] = (char)('0' + calendar.hour % 10u);
-                line[14] = ':';
-                line[15] = (char)('0' + calendar.minute / 10u);
-                line[16] = (char)('0' + calendar.minute % 10u);
-                line[17] = ':';
-                line[18] = (char)('0' + calendar.second / 10u);
-                line[19] = (char)('0' + calendar.second % 10u);
+                line[5] = (char)('0' + calendar.year / 1000u);
+                line[6] = (char)('0' + (calendar.year / 100u) % 10u);
+                line[7] = (char)('0' + (calendar.year / 10u) % 10u);
+                line[8] = (char)('0' + calendar.year % 10u);
+                line[9] = '-';
+                line[10] = (char)('0' + calendar.month / 10u);
+                line[11] = (char)('0' + calendar.month % 10u);
+                line[12] = '-';
+                line[13] = (char)('0' + calendar.day / 10u);
+                line[14] = (char)('0' + calendar.day % 10u);
             } else {
-                const char unset[] = "---- -- --  --:--:--";
-                for (uint8_t i = 0u; i < 20u; ++i) line[i] = unset[i];
+                const char unset[] = "---- -- --";
+                for (uint8_t i = 0u; i < 10u; ++i) line[5u + i] = unset[i];
             }
             return 20u;
-        } else if (row == 2u) {
-            label = "UPTIME";
-            const uint32_t days = seconds / 86400u;
-            const uint32_t minutes = (seconds / 60u) % 1440u;
-            value_length = lcd_debug_u32_digits(value, days);
-            value[value_length++] = 'D'; value[value_length++] = ' ';
-            value[value_length++] = (char)('0' + minutes / 600u);
-            value[value_length++] = (char)('0' + (minutes / 60u) % 10u);
-            value[value_length++] = ':';
-            value[value_length++] = (char)('0' + (minutes % 60u) / 10u);
-            value[value_length++] = (char)('0' + minutes % 10u);
-            value[value_length++] = ':';
-            value[value_length++] = (char)('0' + (seconds % 60u) / 10u);
-            value[value_length++] = (char)('0' + seconds % 10u);
         } else if (row == 3u) {
-            label = "CNT";
+            label = "";
             value_length = lcd_debug_u32_digits(value, detector_pulse_count);
-        } else if (row == 4u) {
-            label = "RTC";
-            const char *status = rtc_init_error == 1u ? "OSC ERR" :
-                rtc_init_error == 2u ? "INIT ERR" :
-                rtc_init_error == 3u ? "SYNC ERR" :
-                rtc_init_error == 4u ? "DBP ERR" :
-                !rtc_ready ? "NOT READY" :
-                rtc_time_valid ? "SET" : "NOT SET";
-            while (status[value_length] != '\0') {
-                value[value_length] = status[value_length];
-                ++value_length;
-            }
-            const char *clock_source = ((RCC_CSR >> 16u) & 3u) == 1u ? "LSE" :
-                "LSI";
-            value[value_length++] = ' ';
-            value[value_length++] = clock_source[0];
-            value[value_length++] = clock_source[1];
-            value[value_length++] = clock_source[2];
-        } else if (row == 5u) {
-            label = "SPI";
-            const uint32_t bytes = spi_nor_size_bytes();
-            if (bytes == 0u) {
-                value[0] = 'E'; value[1] = 'R'; value[2] = 'R';
-                value_length = 3u;
-            } else if (bytes >= 1024u * 1024u) {
-                value_length = lcd_debug_u32_digits(value,
-                    bytes / (1024u * 1024u));
-                value[value_length++] = ' ';
-                value[value_length++] = 'M'; value[value_length++] = 'B';
-            } else {
-                value_length = lcd_debug_u32_digits(value, bytes / 1024u);
-                value[value_length++] = ' ';
-                value[value_length++] = 'K'; value[value_length++] = 'B';
-            }
-        } else if (row == 6u) {
-            static const char hex[] = "0123456789ABCDEF";
-            const spi_nor_jedec_id_t id = spi_nor_jedec_id();
-            const uint8_t bytes[3] = {
-                id.manufacturer, id.memory_type, id.capacity
-            };
-            label = "JEDEC";
-            if (bytes[0] == 0u && bytes[1] == 0u && bytes[2] == 0u) {
-                value[value_length++] = '-';
-            } else {
-                for (uint8_t i = 0u; i < 3u; ++i) {
-                    value[value_length++] = hex[bytes[i] >> 4u];
-                    value[value_length++] = hex[bytes[i] & 0x0Fu];
-                    if (i != 2u) value[value_length++] = ' ';
+            {
+                static const char suffix[] = " CNT ";
+                for (uint8_t i = 0u; i < sizeof(suffix) - 1u; ++i) {
+                    value[value_length++] = suffix[i];
                 }
             }
         } else {
@@ -1998,26 +1946,40 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
         }
         lcd_debug_put_right(line, 20u, value, value_length);
     } else if (subpage == 2u) {
-        static const char *const labels[] = {"MIN", "HOUR", "DAY", "ALERT", "SEC", "STORE"};
+        static const char *const labels[] = {"MIN", "HOUR", "DAY", "ALERT", "SPI", "STORE"};
         if (row >= 1u && row <= 6u) {
             label = labels[row - 1u];
             if (row <= 4u) value_length = lcd_debug_u32_digits(value, log_history_count((uint8_t)(row - 1u)));
-            else if (row == 5u) value_length = lcd_debug_u32_digits(value, second_log_count());
-            else {
+            else if (row == 5u) {
+                const uint32_t bytes = spi_nor_size_bytes();
+                if (bytes == 0u) {
+                    value[0] = 'E'; value[1] = 'R'; value[2] = 'R';
+                    value_length = 3u;
+                } else if (bytes >= 1024u * 1024u) {
+                    value_length = lcd_debug_u32_digits(value,
+                        bytes / (1024u * 1024u));
+                    value[value_length++] = ' ';
+                    value[value_length++] = 'M'; value[value_length++] = 'B';
+                } else {
+                    value_length = lcd_debug_u32_digits(value, bytes / 1024u);
+                    value[value_length++] = ' ';
+                    value[value_length++] = 'K'; value[value_length++] = 'B';
+                }
+            } else {
                 const char *status = log_writer_fault() ? "ERR" : (settings_log_memory == BOARD_LOG_MEMORY_OFF ? "OFF" : "OK");
                 while (status[value_length]) { value[value_length] = status[value_length]; ++value_length; }
             }
-        }
+        } else label = "";
     } else {
         if (row < 1u || row > 6u) return 20u;
         if (row <= 3u) {
-            const uint16_t raw = row == 1u ? lcd_adc_battery_raw :
-                (row == 2u ? lcd_adc_battery_start_raw : lcd_adc_sun_raw);
+            const uint16_t raw = row == 1u ? lcd_adc_sun_raw :
+                (row == 2u ? lcd_adc_battery_raw : lcd_adc_battery_start_raw);
             const uint16_t percent = row == 1u ?
-                lcd_displayed_battery_percent : (row == 2u ?
-                    lcd_battery_start_percent : lcd_displayed_solar_percent);
-            label = row == 1u ? "BATT" :
-                (row == 2u ? "BATT START" : "SOL");
+                lcd_displayed_solar_percent : (row == 2u ?
+                    lcd_displayed_battery_percent : lcd_battery_start_percent);
+            label = row == 1u ? "SOL" :
+                (row == 2u ? "BATT" : "BATT START");
             for (uint8_t i = 0u; label[i] != '\0'; ++i) line[i] = label[i];
             value_length = lcd_debug_u32_digits(value, percent);
             value[value_length++] = '%';
@@ -2025,13 +1987,22 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
             value_length = lcd_debug_u32_digits(value, raw);
             lcd_debug_put_right(line, 20u, value, value_length);
         } else {
-            const uint32_t duration = row == 4u ? lcd_debug_usb_seconds :
-                (row == 5u ? lcd_debug_screen_seconds :
-                             lcd_debug_sleep_seconds);
-            label = row == 4u ? "CHARGE" :
-                (row == 5u ? "SCREEN" : "SLEEP");
+            const uint32_t uptime = board_uptime_seconds;
+            uint32_t duration;
+            if (row == 4u) {
+                label = "WAKE";
+                duration = uptime >= lcd_debug_sleep_seconds ?
+                    uptime - lcd_debug_sleep_seconds : 0u;
+                value_length = lcd_debug_time_percent(value, duration);
+            } else if (row == 5u) {
+                label = "SLEEP";
+                value_length = lcd_debug_time_percent(value,
+                    lcd_debug_sleep_seconds);
+            } else {
+                label = "UPTIME";
+                value_length = lcd_debug_uptime_text(value, uptime);
+            }
             for (uint8_t i = 0u; label[i] != '\0'; ++i) line[i] = label[i];
-            value_length = lcd_debug_time_percent(value, duration);
             lcd_debug_put_right(line, 20u, value, value_length);
         }
         return 20u;
@@ -3478,18 +3449,65 @@ settings_line_draw:
         }
         if (lcd_screen_page == 3u) {
             char text[24];
-            if (lcd_text_glyph_index >= 6u) {
+            const bool clock_page = lcd_debug_subpage == 0u;
+            const uint8_t glyph_limit = clock_page ? 7u : 6u;
+            if (lcd_text_glyph_index >= glyph_limit) {
                 lcd_text_active = false;
                 return false;
             }
-            const uint8_t length = lcd_info_make_line(
-                (uint8_t)(lcd_text_glyph_index + 1u), text);
+            if (clock_page && lcd_text_glyph_index >= 1u &&
+                lcd_text_glyph_index <= 5u) {
+                static char clock_text[5];
+                if (lcd_text_glyph_index == 1u) {
+                    rtc_calendar_t calendar;
+                    if (rtc_time_valid && rtc_read_calendar(&calendar)) {
+                        clock_text[0] = (char)('0' + calendar.hour / 10u);
+                        clock_text[1] = (char)('0' + calendar.hour % 10u);
+                        clock_text[2] = ':';
+                        clock_text[3] = (char)('0' + calendar.minute / 10u);
+                        clock_text[4] = (char)('0' + calendar.minute % 10u);
+                    } else {
+                        clock_text[0] = '-'; clock_text[1] = '-';
+                        clock_text[2] = ':';
+                        clock_text[3] = '-'; clock_text[4] = '-';
+                    }
+                }
+                const uint8_t glyph_index = (uint8_t)(lcd_text_glyph_index - 1u);
+                const char glyph = clock_text[glyph_index];
+                const uint8_t x_start = (uint8_t)(20u + glyph_index *
+                    FONT_LARGE_CELL_WIDTH);
+                const uint8_t y_start = 21u;
+                uint8_t x_window[4] = {0u, x_start, 0u,
+                    (uint8_t)(x_start + FONT_LARGE_CELL_WIDTH - 1u)};
+                uint8_t y_window[4] = {0u,
+                    (uint8_t)(LCD_Y_OFFSET + y_start), 0u,
+                    (uint8_t)(LCD_Y_OFFSET + y_start +
+                        FONT_LARGE_CELL_HEIGHT - 1u)};
+                lcd_text_glyph_pixels = (uint16_t)(FONT_LARGE_CELL_WIDTH *
+                    FONT_LARGE_CELL_HEIGHT);
+                lcd_text_dma_glyph_advance = 1u;
+                for (uint8_t y = 0u; y < FONT_LARGE_CELL_HEIGHT; ++y) {
+                    for (uint8_t x = 0u; x < FONT_LARGE_CELL_WIDTH; ++x) {
+                        lcd_glyph_put((uint16_t)y * FONT_LARGE_CELL_WIDTH + x,
+                            font_large_pixel(glyph, x, y) ?
+                                LCD_TEXT_FOREGROUND : LCD_TEXT_BACKGROUND);
+                    }
+                }
+                lcd_submit_text_window(x_window, y_window);
+                return true;
+            }
+            const uint8_t line_index = clock_page ?
+                (lcd_text_glyph_index == 0u ? 1u : 3u) :
+                (uint8_t)(lcd_text_glyph_index + 1u);
+            const uint8_t length = lcd_info_make_line(line_index, text);
             const uint16_t row_width = (uint16_t)(length *
                 (FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP) -
                 LCD_SMALL_TEXT_GAP);
             const uint8_t x_start = (uint8_t)((LCD_WIDTH - row_width) / 2u);
-            const uint8_t y_start = (uint8_t)(2u +
-                lcd_text_glyph_index * (FONT_SMALL_CELL_HEIGHT + 2u));
+            const uint8_t y_start = clock_page ?
+                (lcd_text_glyph_index == 0u ? 2u : 62u) :
+                (uint8_t)(2u + lcd_text_glyph_index *
+                    (FONT_SMALL_CELL_HEIGHT + 2u));
             uint8_t x_window[4] = {
                 0u, x_start, 0u, (uint8_t)(x_start + row_width - 1u)
             };
@@ -3498,7 +3516,7 @@ settings_line_draw:
                 (uint8_t)(LCD_Y_OFFSET + y_start + FONT_SMALL_CELL_HEIGHT - 1u)
             };
 
-            const bool spi_error = lcd_debug_subpage == 0u &&
+            const bool spi_error = lcd_debug_subpage == 2u &&
                 lcd_text_glyph_index == 4u && text[17] == 'E' &&
                 text[18] == 'R' && text[19] == 'R';
             lcd_render_small_line(text, row_width, LCD_TEXT_FOREGROUND,
@@ -5981,13 +5999,9 @@ void board_display_history_updated(void)
     }
 }
 
-void board_display_set_debug_usage(uint32_t screen_seconds,
-                                  uint32_t sleep_seconds,
-                                  uint32_t usb_seconds)
+void board_display_set_debug_usage(uint32_t sleep_seconds)
 {
-    lcd_debug_screen_seconds = screen_seconds;
     lcd_debug_sleep_seconds = sleep_seconds;
-    lcd_debug_usb_seconds = usb_seconds;
 }
 
 uint8_t board_display_rate_led_mask(void)
@@ -6602,7 +6616,7 @@ void board_display_init(void)
     settings_dose_actions_load();
     settings_visibility_load();
     lcd_screen_page = 0u;
-    lcd_last_extra_page = 2u;
+    lcd_last_extra_page = 3u;
     lcd_main_return_page = 0u;
     lcd_settings_selected = lcd_settings_visible_to_item(0u);
     if (settings_log_source == BOARD_LOG_MEMORY_SPI) {
