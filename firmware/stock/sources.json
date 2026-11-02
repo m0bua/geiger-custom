@@ -73,6 +73,20 @@
           "download": "https://milerdport.cloud/uploads/firmware/Device/T/4.1.17/files/Port-4.1.17-(only-Windows).hex"
         }
       ]
+    },
+    "RU-3.0.19-(only-Windows).hex": {
+      "sha256": "65111a2edba55b6cecca0dd165dcc5abbaf5f26935179fb334aafd5a531d3148",
+      "version": "3.0.19",
+      "source_urls": [
+        {
+          "api": "https://mainserver.milerd.ru/api/firmware_updates/current?platform=Device&type=u",
+          "download": "https://mainserver.milerd.ru/uploads/firmware/Device/u/3.0.19/files/RU-3.0.19-(only-Windows).hex"
+        },
+        {
+          "api": "https://mainserver.milerd.ru/api/firmware_updates/getLast?platform=Device&type=u",
+          "download": "https://mainserver.milerd.ru/uploads/firmware/Device/u/3.0.19/files/RU-3.0.19-(only-Windows).hex"
+        }
+      ]
     }
   }
 }
