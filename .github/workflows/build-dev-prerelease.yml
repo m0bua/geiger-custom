@@ -196,12 +196,15 @@ jobs:
           The HTML and Windows apps identify themselves as Version: ${RELEASE_VERSION}. This build is for testing and may change without notice.
 
           ## Changes
-          - SEARCH now refreshes the rate every 100 ms, responds immediately to detector pulses, eases down between pulses, shows up to five decimal places for Sv/R, and uses a brighter LED. NORMAL refreshes every 500 ms; with the display off, updates follow pulses.
-          - Extended live rate graphs to 3, 5, and 10 minutes with separate history resolutions; fixed cursor cleanup at graph edges.
-          - Improved minute-log coverage tracking so delayed second sampling does not create false partial-minute records.
-          - DOSE ROW 2 CPM now uses measured CPM. DAY and TOTAL counters are corrected after the DAY graph loads; background hourly resynchronization is disabled to keep minute writes on schedule.
-          - Enabled complementary CPM/CPS choices in CNT mode and kept log rows stable during live refresh to prevent hover flicker.
-          - Firmware and SPI operations reuse a saved full FLASH backup or capture one before the first operation; restore controls appear in Quick, Firmware, and SPI, and changes stop before erase if capture fails.
+          - Fixed LTO startup by preserving the real SysTick handler; aligned standalone and PlatformIO build settings, added startup/vector validation, and verified UART HEX programming.
+          - Dose calculations now follow logged pulse counts. Automatic hourly dose resynchronization is disabled; loading the DAY graph corrects DAY and TOTAL from stored records. DOSE ROW 2 CPM uses measured CPM.
+          - Improved minute coverage tracking to avoid false partial records when second sampling is delayed. Extended live rate graphs to 3, 5, and 10 minutes with separate history resolutions and fixed cursor cleanup at graph edges.
+          - SEARCH updates every 100 ms, reacts immediately to pulses, eases down between pulses, displays up to five decimal places for Sv/R, and uses a brighter LED. NORMAL updates every 500 ms; with the display off, rate updates follow pulses.
+          - Added 10-record log transfers, incremental table updates, Stop-after-current-request, and More for extending Latest, Count, All, or Dates loads. Fixed hover flicker and kept table headers/totals visible while scrolling; the table defaults to ten rows and can be resized vertically.
+          - Added permanent browser-stored FLASH backup before the first firmware or SPI write, separate manual FLASH dump/restore storage, and temporary recovery backups for SPI service operations. Restore actions are available in Quick, Firmware, and SPI; operations stop before erase if backup capture fails.
+          - Grouped Firmware Activity entries by action, keeping the log visible and clearing it only on request. Added F5 refresh to the Windows app.
+          - Refined Overview rate/dose metrics and Settings layout; fixed blue warm-up CNT alignment, complementary CPM/CPS selection in CNT mode, and the demo clock placeholder. Added a smooth backlight fade after the configured timeout.
+          - Reset dose counters with the active logs and block log erasure over unrecognized SPI contents, including stock assets.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded): ${canonical_sha256}

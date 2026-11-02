@@ -306,13 +306,13 @@
         <summary>Readings and data</summary>
         <ul>
           <li><strong>Overview:</strong> shows the current rate, accumulated dose for today, device date/time and uptime, solar level, and battery level. The rate and dose units follow the device's UNIT and prefix settings. Hover over the rate chart to read a plotted value; it keeps the latest three minutes.</li>
-          <li><strong>Logs:</strong> inspect minute, hour, day, and alert records. Choose a range and batch size, then export the loaded records as CSV. See the detailed Logs guide below for coverage, live records, and storage.</li>
+          <li><strong>Logs:</strong> inspect minute, hour, day, and alert records. Choose a range, load records, and export them as CSV. See the detailed Logs guide below for coverage, live records, and storage.</li>
           <li><strong>Settings:</strong> read and change options supported by the connected firmware. Values that depend on another setting may be disabled. The Show checkboxes control which options appear in the device menu; setting and visibility changes are applied immediately. The device clock can be synchronized to the computer's current local time. POWER OFF is always shown and has no visibility checkbox.</li>
           <li><strong>Debug:</strong> inspect device time and clock source, uptime, pulse count, power readings, physical log counts, storage state, memory sizes, and SPI identification. Sections are in one table and can be collapsed independently.</li>
           <li><strong>Without a connection:</strong> Overview, Logs, and Debug show clearly marked illustrative zero data. Settings use factory defaults and can be changed for preview, but preview changes are not saved and reset after reloading the page. Options unsupported by the connected firmware remain visible but disabled.</li>
         </ul>
         <h3>Logs</h3>
-        <p>The Logs page reads the same history used by the device's log graphs. Select a log type and range, then press <strong>Load</strong>. You can choose the type and range before connecting; switching tabs keeps each loaded view. The app requests the maximum number of records supported by the connected firmware in each serial exchange, up to ten, and adds the returned records and refreshes totals after every response. <strong>More</strong> extends Latest by another default period, adds 100 records to Count, or resumes an incomplete All or Dates load. It stays visible and is disabled while disconnected, loading, or when no more records are available. The current record may refresh while the page is open.</p>
+        <p>The Logs page reads the same history used by the device's log graphs. Select a log type and range, then press <strong>Load</strong>. You can choose the type and range before connecting; switching tabs keeps each loaded view. The app requests the maximum number of records supported by the connected firmware in each serial exchange, up to ten, and adds returned records and refreshes totals after every response. While loading, <strong>Stop</strong> lets the current device request finish, processes its response, and then stops further requests. <strong>More</strong> extends Latest by another default period, adds 100 records to Count, or resumes an incomplete All or Dates load. It stays visible and is disabled while disconnected, loading, or when no more records are available. The current record may refresh while the page is open.</p>
         <ul>
           <li><strong>MINUTES:</strong> one record per minute, with dose, average rate, maximum rate, and coverage.</li>
           <li><strong>HOURS:</strong> one record per hour with the same values. The newest unfinished hour is assembled from minute data.</li>
@@ -377,6 +377,17 @@
         <p>Successful reset actions restart the device. Actions that clear SPI require the chip to be accessible and contain only recognizable log data; unrecognized sectors block the action and remain untouched.</p>
 
         <p><strong>Factory defaults:</strong> LED ALWAYS; CLICKS and alarm outputs OFF; both brightness settings AUTO; SCREEN TIMER 10 seconds; TONE STOCK; LEAD ZERO SHOW; UNIT Sv; both prefixes µ; RATE ROW 2 CPM; DOSE PERIOD DAY with DOSE ROW 2 CNT; LONG PRESS 900 ms; HV ON; LOG MEMORY EEPROM; ALARM STOP CLEAR. RATE CUSTOM defaults to 0.9 µSv/h and DOSE CUSTOM to 5 µSv. RATE CUSTOM, DOSE CUSTOM, LONG PRESS, HV, LOG MEMORY, DOSE SCREEN, DOSE LIGHT, DOSE SOUND, ALARM STOP, TONE, LEAD ZERO, RATE PREFIX, DOSE PREFIX, RESET, and REBOOT are hidden from the device menu by default and can be shown from the app.</p>
+      </details>
+      <details class="information-card manual-card">
+        <summary>Firmware maintenance</summary>
+        <ul>
+          <li><strong>Quick flash:</strong> programs the firmware embedded in the release app. In a local project build this action is available only when the app was built with the project firmware.</li>
+          <li><strong>Stock images:</strong> Quick → Stock contains validated stock HEX images. The list is ordered newest version first; English is preferred when versions match. Source links are listed below the buttons.</li>
+          <li><strong>Backups:</strong> before the first firmware write or SPI operation, the app captures a full FLASH backup, downloads it, and stores it in browser storage. Later operations reuse it. Restore is available in Quick, Firmware, and SPI. Manual Dump FLASH also stores a separate restore copy; it does not replace the permanent backup.</li>
+          <li><strong>SPI operations:</strong> operations that need the temporary SPI service firmware take a temporary recovery backup, restore and verify the device firmware at the end, then discard that temporary copy. Keep the device connected until the operation finishes.</li>
+          <li><strong>Activity:</strong> the shared Firmware log stays visible. Entries are grouped by action; starting a new action collapses older groups. Use Clear to remove entries.</li>
+          <li><strong>Windows app:</strong> press F5 to reload the app page.</li>
+        </ul>
       </details>
       <details class="information-card manual-card device-manual">
         <summary>Device manual</summary>
@@ -463,14 +474,13 @@
           <div class="release-history-content">
         <ul class="release-list">
           <li>
-            <time datetime="2026-11-02">2026-11-02</time> — Pre-release: search response, graph history, and dose/log fixes:
+            <time datetime="2026-11-02">2026-11-02</time> — Release: search, graphs, logging, firmware safety, and app updates:
             <ul>
-              <li><strong>Search:</strong> the rate display now refreshes every 100 ms, rises with detector pulses, and eases down between them. SEARCH shows up to five decimal places for Sv/R and uses a brighter LED. NORMAL refreshes every 500 ms; with the display off, the rate updates on pulses.</li>
-              <li><strong>Graphs:</strong> extended live rate history to 3, 5, and 10 minutes with separate time-resolution buffers; fixed cursor cleanup when wrapping across graph edges.</li>
-              <li><strong>Logging:</strong> minute coverage now follows elapsed time, avoiding false partial-minute records when second sampling is delayed.</li>
-              <li><strong>Dose:</strong> DOSE ROW 2 CPM now uses measured CPM. Removed automatic hourly log resynchronization; DAY and TOTAL are corrected after the DAY graph finishes loading.</li>
-              <li><strong>Settings and Logs:</strong> enabled the complementary CPM/CPS choice for CNT mode and stopped live log refresh from rebuilding rows under the mouse pointer.</li>
-              <li><strong>Firmware and SPI:</strong> reuse a saved full FLASH backup or capture one before the first firmware/SPI operation. Restore controls appear in Quick, Firmware, and SPI; cancel before erase if backup capture fails.</li>
+              <li><strong>Search and display:</strong> SEARCH refreshes the rate every 100 ms, reacts immediately to pulses, eases down between pulses, shows up to five decimal places for Sv/R, and uses a brighter LED. NORMAL refreshes every 500 ms; with the display off, rate updates follow pulses. Fixed rate/dose secondary-row rendering and kept warm-up CNT aligned with the dose row.</li>
+              <li><strong>Graphs and logs:</strong> added dedicated live histories for 3, 5, and 10 minutes and fixed cursor cleanup at graph edges. Minute coverage now follows elapsed time, avoiding false partial records when sampling is delayed. Dose calculations follow logged pulse counts; automatic hourly dose resynchronization is disabled, with DAY/TOTAL correction available after loading the DAY graph.</li>
+              <li><strong>Log viewer:</strong> requests up to ten records per device exchange and updates rows and totals as each response arrives. Stop finishes the current request before halting. More extends Latest by one period, Count by 100 records, or resumes All/Dates; it remains visible but disables when unavailable. Live refresh no longer rebuilds rows under the pointer.</li>
+              <li><strong>Firmware and backups:</strong> Quick, Firmware, and SPI operations save a permanent full FLASH backup in browser storage before the first write and offer restore actions. Manual FLASH dumps have a separate browser-stored restore copy. SPI service operations use a temporary recovery backup. Actions are grouped in the persistent activity log; older actions collapse when a new one starts.</li>
+              <li><strong>Windows and interface:</strong> added F5 page refresh to the desktop app, refined overview metrics and setting controls, and removed an unavailable demo clock status message.</li>
             </ul>
           </li>
           <li>
