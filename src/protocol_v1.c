@@ -26,9 +26,12 @@
 #define NVIC_ISER0     REG32(0xE000E100u)
 
 #define RX_RING_SIZE       64u
-#define MAX_RAW_SIZE       (8u + PROTOCOL_V1_MAX_PAYLOAD + 2u)
-#define MAX_ENCODED_SIZE   (MAX_RAW_SIZE + 1u)
-#define MAX_WIRE_SIZE      (MAX_ENCODED_SIZE + 1u)
+#define PROTOCOL_V1_MAX_REQUEST_PAYLOAD 18u
+#define MAX_RX_RAW_SIZE    (8u + PROTOCOL_V1_MAX_REQUEST_PAYLOAD + 2u)
+#define MAX_RX_ENCODED_SIZE (MAX_RX_RAW_SIZE + 1u)
+#define MAX_TX_RAW_SIZE    (8u + PROTOCOL_V1_MAX_PAYLOAD + 2u)
+#define MAX_TX_WIRE_SIZE   (MAX_TX_RAW_SIZE + \
+    ((MAX_TX_RAW_SIZE + 253u) / 254u) + 1u)
 
 #define FRAME_KIND_REQUEST  1u
 #define FRAME_KIND_RESPONSE 2u
@@ -43,8 +46,7 @@ enum {
 static volatile uint8_t rx_ring[RX_RING_SIZE];
 static volatile uint8_t rx_head;
 static volatile uint8_t rx_tail;
-static uint8_t encoded_frame[MAX_ENCODED_SIZE];
-static uint8_t tx_frame[MAX_WIRE_SIZE];
+static uint8_t encoded_frame[MAX_RX_ENCODED_SIZE];
 static uint8_t encoded_length;
 static bool discard_until_delimiter;
 static bool log_info_spi_probe_attempted;
@@ -88,14 +90,14 @@ static bool cobs_decode(const uint8_t *input, uint8_t input_length,
         if (code == 0u) return false;
         const uint8_t copy_length = (uint8_t)(code - 1u);
         if ((uint16_t)read_pos + copy_length > input_length ||
-            (uint16_t)write_pos + copy_length > MAX_RAW_SIZE) {
+            (uint16_t)write_pos + copy_length > MAX_RX_RAW_SIZE) {
             return false;
         }
         for (uint8_t i = 0u; i < copy_length; ++i) {
             output[write_pos++] = input[read_pos++];
         }
         if (code != 0xFFu && read_pos < input_length) {
-            if (write_pos >= MAX_RAW_SIZE) return false;
+            if (write_pos >= MAX_RX_RAW_SIZE) return false;
             output[write_pos++] = 0u;
         }
     }
@@ -103,12 +105,12 @@ static bool cobs_decode(const uint8_t *input, uint8_t input_length,
     return true;
 }
 
-static uint8_t cobs_encode(const uint8_t *input, uint8_t input_length,
-                           uint8_t *output)
+static uint16_t cobs_encode(const uint8_t *input, uint16_t input_length,
+                            uint8_t *output)
 {
-    uint8_t read_pos = 0u;
-    uint8_t write_pos = 1u;
-    uint8_t code_pos = 0u;
+    uint16_t read_pos = 0u;
+    uint16_t write_pos = 1u;
+    uint16_t code_pos = 0u;
     uint8_t code = 1u;
 
     while (read_pos < input_length) {
@@ -132,9 +134,9 @@ static uint8_t cobs_encode(const uint8_t *input, uint8_t input_length,
     return write_pos;
 }
 
-static void uart_send(const uint8_t *data, uint8_t length)
+static void uart_send(const uint8_t *data, uint16_t length)
 {
-    for (uint8_t i = 0u; i < length; ++i) {
+    for (uint16_t i = 0u; i < length; ++i) {
         while ((USART_ISR & (1u << 7u)) == 0u) { }
         USART_TDR = data[i];
     }
@@ -144,6 +146,7 @@ static void send_response(uint16_t request_id, uint16_t opcode,
                           const uint8_t *payload, uint16_t payload_length,
                           uint8_t *frame)
 {
+    uint8_t tx_frame[MAX_TX_WIRE_SIZE];
     const uint16_t raw_length = (uint16_t)(8u + payload_length);
     frame[0] = PROTOCOL_V1_VERSION;
     frame[1] = FRAME_KIND_RESPONSE;
@@ -154,8 +157,8 @@ static void send_response(uint16_t request_id, uint16_t opcode,
         frame[8u + i] = payload[i];
     }
     write_u16(&frame[raw_length], crc16_ccitt_false(frame, raw_length));
-    uart_send(tx_frame, cobs_encode(frame,
-        (uint8_t)(raw_length + 2u), tx_frame));
+    uart_send(tx_frame, cobs_encode(frame, (uint16_t)(raw_length + 2u),
+        tx_frame));
 }
 
 static void handle_frame(uint8_t *frame, uint8_t length)
@@ -164,6 +167,7 @@ static void handle_frame(uint8_t *frame, uint8_t length)
     uint16_t opcode;
     uint16_t payload_length;
     uint8_t response[PROTOCOL_V1_MAX_PAYLOAD];
+    uint8_t response_frame[MAX_TX_RAW_SIZE];
     uint16_t response_length = 1u;
     bool deferred_action = false;
     uint8_t deferred_action_id = 0u;
@@ -174,7 +178,7 @@ static void handle_frame(uint8_t *frame, uint8_t length)
     request_id = read_u16(&frame[2]);
     opcode = read_u16(&frame[4]);
     payload_length = read_u16(&frame[6]);
-    if (payload_length > PROTOCOL_V1_MAX_PAYLOAD ||
+    if (payload_length > PROTOCOL_V1_MAX_REQUEST_PAYLOAD ||
         length != (uint8_t)(10u + payload_length) ||
         read_u16(&frame[8u + payload_length]) !=
             crc16_ccitt_false(frame, (uint16_t)(8u + payload_length))) {
@@ -295,7 +299,7 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         uint32_t period = read_u32(&request[2]);
         log_cursor_t cursor = {read_u32(&request[6]), read_u16(&request[10]), read_u16(&request[12])};
         uint32_t limit = read_u32(&request[14]);
-        if (type > 3u || requested == 0u || requested > 5u || period < 60u || period % 60u || period > LOG_QUERY_MAX_PERIOD_SECONDS) {
+        if (type > 3u || requested == 0u || requested > 10u || period < 60u || period % 60u || period > LOG_QUERY_MAX_PERIOD_SECONDS) {
             response[0] = PROTOCOL_STATUS_INVALID_VALUE;
         } else {
             log_point_t point;
@@ -341,7 +345,8 @@ static void handle_frame(uint8_t *frame, uint8_t length)
     } else {
         response[0] = PROTOCOL_STATUS_UNKNOWN_OPCODE;
     }
-    send_response(request_id, opcode, response, response_length, frame);
+    send_response(request_id, opcode, response, response_length,
+        response_frame);
     if (deferred_action) {
         while ((USART_ISR & (1u << 6u)) == 0u) { }
         board_display_remote_action_execute(deferred_action_id,
@@ -396,7 +401,7 @@ void protocol_v1_service(void)
             encoded_length = 0u;
             discard_until_delimiter = false;
         } else if (!discard_until_delimiter) {
-            if (encoded_length < MAX_ENCODED_SIZE) {
+            if (encoded_length < MAX_RX_ENCODED_SIZE) {
                 encoded_frame[encoded_length++] = value;
             } else {
                 encoded_length = 0u;
@@ -405,7 +410,6 @@ void protocol_v1_service(void)
         }
     }
 }
-
 void USART1_IRQHandler(void)
 {
     const uint32_t status = USART_ISR;

@@ -18,8 +18,10 @@ const CAP_SET_SETTING = 1 << 2;
 const CAP_GET_SPI_DUMP = 1 << 5;
 const CAP_SET_RTC = 1 << 6;
 const CAP_DEVICE_ACTION = 1 << 7;
-const MAX_PAYLOAD = 137;
-const LOG_BATCH_SIZE = 10;
+const MAX_PAYLOAD = 262;
+const MAX_ENCODED_FRAME = MAX_PAYLOAD + 10 + Math.ceil((MAX_PAYLOAD + 10) / 254);
+const LOG_MAX_RECORDS_PER_REQUEST = 10;
+const LOG_LOAD_MORE_COUNT = 100;
 const LOG_INITIAL_TARGETS = { minutes: 60, hours: 24, days: 30, alerts: 5 };
 const STM32_FLASH_BASE = 0x08000000;
 const STM32_FLASH_SIZE = 64 * 1024;
@@ -818,7 +820,7 @@ class SerialProtocol {
       return;
     }
     if (this.discardFrame) return;
-    if (this.frameBytes.length >= 80) {
+    if (this.frameBytes.length >= MAX_ENCODED_FRAME) {
       this.frameBytes = [];
       this.discardFrame = true;
       return;
@@ -1340,17 +1342,35 @@ function calendarSecondsFromInputs(date, time = '00:00') {
 function updateLogRangeControls() {
   const type = logTypes.find((item) => item.id === selectedLogType);
   if (!type) return;
-  if (elements.logRangeExtra.dataset.type !== type.id) {
-    const oldType = elements.logRangeExtra.dataset.type;
-    if (oldType) {
+  const mode = elements.logRangeMode.value;
+  const datesMode = mode === 'dates';
+  const key = `${type.id}:${mode}`;
+  const controlsRebuilt = elements.logRangeExtra.dataset.key !== key;
+  if (controlsRebuilt) {
+    const oldKey = elements.logRangeExtra.dataset.key;
+    if (oldKey) {
       const saved = {};
       elements.logRangeExtra.querySelectorAll('input,select').forEach((control) => {
         saved[control.id] = control.value;
       });
-      logRangeInputCache.set(oldType, saved);
+      logRangeInputCache.set(oldKey, saved);
     }
     elements.logRangeExtra.replaceChildren();
-    if (type.id === 'minutes') {
+    if (mode === 'count') {
+      const label = document.createElement('label');
+      label.htmlFor = 'log-custom-count';
+      label.textContent = 'Records';
+      const input = document.createElement('input');
+      input.id = 'log-custom-count';
+      input.type = 'number';
+      input.min = '1';
+      input.max = '65535';
+      input.step = '1';
+      input.value = '1000';
+      input.inputMode = 'numeric';
+      label.append(input);
+      elements.logRangeExtra.append(label);
+    } else if (mode === 'dates' && type.id === 'minutes') {
       for (const [id, labelText] of [['log-newer-minute', 'Newer'],
         ['log-older-minute', 'Older']]) {
         const label = document.createElement('label');
@@ -1362,7 +1382,7 @@ function updateLogRangeControls() {
         input.step = '60';
         elements.logRangeExtra.append(label, input);
       }
-    } else {
+    } else if (mode === 'dates') {
       for (const side of ['newer', 'older']) {
         const label = document.createElement('label');
         const date = document.createElement('input');
@@ -1385,27 +1405,38 @@ function updateLogRangeControls() {
         }
       }
     }
-    elements.logRangeExtra.dataset.type = type.id;
-    const saved = logRangeInputCache.get(type.id) || {};
+    elements.logRangeExtra.dataset.key = key;
+    const saved = logRangeInputCache.get(key) || {};
     elements.logRangeExtra.querySelectorAll('input,select').forEach((control) => {
-      if (saved[control.id]) control.value = saved[control.id];
+      if (saved[control.id] !== undefined) control.value = saved[control.id];
     });
-    if (elements.logRangeMode.value === 'custom') initializeCustomRangeInputs(type);
+    if (mode === 'dates') initializeCustomRangeInputs(type);
+    elements.logRangeExtra.querySelector('#log-custom-count')?.addEventListener('input', updateLogRangeControls);
+    elements.logRangeExtra.querySelectorAll('input,select').forEach((control) => {
+      if (control.id !== 'log-custom-count') {
+        control.addEventListener('input', updateLogRangeControls);
+        control.addEventListener('change', updateLogRangeControls);
+      }
+    });
   }
-  if (logInfo?.calendarValid && !logRangeDefaults.has(type.id)) {
-    if (elements.logRangeMode.value === 'latest') setDefaultLogRange(type);
+  if (datesMode && logInfo?.calendarValid && !logRangeDefaults.has(type.id)) {
+    setDefaultLogRange(type);
     logRangeDefaults.add(type.id);
   }
-  const custom = elements.logRangeMode.value === 'custom';
-  elements.logRangeExtra.hidden = !custom;
-  if (logRangeActive && !logRangeAll && custom) populateRangeInputs(type);
-  const enabled = custom;
+  const countMode = mode === 'count';
+  elements.logRangeExtra.hidden = !datesMode && !countMode;
+  if (controlsRebuilt && logRangeActive && !logRangeAll && datesMode) populateRangeInputs(type);
+  const enabled = datesMode || countMode;
+  const countInput = elements.logRangeExtra.querySelector('#log-custom-count');
+  const customCount = countInput ? Number(countInput.value) : NaN;
+  const validCount = Number.isInteger(customCount) && customCount >= 1 && customCount <= 65535;
   elements.logRangeMode.disabled = logCsvBusy || logPageLoading;
   elements.logRangeExtra.querySelectorAll('input,select').forEach((control) => {
     control.disabled = !enabled || logCsvBusy || logPageLoading;
   });
   elements.loadLogSelection.disabled = !serial || !logInfo || logCsvBusy || logPageLoading ||
-    (custom && !readCustomLogRange(type));
+    (datesMode && (!logInfo.calendarValid || !readCustomLogRange(type))) ||
+    (countMode && !validCount);
   elements.exportLogsCsv.disabled = !serial || !logRecords.length || logCsvBusy || logPageLoading;
 }
 
@@ -1651,7 +1682,7 @@ function renderLogTotal(type) {
   });
   if (!row.isConnected) elements.logContent.append(row);
 }
-function renderLogSummary(preserveRows = false) {
+function renderLogSummary(preserveRows = false, prependNewRows = true) {
   if (preserveRows && !elements.logContent.querySelector('.log-grid-header')) {
     preserveRows = false;
   }
@@ -1707,7 +1738,7 @@ function renderLogSummary(preserveRows = false) {
     }
     if (!row.isConnected) {
       const firstRecord = elements.logContent.querySelector('.log-record:not(.log-total)');
-      if (preserveRows && firstRecord) elements.logContent.insertBefore(row, firstRecord);
+      if (preserveRows && prependNewRows && firstRecord) elements.logContent.insertBefore(row, firstRecord);
       else elements.logContent.append(row);
     }
   }
@@ -1716,9 +1747,10 @@ function renderLogSummary(preserveRows = false) {
   }
 }
 
-async function queryLogPage(type, cursor, limit, count = LOG_BATCH_SIZE) {
-  // Keep transport pages at two records; larger UI batches combine requests.
-  count = Math.max(1, Math.min(count, 2, Math.floor((protocolMaxPayload - 12) / 25)));
+async function queryLogPage(type, cursor, limit, count = LOG_MAX_RECORDS_PER_REQUEST) {
+  // Read the maximum full records supported by the connected firmware payload.
+  count = Math.max(1, Math.min(count, LOG_MAX_RECORDS_PER_REQUEST,
+    Math.floor((protocolMaxPayload - 12) / 25)));
   const requestStarted = performance.now();
   logDiagnostic(`Stored-log read request: memory=${logMemoryName(logInfo?.source ?? logInfo?.memory ?? 0)} type=${type.id} period=${type.period}s count=${count} dateLimit=${limit} cursor=${cursor.time}/${cursor.epoch}/${cursor.skip}`);
   const request = new Uint8Array(18); const view = new DataView(request.buffer);
@@ -1777,14 +1809,15 @@ async function loadLogSelection() {
   if (!serial || !logInfo) return;
   const mode = elements.logRangeMode.value;
   if (mode === 'all') return selectAllLogs();
-  if (['5', '10', '50'].includes(mode)) return loadRecentLogs(Number(mode));
   const type = logTypes.find((item) => item.id === selectedLogType);
+  if (mode === 'count') {
+    const count = Number(document.querySelector('#log-custom-count')?.value);
+    return loadRecentLogs(count);
+  }
   if (mode === 'latest') {
-    if (!logInfo.calendarValid) return loadRecentLogs(LOG_INITIAL_TARGETS[type.id]);
-    setDefaultLogRange(type, true);
     return loadRecentLogs(LOG_INITIAL_TARGETS[type.id]);
   }
-  if (mode !== 'latest' && mode !== 'custom') return;
+  if (mode !== 'dates') return;
   if (!logInfo.calendarValid) {
     elements.logsStatus.textContent = 'Set the device clock to load a custom calendar range.';
     return;
@@ -1821,7 +1854,7 @@ async function loadRecentLogs(count) {
 }
 
 async function loadMoreLogRecords() {
-  if (logCountLimit) logCountLimit += LOG_BATCH_SIZE;
+  if (logCountLimit) logCountLimit += LOG_LOAD_MORE_COUNT;
   await loadLogPage(false);
 }
 
@@ -1900,13 +1933,13 @@ async function loadLogPage(reset = false) {
   logPageLoading = true; renderLogSummary();
   let loadFailed = false;
   const keys = new Set(logRecords.map(logRecordKey));
-  let lastRenderedCount = logRecords.length;
   try {
     let crossedRangeStart = false;
     while (generation === logPageGeneration && logHasMore && logRecords.length < target) {
-      const batchEnd = Math.min(target, logRecords.length + LOG_BATCH_SIZE);
+      const batchSize = LOG_LOAD_MORE_COUNT;
+      const batchEnd = Math.min(target, logRecords.length + batchSize);
       while (generation === logPageGeneration && logHasMore && logRecords.length < batchEnd) {
-        const page = await queryLogPage(type, logCursor, limit, Math.min(LOG_BATCH_SIZE, batchEnd - logRecords.length));
+        const page = await queryLogPage(type, logCursor, limit, Math.min(batchSize, batchEnd - logRecords.length));
         if (generation !== logPageGeneration) break;
         for (const record of page.records) {
           if (logRangeActive && record.calendar && record.timestamp < logRangeStart) {
@@ -1920,16 +1953,9 @@ async function loadLogPage(reset = false) {
         logDiagnostic(`loadLogPage batch records=${page.records.length} total=${logRecords.length}`);
         logCursor = page.cursor;
         logHasMore = page.more && page.records.length > 0 && !crossedRangeStart;
-      }
-      if (generation === logPageGeneration) {
-        const finished = !logHasMore || logRecords.length >= target;
-        if (finished || logRecords.length - lastRenderedCount >= LOG_BATCH_SIZE) {
-          renderLogSummary(); saveLogView();
-          lastRenderedCount = logRecords.length;
-          await new Promise((resolve) => requestAnimationFrame(resolve));
-        } else {
-          elements.logsStatus.textContent = `${formatGroupedNumber(logRecords.length)} records loaded | ${formatGroupedNumber(logInfo[type.countKey])} stored entries | loading range...`;
-        }
+        renderLogSummary(true, false);
+        saveLogView();
+        await new Promise((resolve) => requestAnimationFrame(resolve));
       }
     }
     if (isLatestLogView() && logRecords.length >= target) logHasMore = false;
@@ -1957,8 +1983,9 @@ async function loadNewerLogRecords(catchUp = true) {
   try {
     while (!boundary && more && generation === logPageGeneration) {
       let batch = 0;
-      while (batch < LOG_BATCH_SIZE && !boundary && more) {
-        const page = await queryLogPage(type, cursor, 0, LOG_BATCH_SIZE - batch);
+      const batchSize = LOG_LOAD_MORE_COUNT;
+      while (batch < batchSize && !boundary && more) {
+        const page = await queryLogPage(type, cursor, 0, batchSize - batch);
         if (generation !== logPageGeneration || elements.logsPage.hidden) return;
         for (const record of page.records) { fresh.push(record); if (known.has(logRecordKey(record))) boundary = true; }
         batch += page.records.length; cursor = page.cursor; more = page.more && page.records.length > 0;

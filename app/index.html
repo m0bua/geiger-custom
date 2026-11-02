@@ -139,10 +139,8 @@
             <select id="log-range-mode" disabled>
               <option value="latest" selected>Latest</option>
               <option value="all">All</option>
-              <option value="5">5</option>
-              <option value="10">10</option>
-              <option value="50">50</option>
-              <option value="custom">Custom</option>
+              <option value="dates">Dates</option>
+              <option value="count">Count</option>
             </select>
           </label>
           <button id="load-log-selection" class="button button-quiet" type="button" disabled>Load</button>
@@ -308,13 +306,13 @@
         <summary>Readings and data</summary>
         <ul>
           <li><strong>Overview:</strong> shows the current rate, accumulated dose for today, device date/time and uptime, solar level, and battery level. The rate and dose units follow the device's UNIT and prefix settings. Hover over the rate chart to read a plotted value; it keeps the latest three minutes.</li>
-          <li><strong>Logs:</strong> inspect minute, hour, day, and alert records. Choose a range, load records in groups of ten, and export the records currently loaded as CSV. See the detailed Logs guide below for coverage, live records, and storage.</li>
+          <li><strong>Logs:</strong> inspect minute, hour, day, and alert records. Choose a range and batch size, then export the loaded records as CSV. See the detailed Logs guide below for coverage, live records, and storage.</li>
           <li><strong>Settings:</strong> read and change options supported by the connected firmware. Values that depend on another setting may be disabled. The Show checkboxes control which options appear in the device menu; setting and visibility changes are applied immediately. The device clock can be synchronized to the computer's current local time. POWER OFF is always shown and has no visibility checkbox.</li>
           <li><strong>Debug:</strong> inspect device time and clock source, uptime, pulse count, power readings, physical log counts, storage state, memory sizes, and SPI identification. Sections are in one table and can be collapsed independently.</li>
           <li><strong>Without a connection:</strong> Overview, Logs, and Debug show clearly marked illustrative zero data. Settings use factory defaults and can be changed for preview, but preview changes are not saved and reset after reloading the page. Options unsupported by the connected firmware remain visible but disabled.</li>
         </ul>
         <h3>Logs</h3>
-        <p>The Logs page reads the same history used by the device's log graphs. Select a log type and range, then press <strong>Load</strong>. You can choose the type and range before connecting; switching tabs keeps each loaded view. <strong>Load more</strong> adds the next ten records. The current record may refresh while the page is open.</p>
+        <p>The Logs page reads the same history used by the device's log graphs. Select a log type and range, then press <strong>Load</strong>. You can choose the type and range before connecting; switching tabs keeps each loaded view. The app requests the maximum number of records supported by the connected firmware in each serial exchange, up to ten, and adds the returned records and refreshes totals after every response. <strong>Load more</strong> adds another 100 records. The current record may refresh while the page is open.</p>
         <ul>
           <li><strong>MINUTES:</strong> one record per minute, with dose, average rate, maximum rate, and coverage.</li>
           <li><strong>HOURS:</strong> one record per hour with the same values. The newest unfinished hour is assembled from minute data.</li>
@@ -324,7 +322,7 @@
         <p>Dose is accumulated detector counts converted to the selected <strong>UNIT</strong> and prefix. In <strong>CNT</strong> mode, dose is shown as CNT and rates as CPM. Average rate uses the record's actual covered time; missing time is not treated as zero activity.</p>
         <p><strong>Coverage</strong> applies to minute, hour, and day records. It shows the represented percentage and seconds, followed by the state: <em>full</em>, <em>partial</em>, or <em>live</em>. A partial record's dose and average describe only the time actually measured. A live record is the current in-progress interval and can change until it closes. Alert records show duration instead of coverage.</p>
         <p>The <strong>Fill</strong> selector changes the shaded bar behind table values. For MINUTES, HOURS, and DAYS it can compare Dose, Average, Maximum, or Coverage; for ALERTS it can compare Duration, Dose, Average, or Maximum. The shading is scaled against the largest value in the currently loaded records. Metric text is highlighted when it reaches a warning or red level.</p>
-        <p><strong>Range</strong> presets are Latest, All, 5, 10, 50, and Custom. Latest loads up to 60 minutes, 24 hours, 30 days, or 5 alerts, depending on the selected type. Numeric presets select that many newest records. All loads the entire available history in groups of ten. For a numeric preset, <strong>Load more</strong> adds ten more records. Custom loads a calendar interval; the left date/time bound must be newer than the right bound. Minute ranges use minute precision and hour ranges use hour precision. Calendar ranges require a valid device clock.</p>
+        <p><strong>Range</strong> offers Latest, All, Dates, and Count. Latest loads up to 60 minutes, 24 hours, 30 days, or 5 alerts, depending on the selected type. All loads the complete available history. Dates loads an inclusive calendar interval; the newer bound must be later than the older bound. Count loads the requested number of newest records. Minute ranges use minute precision and hour ranges use hour precision. Calendar ranges require a valid device clock. The current firmware supports up to ten records per request.</p>
         <p><strong>Export</strong> saves only the records currently loaded for the selected log type; it does not fetch the rest of the selected range. Load the full range you need first. The CSV includes timestamp, type, dose and units, average and maximum rate, covered seconds, coverage percentage, and record status.</p>
         <p><strong>Storage:</strong> EEPROM and SPI each keep minute, hour, day, and alert records, but SPI holds much more history. The device writes new records only to the selected LOG MEMORY. Switching between EEPROM and SPI starts a fresh active log set; records are not migrated. Selecting SPI erases SPI contents, including stock assets, and clears the old EEPROM log set. LOG MEMORY=OFF pauses new log writes while retaining existing records. DEBUG counts physically stored records; a current in-memory graph point may not yet be included.</p>
       </details>
