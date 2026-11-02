@@ -53,6 +53,22 @@ def configure_windows_html(path: Path) -> None:
         "Opening a serial port may restart the device.",
         "Windows app: connect through the selected COM port. Firmware programming uses the same connection.",
     )
+    reload_hotkey = """<script>
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'F5' && !event.ctrlKey && !event.altKey) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    window.location.reload();
+  }
+}, true);
+</script>"""
+    if "event.key === 'F5'" not in document:
+        document, body_count = re.subn(
+            r"</body>", reload_hotkey + "\\n</body>", document,
+            count=1, flags=re.IGNORECASE,
+        )
+        if body_count != 1:
+            raise RuntimeError("Could not add the F5 reload shortcut to Windows app UI.")
     path.write_text(document, encoding="utf-8")
 
 
