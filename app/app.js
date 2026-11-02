@@ -1624,21 +1624,27 @@ function renderLogTotal(type) {
   const values = type.id === 'alerts' ?
     [`TOTAL (${logRecords.length})`, formatTotalDuration(covered), dose, average, maximumText] :
     [`TOTAL (${logRecords.length})`, dose, average, maximumText, `${formatGroupedNumber(covered)}s total`];
-  const row = document.createElement('div');
+  const row = elements.logContent.querySelector('.log-total') ?? document.createElement('div');
   row.className = 'log-grid log-record log-total';
+  while (row.children.length > values.length) row.lastElementChild.remove();
   values.forEach((value, index) => {
-    const cell = document.createElement('span');
-    if (index === 2 && type.id === 'alerts') cell.className = `log-metric ${logDoseClass({dose: totalDose, covered})}`;
-    else if (index === (type.id === 'alerts' ? 3 : 2)) cell.className = `log-metric ${logRateClass(weightedAverage)}`;
-    else if (index === (type.id === 'alerts' ? 4 : 3)) cell.className = `log-metric ${logRateClass(maximum)}`;
-    else if (index === 1 && type.id !== 'alerts') cell.className = `log-metric ${logDoseClass({dose: totalDose, covered})}`;
-    cell.textContent = value;
-    row.append(cell);
+    const cell = row.children[index] ?? document.createElement('span');
+    let className = '';
+    if (index === 2 && type.id === 'alerts') className = `log-metric ${logDoseClass({dose: totalDose, covered})}`;
+    else if (index === (type.id === 'alerts' ? 3 : 2)) className = `log-metric ${logRateClass(weightedAverage)}`;
+    else if (index === (type.id === 'alerts' ? 4 : 3)) className = `log-metric ${logRateClass(maximum)}`;
+    else if (index === 1 && type.id !== 'alerts') className = `log-metric ${logDoseClass({dose: totalDose, covered})}`;
+    if (cell.className !== className) cell.className = className;
+    if (cell.textContent !== value) cell.textContent = value;
+    if (!cell.isConnected) row.append(cell);
   });
-  elements.logContent.append(row);
+  if (!row.isConnected) elements.logContent.append(row);
 }
-function renderLogSummary() {
-  elements.logContent.replaceChildren();
+function renderLogSummary(preserveRows = false) {
+  if (preserveRows && !elements.logContent.querySelector('.log-grid-header')) {
+    preserveRows = false;
+  }
+  if (!preserveRows) elements.logContent.replaceChildren();
   updateLogRangeControls();
   elements.loadMoreLogs.hidden = !logInfo || !logHasMore;
   elements.loadMoreLogs.disabled = logPageLoading;
@@ -1647,18 +1653,31 @@ function renderLogSummary() {
   updateLogFillOptions(type.id);
   elements.logsStatus.textContent = `${formatGroupedNumber(logRecords.length)} records loaded | ${formatGroupedNumber(logInfo[type.countKey])} stored entries${logPageLoading ? (logRangeAll ? ' | loading all logs...' : logRangeActive ? ' | loading range...' : logCountLimit ? ` | loading last ${logCountLimit}...` : '') : ''}${logInfo.memory === 2 ? ' | recording off' : ''}${logInfo.error ? ' | storage error' : ''}`;
   if (!logRecords.length) { elements.logContent.textContent = logPageLoading ? 'Loading records…' : 'No records available.'; return; }
-  const header = document.createElement('div'); header.className = 'log-grid log-grid-header';
-  header.innerHTML = selectedLogType === 'alerts' ?
-    '<span>Date</span><span>Duration</span><span>Dose</span><span>Average</span><span>Maximum</span>' :
-    '<span>Date</span><span>Dose</span><span>Average</span><span>Maximum</span><span>Coverage</span>';
-  elements.logContent.append(header);
+  let header = preserveRows ? elements.logContent.querySelector('.log-grid-header') : null;
+  if (!header) {
+    header = document.createElement('div'); header.className = 'log-grid log-grid-header';
+    header.innerHTML = selectedLogType === 'alerts' ?
+      '<span>Date</span><span>Duration</span><span>Dose</span><span>Average</span><span>Maximum</span>' :
+      '<span>Date</span><span>Dose</span><span>Average</span><span>Maximum</span><span>Coverage</span>';
+    elements.logContent.append(header);
+  }
   renderLogTotal(type);
   const maximum = logRecords.reduce((largest, record) =>
     Math.max(largest, logFillValue(record, type)), 1);
+  const existingRows = preserveRows ? new Map(
+    [...elements.logContent.querySelectorAll('.log-record:not(.log-total)')]
+      .map((row) => [row.dataset.logKey, row])) : null;
   for (const record of logRecords) {
-    const row = document.createElement('div');
+    const key = logRecordKey(record);
+    let row = null;
+    if (preserveRows) {
+      row = existingRows.get(key) ?? null;
+      if (row) existingRows.delete(key);
+    }
+    if (!row) row = document.createElement('div');
     const isAlert = selectedLogType === 'alerts';
     row.className = 'log-grid log-record';
+    row.dataset.logKey = key;
     row.style.setProperty('--bar-width', `${Math.min(100, logFillValue(record, type) * 100 / maximum)}%`);
     row.title = `Fill ${logFillMetric}: ${logFillValue(record, type)} · Clock period ${record.epoch}${record.live ? ' · live' : ''}${record.partial ? ' · incomplete coverage' : ''}`;
     const values = [formatLogDate(record.timestamp, selectedLogType, record.calendar), ...logValueCells(record)];
@@ -1666,14 +1685,23 @@ function renderLogSummary() {
       logRateClass(record.average), logRateClass(record.maximum)] :
       [null, logDoseClass(record), logRateClass(record.average),
         logRateClass(record.maximum), logCoverageClass(record)];
+    while (row.children.length > values.length) row.lastElementChild.remove();
     for (let index = 0; index < values.length; ++index) {
-      const cell = document.createElement('span');
+      const cell = row.children[index] ?? document.createElement('span');
       const isMetric = isAlert ? index >= 2 && index <= 4 : index >= 1 && index <= 3;
-      if (isMetric) cell.className = `log-metric${metricClasses[index] ? ` ${metricClasses[index]}` : ''}`;
-      else if (metricClasses[index]) cell.className = metricClasses[index];
-      cell.textContent = values[index]; row.append(cell);
+      const className = isMetric ? `log-metric${metricClasses[index] ? ` ${metricClasses[index]}` : ''}` : (metricClasses[index] ?? '');
+      if (cell.className !== className) cell.className = className;
+      if (cell.textContent !== values[index]) cell.textContent = values[index];
+      if (cell.parentElement !== row) row.append(cell);
     }
-    elements.logContent.append(row);
+    if (!row.isConnected) {
+      const firstRecord = elements.logContent.querySelector('.log-record:not(.log-total)');
+      if (preserveRows && firstRecord) elements.logContent.insertBefore(row, firstRecord);
+      else elements.logContent.append(row);
+    }
+  }
+  if (preserveRows) {
+    for (const row of existingRows.values()) row.remove();
   }
 }
 
@@ -1929,7 +1957,7 @@ async function loadNewerLogRecords(catchUp = true) {
       const older = logRecords.filter((record) => !(type.id === 'alerts' && record.live) && !replacements.has(logRecordKey(record)))
         .map((record) => ({...record, live: false}));
       logRecords = [...replacements.values(), ...older];
-      renderLogSummary(); saveLogView();
+      renderLogSummary(!catchUp); saveLogView();
     }
   } catch (error) {
     logDiagnostic('loadNewerLogRecords failed', error);
