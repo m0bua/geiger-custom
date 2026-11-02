@@ -1278,7 +1278,8 @@ async function refreshLogCounts() {
       } else if (before?.error && !logInfo.error) {
         logDiagnostic('STORE ERR cleared by firmware.');
       } else if (before && ['minutes', 'hours', 'days', 'alerts'].some((key) => before[key] !== logInfo[key])) {
-        logDiagnostic(`Stored counts changed: MIN ${before.minutes}->${logInfo.minutes}, HOUR ${before.hours}->${logInfo.hours}, DAY ${before.days}->${logInfo.days}, ALERT ${before.alerts}->${logInfo.alerts}`);
+        const rawCounts = Array.from(payload.subarray(2, 10), (byte) => byte.toString(16).padStart(2, '0')).join(' ');
+        logDiagnostic(`Stored counts changed: MIN ${before.minutes}->${logInfo.minutes}, HOUR ${before.hours}->${logInfo.hours}, DAY ${before.days}->${logInfo.days}, ALERT ${before.alerts}->${logInfo.alerts}; raw=${rawCounts}`);
       }
     }
   } catch (error) {

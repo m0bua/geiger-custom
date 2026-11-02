@@ -143,8 +143,7 @@ static void uart_send(const uint8_t *data, uint16_t length)
 }
 
 static void send_response(uint16_t request_id, uint16_t opcode,
-                          const uint8_t *payload, uint16_t payload_length,
-                          uint8_t *frame)
+                          uint16_t payload_length, uint8_t *frame)
 {
     uint8_t tx_frame[MAX_TX_WIRE_SIZE];
     const uint16_t raw_length = (uint16_t)(8u + payload_length);
@@ -153,9 +152,6 @@ static void send_response(uint16_t request_id, uint16_t opcode,
     write_u16(&frame[2], request_id);
     write_u16(&frame[4], opcode);
     write_u16(&frame[6], payload_length);
-    for (uint16_t i = 0u; i < payload_length; ++i) {
-        frame[8u + i] = payload[i];
-    }
     write_u16(&frame[raw_length], crc16_ccitt_false(frame, raw_length));
     uart_send(tx_frame, cobs_encode(frame, (uint16_t)(raw_length + 2u),
         tx_frame));
@@ -166,8 +162,8 @@ static void handle_frame(uint8_t *frame, uint8_t length)
     uint16_t request_id;
     uint16_t opcode;
     uint16_t payload_length;
-    uint8_t response[PROTOCOL_V1_MAX_PAYLOAD];
     uint8_t response_frame[MAX_TX_RAW_SIZE];
+    uint8_t *response = &response_frame[8];
     uint16_t response_length = 1u;
     bool deferred_action = false;
     uint8_t deferred_action_id = 0u;
@@ -345,8 +341,7 @@ static void handle_frame(uint8_t *frame, uint8_t length)
     } else {
         response[0] = PROTOCOL_STATUS_UNKNOWN_OPCODE;
     }
-    send_response(request_id, opcode, response, response_length,
-        response_frame);
+    send_response(request_id, opcode, response_length, response_frame);
     if (deferred_action) {
         while ((USART_ISR & (1u << 6u)) == 0u) { }
         board_display_remote_action_execute(deferred_action_id,
