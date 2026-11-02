@@ -164,7 +164,16 @@ button { font: inherit; }
 .firmware-log-toolbar { position: absolute; z-index: 1; top: 6px; right: 6px; }
 .firmware-log-toolbar .button { min-height: 27px; padding: 0 9px; opacity: .55; background: rgba(18,28,33,.72); font-size: 10px; transition: opacity .15s ease; }
 .firmware-log-toolbar .button:hover, .firmware-log-toolbar .button:focus-visible { opacity: 1; }
-.firmware-log { overflow: auto; resize: vertical; min-height: 145px; max-height: 70vh; margin: 0; padding: 12px; border: 0; border-radius: 0; color: #c8d3d6; background: transparent; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.55 "DM Mono", Consolas, monospace; }
+.firmware-log { overflow: auto; resize: vertical; min-height: 145px; max-height: 70vh; margin: 0; padding: 12px; border: 0; border-radius: 0; color: #c8d3d6; background: transparent; font: 11px/1.55 "DM Mono", Consolas, monospace; }
+.firmware-log-action { border-bottom: 1px solid rgba(74,92,101,.28); }
+.firmware-log-action:last-child { border-bottom: 0; }
+.firmware-log-action > summary { display: flex; align-items: center; gap: 7px; min-height: 25px; color: #aebbc0; cursor: pointer; list-style: none; user-select: none; }
+.firmware-log-action > summary::-webkit-details-marker { display: none; }
+.firmware-log-action > summary::before { content: "›"; display: inline-block; width: 8px; color: var(--green); font: 15px/1 Consolas, monospace; transition: transform .12s ease; }
+.firmware-log-action[open] > summary::before { transform: rotate(90deg); }
+.firmware-log-action > summary:hover { color: #e3ecee; }
+.firmware-log-action > summary .log-action-time { color: #74868d; }
+.firmware-log-lines { margin: 0; padding: 2px 0 9px 15px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .firmware-log .log-success { color: #00e58b !important; }
 .firmware-log .log-partial { color: #b8d94c; }
 .firmware-log .log-warning { color: #f2c94c; }

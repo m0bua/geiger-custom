@@ -2979,13 +2979,17 @@ elements.exportLogsCsv.addEventListener('click', exportLogsCsv);
 elements.firmwareTab.addEventListener('click', () => selectPage('firmware'));
 elements.rebootFirmware.addEventListener('click', rebootToFirmware);
 elements.rebootBootloader.addEventListener('click', rebootToBootloader);
-elements.firmwareFile.addEventListener('change', () => loadFirmwareImage());
+elements.firmwareFile.addEventListener('change', () => {
+  beginFirmwareLogAction('Firmware image check');
+  void loadFirmwareImage();
+});
 elements.flashLocalBuild.addEventListener('click', flashLocalBuild);
 elements.quickFlashFirmware?.addEventListener('click', quickFlashEmbeddedFirmware);
 elements.clearFirmware.addEventListener('click', clearFirmwareSelection);
-elements.flashFirmware.addEventListener('click', flashSelectedFirmware);
-elements.dumpFlash.addEventListener('click', () => dumpRomMemory(
-  'FLASH', STM32_FLASH_BASE, STM32_FLASH_SIZE, 'flash', false, false, true));
+elements.flashFirmware.addEventListener('click', () => flashSelectedFirmware());
+elements.dumpFlash.addEventListener('click', () => {
+  void dumpRomMemory('FLASH', STM32_FLASH_BASE, STM32_FLASH_SIZE, 'flash', false, false, true);
+});
 elements.restoreManualFlash?.addEventListener('click', restoreManualFlashBackup);
 elements.quickRestoreFlash?.addEventListener('click', restoreLatestFlashBackup);
 elements.firmwareRestoreFlash?.addEventListener('click', restoreLatestFlashBackup);
@@ -3025,7 +3029,11 @@ elements.eraseSpi.addEventListener('click', () => {
     }, 'Erase', true);
   } catch (error) { setDumpStatus(error.message, 'error'); }
 });
-elements.downloadSpiBackup?.addEventListener('click', downloadSpiRecoveryBackup);
+elements.downloadSpiBackup?.addEventListener('click', () => {
+  beginFirmwareLogAction('Download SPI recovery backup');
+  downloadSpiRecoveryBackup();
+  appendFirmwareLog('Downloaded the pending SPI recovery FLASH image.', 'success');
+});
 elements.eepromImageFile.addEventListener('change', loadEepromImage);
 elements.clearEepromImage.addEventListener('click', clearEepromImageSelection);
 elements.writeEepromImage.addEventListener('click', writeEepromImage);
@@ -3034,7 +3042,10 @@ elements.clearSpiImage.addEventListener('click', clearSpiImageSelection);
 elements.writeSpiImage.addEventListener('click', writeSpiImage);
 elements.manualTab.addEventListener('click', () => selectPage('manual'));
 elements.aboutTab.addEventListener('click', () => selectPage('about'));
-elements.clearFirmwareLog.addEventListener('click', () => { elements.firmwareLog.textContent = ''; });
+elements.clearFirmwareLog.addEventListener('click', () => {
+  elements.firmwareLog.replaceChildren();
+  activeFirmwareLogAction = null;
+});
 window.addEventListener('hashchange', () => {
   const page = window.location.hash.slice(1);
   selectPage(page || 'overview');
@@ -3049,7 +3060,32 @@ if (typeof globalThis.EMBEDDED_FIRMWARE_B64 === 'string' && elements.embeddedQui
   elements.firmwareTools.open = false;
 }
 
+let activeFirmwareLogAction = null;
+
+function beginFirmwareLogAction(title) {
+  for (const previous of elements.firmwareLog.querySelectorAll('.firmware-log-action')) {
+    previous.open = false;
+  }
+  const details = document.createElement('details');
+  details.className = 'firmware-log-action';
+  details.open = true;
+  const summary = document.createElement('summary');
+  const time = document.createElement('span');
+  time.className = 'log-action-time';
+  time.textContent = new Date().toLocaleTimeString();
+  const label = document.createElement('span');
+  label.textContent = title;
+  summary.append(time, label);
+  const lines = document.createElement('pre');
+  lines.className = 'firmware-log-lines';
+  details.append(summary, lines);
+  elements.firmwareLog.append(details);
+  activeFirmwareLogAction = {details, lines};
+  elements.firmwareLog.scrollTop = elements.firmwareLog.scrollHeight;
+}
+
 function appendFirmwareLog(message, level = 'normal') {
+  if (!activeFirmwareLogAction) beginFirmwareLogAction('Activity');
   const timestamp = new Date().toLocaleTimeString();
   const line = document.createElement('span');
   if (level !== 'normal') {
@@ -3060,7 +3096,7 @@ function appendFirmwareLog(message, level = 'normal') {
     if (level === 'error') line.style.setProperty('color', '#ff7474', 'important');
   }
   line.textContent = `[${timestamp}] ${message}\n`;
-  elements.firmwareLog.append(line);
+  activeFirmwareLogAction.lines.append(line);
   elements.firmwareLog.scrollTop = elements.firmwareLog.scrollHeight;
 }
 
@@ -3259,6 +3295,7 @@ async function flashLocalBuild() {
     return;
   }
   if (localBuildFlashBusy) return;
+  beginFirmwareLogAction('Local build flash');
   localBuildFlashBusy = true;
   elements.flashLocalBuild.disabled = true;
   try {
@@ -3271,7 +3308,7 @@ async function flashLocalBuild() {
     localBuildFlashBusy = false;
     elements.flashLocalBuild.disabled = false;
     elements.flashLocalBuild.textContent = 'Stop';
-    await flashSelectedFirmware();
+    await flashSelectedFirmware(true);
   } catch (error) {
     appendFirmwareLog(`Local build flash failed: ${error.message}`, 'error');
     setFirmwareImageStatus(`Invalid local build · ${error.message}`, 'invalid');
@@ -3285,13 +3322,14 @@ async function flashLocalBuild() {
 async function quickFlashEmbeddedFirmware() {
   if (firmwareFlashBusy || typeof globalThis.EMBEDDED_FIRMWARE_B64 !== 'string') return;
   if (!window.confirm('Quick flash will erase and replace the device firmware with the image embedded in this app. Continue?')) return;
+  beginFirmwareLogAction('Quick flash');
   try {
     const binary = atob(globalThis.EMBEDDED_FIRMWARE_B64);
     const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
     const image = new File([bytes], 'embedded-firmware.bin', { type: 'application/octet-stream' });
     await loadFirmwareImage(image);
     if (!selectedFirmwareImage) throw new Error('The embedded firmware failed image validation.');
-    await flashSelectedFirmware();
+    await flashSelectedFirmware(true);
   } catch (error) {
     appendFirmwareLog(`Quick flash failed: ${error.message}`, 'error');
     setRebootStatus(`Quick flash failed: ${error.message}`, 'error');
@@ -3299,6 +3337,7 @@ async function quickFlashEmbeddedFirmware() {
 }
 
 function clearFirmwareSelection() {
+  beginFirmwareLogAction('Clear firmware selection');
   elements.firmwareFile.value = '';
   selectedFirmwareImage = null;
   elements.flashFirmware.disabled = true;
@@ -3555,6 +3594,7 @@ async function dumpRomMemory(label, address, length, filename,
   allowBackupPreflight = false, savePermanentBackup = false, saveManualBackup = false) {
   if (dumpBusy || firmwareFlashBusy || (firmwareBackupBusy && !allowBackupPreflight) ||
       (label === 'FLASH' && spiRecoveryBackup)) return false;
+  if (!allowBackupPreflight) beginFirmwareLogAction(`${label} dump`);
   let port = null;
   try {
     ({ port } = await selectFirmwarePort());
@@ -3676,6 +3716,7 @@ async function writeEepromImage(imageOverride = null, operationLabel = 'Write', 
   const preserved = new Uint8Array(alignedEnd - alignedStart);
   if (!window.confirm(
     `${operationLabel} ${image.bytes.length.toLocaleString()} EEPROM bytes from address ${targetStart} through ${targetEnd - 1}? Data outside this range will be preserved. Continue only if you have a backup.`)) return;
+  beginFirmwareLogAction(`EEPROM ${operationLabel.toLowerCase()}`);
 
   let port = null;
   let session = null;
@@ -4162,6 +4203,7 @@ async function restoreStoredFlashBackup(backup, confirmMessage, restoreDescripti
   if (dumpBusy || firmwareFlashBusy || firmwareBackupBusy) return;
   if (!backup?.bytes) return;
   if (!window.confirm(confirmMessage)) return;
+  beginFirmwareLogAction('FLASH restore');
   try {
     const {port, transport} = await selectFirmwarePort();
     setDumpBusy(true);
@@ -4190,6 +4232,7 @@ async function restoreManualFlashBackup() {
 
 async function dumpSpiMemory(range) {
   if (dumpBusy || firmwareFlashBusy || firmwareBackupBusy) return;
+  beginFirmwareLogAction('SPI dump');
   if (spiRecoveryBackup) {
     setDumpStatus('A pending FLASH recovery backup must be restored before starting another SPI operation.', 'error');
     return;
@@ -4247,6 +4290,7 @@ async function writeSpiImage(imageOverride = null, operationLabel = 'Write', isE
   }
   if (!window.confirm(
     `${operationLabel} ${image.bytes.length.toLocaleString()} SPI NOR bytes from address ${targetStart} through ${targetEnd - 1}? Affected sectors are erased and rewritten; bytes outside the range will be preserved. The app will back up and restore device FLASH. Keep the device connected until the operation finishes.`)) return;
+  beginFirmwareLogAction(`SPI ${operationLabel.toLowerCase()}`);
 
   try { await ensureFlashBackup(); }
   catch (error) {
@@ -4498,7 +4542,7 @@ async function applyBinSignalModeOrFallback(session) {
   }
 }
 
-async function flashSelectedFirmware() {
+async function flashSelectedFirmware(actionAlreadyStarted = false) {
   if (dumpBusy || firmwareBackupBusy) return;
   if (firmwareFlashBusy) {
     firmwareStopRequested = true;
@@ -4509,9 +4553,11 @@ async function flashSelectedFirmware() {
   }
   if (!selectedFirmwareImage) return;
   if (!('serial' in navigator) && !androidUsbAvailable && activeTransport !== 'webusb') {
+    if (!actionAlreadyStarted) beginFirmwareLogAction('Firmware flash');
     appendFirmwareLog('USB serial access is unavailable in this browser.', 'error');
     return;
   }
+  if (!actionAlreadyStarted) beginFirmwareLogAction('Firmware flash');
   const imageToFlash = selectedFirmwareImage;
   try {
     await ensureFlashBackup();
@@ -4541,7 +4587,6 @@ async function flashSelectedFirmware() {
   elements.flashFirmware.classList.add('button-stop');
   elements.rebootFirmware.disabled = true;
   elements.rebootBootloader.disabled = true;
-  elements.firmwareLog.textContent = '';
   appendFirmwareLog(`Starting update for ${selectedFirmwareImage.name}.`);
   let session = null;
   let success = false;
@@ -4941,6 +4986,7 @@ async function startStockFirmwareAndVerify(port, alreadyStarted = false) {
 
 async function rebootToFirmware() {
   if (dumpBusy || elements.rebootFirmware.disabled) return;
+  beginFirmwareLogAction('Start firmware');
   elements.rebootFirmware.disabled = true;
   elements.rebootBootloader.disabled = true;
   setRebootStatus('Starting firmware and checking for HELLO…');
@@ -4985,6 +5031,7 @@ async function rebootToFirmware() {
 
 async function rebootToBootloader() {
   if (dumpBusy) return;
+  beginFirmwareLogAction('Enter bootloader');
   elements.rebootBootloader.disabled = true;
   elements.rebootFirmware.disabled = true;
   let port = null;
