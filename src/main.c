@@ -595,6 +595,7 @@ int main(void)
                 const uint32_t cpm = second_log_add(second_pulses);
                 latest_cpm = cpm;
                 latest_display_cpm = second_log_rate_cpm();
+                board_display_set_dose_cpm(cpm);
                 daily_dose_add(second_pulses);
                 today_pulse_count = calendar_day_valid ?
                     daily_dose_count() : session_pulses_total;
@@ -623,6 +624,7 @@ int main(void)
                     (void)second_log_add(0u);
                     latest_cpm = 0u;
                     latest_display_cpm = 0u;
+                    board_display_set_dose_cpm(0u);
                 }
                 const uint32_t measured_rate_thousandths = (uint32_t)(
                     ((uint64_t)latest_cpm * 666u + 50u) / 100u);

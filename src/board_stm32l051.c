@@ -433,6 +433,7 @@ static uint32_t lcd_displayed_minute_key = UINT32_MAX;
 static uint32_t lcd_rate_value_thousandths;
 static uint32_t lcd_alarm_rate_value_thousandths;
 static uint32_t lcd_current_cpm;
+static uint32_t lcd_dose_current_cpm;
 static bool lcd_alarm_rate_window_ready;
 static uint32_t lcd_warmup_pulses;
 static bool lcd_rate_window_ready;
@@ -1194,7 +1195,7 @@ static void lcd_format_dose_row(void)
     for (uint8_t i = 0u; i < LCD_RATE_LABEL_LENGTH; ++i) saved_label[i] = lcd_rate_label[i];
 
     if (choice == LCD_DOSE_ROW_CPM) {
-        lcd_format_count_value(lcd_current_cpm, "CPM  ");
+        lcd_format_count_value(lcd_dose_current_cpm, "CPM  ");
     } else {
         uint8_t row_unit = saved_unit;
         uint8_t row_period = saved_period;
@@ -5782,6 +5783,17 @@ void board_display_set_dose(uint32_t dose_thousandths,
                     uptime_changed : period_pulses_changed)) {
         /* Refresh only row two; repainting the main value makes its black
          * glyph backgrounds visibly flash while elapsed values update. */
+        lcd_dose_row_redraw_pending = true;
+    }
+}
+
+void board_display_set_dose_cpm(uint32_t cpm)
+{
+    if (lcd_dose_current_cpm == cpm) return;
+    lcd_dose_current_cpm = cpm;
+    if (lcd_screen_page == 1u && !lcd_dose_row_hidden &&
+        lcd_dose_row_option(lcd_settings_value_index[
+            SETTING_DOSE_ROW_2]) == LCD_DOSE_ROW_CPM) {
         lcd_dose_row_redraw_pending = true;
     }
 }
