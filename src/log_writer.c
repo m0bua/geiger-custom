@@ -12,10 +12,10 @@
 
 typedef struct {
     uint32_t minute_key;
+    uint32_t first_source_time;
     uint32_t period_index;
     uint32_t count;
     uint32_t maximum_cpm;
-    uint64_t seconds_mask;
     uint16_t samples;
     uint16_t epoch;
     uint8_t year_descriptor;
@@ -206,6 +206,16 @@ static void close_minute(void)
         minute_accumulator.year_descriptor, &record)) writer_fault = true;
 }
 
+static void minute_cover_through_boundary(void)
+{
+    if (!minute_accumulator.active ||
+        minute_accumulator.first_source_time == UINT32_MAX) return;
+    const uint32_t offset = minute_accumulator.first_source_time % 60u;
+    const uint16_t covered = (uint16_t)(60u - offset);
+    if (minute_accumulator.samples < covered)
+        minute_accumulator.samples = covered;
+}
+
 static void close_alert(void)
 {
     log_record_t record;
@@ -229,11 +239,11 @@ static void start_minute(uint32_t time_seconds, bool calendar_valid)
     if (!minute_location(time_seconds, calendar_valid, &key, &period_index,
             &year_descriptor)) return;
     minute_accumulator.minute_key = key;
+    minute_accumulator.first_source_time = UINT32_MAX;
     minute_accumulator.period_index = period_index;
     minute_accumulator.count = 0u;
     minute_accumulator.maximum_cpm = 0u;
     minute_accumulator.samples = 0u;
-    minute_accumulator.seconds_mask = 0u;
     minute_accumulator.epoch = current_epoch;
     minute_accumulator.segment_id =
         (uint8_t)(current_epoch % LOG_SEGMENT_ID_COUNT);
@@ -248,8 +258,10 @@ static void start_minute(uint32_t time_seconds, bool calendar_valid)
         minute_accumulator.maximum_cpm = existing.maximum_cpm;
         minute_accumulator.samples = (uint16_t)(existing.covered_seconds > 60u ?
             60u : existing.covered_seconds);
-        minute_accumulator.seconds_mask = minute_accumulator.samples == 60u ?
-            (UINT64_C(1) << 60u) - 1u : 0u;
+        if (minute_accumulator.samples != 0u) {
+            const uint32_t first_offset = 60u - minute_accumulator.samples;
+            minute_accumulator.first_source_time = key * 60u + first_offset;
+        }
     }
     minute_accumulator.active = true;
 }
@@ -349,6 +361,10 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
     } else if (minute_accumulator.minute_key != minute_key ||
             minute_accumulator.epoch != current_epoch ||
             minute_accumulator.year_descriptor != year_descriptor) {
+        if (minute_key > minute_accumulator.minute_key &&
+            minute_accumulator.epoch == current_epoch) {
+            minute_cover_through_boundary();
+        }
         close_minute();
         if (year_descriptor != minute_accumulator.year_descriptor) {
             close_period(LOG_RECORD_HOUR, &hour_accumulator);
@@ -362,6 +378,15 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
     update_period_tracker(LOG_RECORD_HOUR, &hour_accumulator, source_time, calendar_valid);
     update_period_tracker(LOG_RECORD_DAY, &day_accumulator, source_time, calendar_valid);
     if (minute_accumulator.active) {
+        if (minute_accumulator.first_source_time == UINT32_MAX)
+            minute_accumulator.first_source_time = source_time;
+        if (source_time >= minute_accumulator.first_source_time) {
+            uint32_t elapsed = source_time -
+                minute_accumulator.first_source_time + 1u;
+            if (elapsed > 60u) elapsed = 60u;
+            if (minute_accumulator.samples < elapsed)
+                minute_accumulator.samples = (uint16_t)elapsed;
+        }
         if (UINT32_MAX - minute_accumulator.count < pulses) {
             minute_accumulator.count = UINT32_MAX;
         } else {
@@ -369,11 +394,6 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
         }
         if (cpm > minute_accumulator.maximum_cpm) {
             minute_accumulator.maximum_cpm = cpm;
-        }
-        uint64_t bit = UINT64_C(1) << (source_time % 60u);
-        if ((minute_accumulator.seconds_mask & bit) == 0u) {
-            minute_accumulator.seconds_mask |= bit;
-            if (minute_accumulator.samples < 60u) ++minute_accumulator.samples;
         }
     }
 
@@ -418,6 +438,7 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
     }
 
     if (source_time % 60u == 59u) {
+        minute_cover_through_boundary();
         close_minute();
         uint32_t next = source_time + 1u;
         uint32_t next_key, next_index;

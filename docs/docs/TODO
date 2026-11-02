@@ -1,8 +1,8 @@
-BUG: not full logs logs
-
 BUG: graph cursor artegacts
 BUG: fake high rate after start.
 BUG: battery % grows on discharge sometimes.
 
 FEAT: search mode 100ms rate upd.
 FEAT: more direct graph (3/5/10min)
+
+FEAT: portal builder manual run.
