@@ -313,7 +313,7 @@
           <li><strong>Overview:</strong> shows the current rate, accumulated dose for today, device date/time and uptime, solar level, and battery level. The rate and dose units follow the device's UNIT and prefix settings. Hover over the rate chart to read a plotted value; it keeps the latest three minutes.</li>
           <li><strong>Logs:</strong> inspect minute, hour, day, and alert records. Choose a range, load records, and export them as CSV. See the detailed Logs guide below for coverage, live records, and storage.</li>
           <li><strong>Settings:</strong> read and change options supported by the connected firmware. Values that depend on another setting may be disabled. The Show checkboxes control which options appear in the device menu; setting and visibility changes are applied immediately. The device clock can be synchronized to the computer's current local time. POWER OFF is always shown and has no visibility checkbox.</li>
-          <li><strong>Debug:</strong> inspect device time, uptime, pulse count, power readings, physical log counts, storage state, and SPI memory size. Sections are in one table and can be collapsed independently. Expand Diagnostics to view recent app-device messages, including protocol requests and responses and firmware operations; Copy and Clear manage this rolling log.</li>
+          <li><strong>Debug:</strong> inspect device time, uptime, pulse count, power readings, physical log counts, storage state, and SPI memory size. Sections are in one table and can be collapsed independently. Expand Diagnostics to view app-device protocol requests and responses, errors, timeouts, and firmware operations. It retains the latest 1,000 entries; Copy exports the retained log and Clear empties it.</li>
           <li><strong>Without a connection:</strong> Overview, Logs, and Debug show clearly marked illustrative zero data. Settings use factory defaults and can be changed for preview, but preview changes are not saved and reset after reloading the page. Options unsupported by the connected firmware remain visible but disabled.</li>
         </ul>
         <h3>Logs</h3>
@@ -432,7 +432,7 @@
 
         <section class="manual-chapter">
         <h3>1.2 - Debug</h3>
-        <p>The extra-screen group contains Settings and Debug. Short Left/Right switches between them. Debug has three pages: large HH:MM, date and total pulse count; voltage and power readings plus combined WAKE, SLEEP and uptime; physical MIN/HOUR/DAY/ALERT log counts, SPI capacity and store status. Long Right advances through Debug pages. SPI is probed when Debug opens. The app presents these device diagnostics together in one table, with CHARGE and SCREEN durations shown separately alongside total WAKE. The app's Diagnostics panel below the table records recent communication with the device.</p>
+        <p>The extra-screen group contains Settings and Debug. Short Left/Right switches between them. Debug has three pages: large HH:MM, date and total pulse count; voltage and power readings plus combined WAKE, SLEEP and uptime; physical MIN/HOUR/DAY/ALERT log counts, SPI capacity and store status. Long Right advances through Debug pages. SPI is probed when Debug opens. The app presents these device diagnostics together in one table, with CHARGE and SCREEN durations shown separately alongside total WAKE. The app's Diagnostics panel below the table records protocol requests and responses, errors, timeouts, and firmware-operation messages. It retains the latest 1,000 entries; Copy exports the retained log and Clear removes it.</p>
         </section>
 
         <section class="manual-chapter">
@@ -486,30 +486,7 @@
               <li><strong>Log viewer:</strong> expands to full screen; displays coverage as compact elapsed time and alert duration without unit suffixes, omitting zero leading fields. Requests up to ten records per device exchange and updates rows and totals as each response arrives. Stop finishes the current request before halting. More extends Latest by one period, Count by 100 records, or resumes All/Dates; it remains visible but disables when unavailable. Live refresh no longer rebuilds rows under the pointer.</li>
               <li><strong>Firmware and backups:</strong> Quick, Firmware, and SPI operations save a permanent full FLASH backup in browser storage before the first write and offer restore actions. Manual FLASH dumps have a separate browser-stored restore copy. SPI service operations use a temporary recovery backup. Actions are grouped in the persistent activity log; older actions collapse when a new one starts.</li>
               <li><strong>Windows and interface:</strong> added F5 page refresh to the desktop app, refined overview metrics and setting controls, and removed an unavailable demo clock status message.</li>
-            </ul>
-          </li>
-          <li>
-            <time datetime="2026-10-30">2026-10-30</time> — Pre-release: startup fixes, dose sync, and log tools:
-            <ul>
-              <li><strong>Startup:</strong> fixed the missing SysTick handler in LTO builds; firmware startup has been confirmed on the device.</li>
-              <li><strong>Builds:</strong> aligned standalone and PlatformIO settings, added startup and interrupt vector checks, and enabled verified Intel HEX uploads over UART.</li>
-              <li><strong>Dose:</strong> reconcile DAY and TOTAL with stored logs after each completed hour and when changing log storage, while preserving pulses counted during reconciliation.</li>
-              <li><strong>Log maintenance:</strong> reset dose counters with the active logs and protect unrecognized SPI contents, including stock assets, from log erasure.</li>
-              <li><strong>Display:</strong> smoothly fade the backlight after the selected screen timeout before turning the display off.</li>
-              <li><strong>Logs app:</strong> keep the table header and totals visible while scrolling; show ten records by default and allow vertical resizing.</li>
-              <li><strong>LED:</strong> split pulse duration (LED TIME) from PWM level (LED BRIGHT); both settings persist independently without increasing the EEPROM record size. AUTO is shown without a unit suffix.</li>
-              <li><strong>Firmware size:</strong> shared repeated setting values and enabled newlib-nano to fit the 64 KiB flash limit.</li>
-              <li><strong>Settings app:</strong> kept POWER actions within the third column on wide windows.</li>
-            </ul>
-          </li>
-          <li>
-            <time datetime="2026-10-29">2026-10-29</time> — Pre-release: power and settings updates:
-            <ul>
-              <li><strong>Power:</strong> improved sleep behavior while the display is off.</li>
-              <li><strong>Battery:</strong> linear 1300–2000 ADC mapping and hysteresis reduce percentage fluctuations.</li>
-              <li><strong>LED and sound:</strong> LED TIME controls pulse duration and LED BRIGHT controls PWM level; both support solar-controlled AUTO. The sound timer supports low-frequency operation while the display is off.</li>
-              <li><strong>Settings:</strong> reordered the menu, added a two-column option picker, and updated selection and action colors.</li>
-              <li><strong>Manual and compatibility:</strong> refreshed screen illustrations and settings documentation; known older firmware images with different LED settings are marked partially compatible.</li>
+              <li><strong>Diagnostics:</strong> moved the communication log to Debug and expanded it to cover protocol requests/responses, failures, timeouts, and firmware operations. Copy and Clear are available.</li>
             </ul>
           </li>
           <li>
