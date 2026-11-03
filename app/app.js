@@ -1680,8 +1680,12 @@ function logCoveragePercent(record, type = logTypes.find((item) => item.id === s
 }
 function logCoverageClass(record, type = logTypes.find((item) => item.id === selectedLogType)) {
   const percent = logCoveragePercent(record, type);
-  return percent >= 100 ? 'coverage-green' :
-    (percent >= 90 ? 'coverage-yellow' : 'coverage-red');
+  /* Rounded coverage may display 100% even when the stored interval is
+   * partial (for example an hour with a few missing seconds).  Green is
+   * reserved for a genuinely complete interval. */
+  const incomplete = record.partial || record.covered < type.period;
+  return incomplete ? (percent >= 90 ? 'coverage-yellow' : 'coverage-red') :
+    'coverage-green';
 }
 function logRateClass(cpm) {
   return cpm * 666 > 90000 ? 'level-red' :

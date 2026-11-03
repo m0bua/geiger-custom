@@ -74,14 +74,14 @@ async function main() {
   assert.equal(run('logRecords[0].average'), 17);
   assert.equal(run('logRecords[0].maximum'), 99);
   assert.equal(elements.logContent.children[1].children[4].textContent, '97% · 58s · partial');
-  assert.equal(elements.logContent.children[1].children[4].className, 'coverage-green');
+  assert.equal(elements.logContent.children[1].children[4].className, 'coverage-yellow');
   assert.equal(elements.logContent.children[1].children[1].className, 'log-metric');
   assert.equal(elements.logContent.children[1].children[2].className, 'log-metric');
   assert.equal(elements.logContent.children[1].children[3].className, 'log-metric level-yellow');
   assert.equal(run("formatLogCoverage({covered:59,partial:true,live:false})"), '98% · 59s · partial');
   assert.equal(run("logCoverageClass({covered:29},logTypes[0])"), 'coverage-yellow');
   assert.equal(run("logCoverageClass({covered:17},logTypes[0])"), 'coverage-red');
-  assert.equal(run("logCoverageClass({covered:54},logTypes[0])"), '');
+  assert.equal(run("logCoverageClass({covered:54},logTypes[0])"), 'coverage-yellow');
   assert.equal(run('logRateClass(60)'), '');
   assert.equal(run('logRateClass(61)'), 'level-yellow');
   assert.equal(run('logRateClass(136)'), 'level-red');
