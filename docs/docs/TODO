@@ -1,3 +1,2 @@
 BUG: battery % grows on discharge sometimes.
 BUG: lost seconds in log - done?
-DONE: APP log: green only on full coverage; rounded incomplete coverage is yellow.
