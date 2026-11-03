@@ -326,6 +326,7 @@
         </ul>
         <p>Dose is accumulated detector counts converted to the selected <strong>UNIT</strong> and prefix. In <strong>CNT</strong> mode, dose is shown as CNT and rates as CPM. Average rate uses the record's actual covered time; missing time is not treated as zero activity.</p>
         <p><strong>Coverage</strong> applies to minute, hour, and day records. It shows the represented percentage and a compact elapsed time: seconds below one minute, minutes and seconds below one hour, then <code>hh:mm:ss</code> and an optional day field for longer spans. Zero leading fields are omitted. The state follows as <em>full</em>, <em>partial</em>, or <em>live</em>. A partial record's dose and average describe only the time actually measured. A live record is the current in-progress interval and can change until it closes. Alert records show duration instead of coverage.</p>
+        <p><strong>Coverage colors:</strong> green means the record is genuinely complete. An incomplete record can round to 100% and is shown in yellow so it is not mistaken for a full interval.</p>
         <p>The <strong>Fill</strong> selector changes the shaded bar behind table values. For MINUTES, HOURS, and DAYS it can compare Dose, Average, Maximum, or Coverage; for ALERTS it can compare Duration, Dose, Average, or Maximum. The shading is scaled against the largest value in the currently loaded records. Metric text is highlighted when it reaches a warning or red level.</p>
         <p><strong>Range</strong> offers Latest, All, Dates, and Count. Latest loads up to 60 minutes, 24 hours, 30 days, or 5 alerts, depending on the selected type. All loads the complete available history. Dates loads an inclusive calendar interval; the newer bound must be later than the older bound. Count loads the requested number of newest records. Minute ranges use minute precision and hour ranges use hour precision. Calendar ranges require a valid device clock. The current firmware supports up to ten records per request.</p>
         <p><strong>Export</strong> saves only the records currently loaded for the selected log type; it does not fetch the rest of the selected range. Load the full range you need first. The CSV includes timestamp, type, dose and units, average and maximum rate, covered seconds, coverage percentage, and record status.</p>
@@ -444,6 +445,7 @@
         <section class="manual-chapter">
         <h3>2.1 · Graphs</h3>
         <p>Long Right from Dose opens Graphs. Short Left/Right cycles SEC, MIN, HOUR, DAY, and ALRT. SEC shows live rate history; long Right cycles its 10/30/60/90-second window. For a log graph, long Right enters column selection; short Left/Right moves cyclically through columns. The selected column is green and its date/time, dose, MAX, AVG, and covered duration are shown. Long Left leaves column selection; another long Left returns to Dose. Holding Left for 3 seconds forces a return to the Rate screen.</p>
+        <p><strong>Cursor:</strong> moving through a graph redraws the graph area so the previous selection and cursor pixels are cleared.</p>
         <p>Log graphs show the current in-progress interval first, followed by older records from that log. The current hour is assembled from minute records, and the current day from hour records; older columns come from their own stored log. The history limits are 60 minute records, 24 hourly records, 50 daily records, and 50 alerts; at most 13 columns are visible on screen at once. With no column selected, MIN and HOUR summarize the visible window; DAY summarizes retained daily records. Partial records contribute only their measured time. EEPROM and SPI both store all four log types, with much greater history available in SPI mode. The app's Logs tab lists records and coverage details.</p>
         <div class="manual-screen-grid">
           <figure><figcaption>2.1 · 90-second live rate graph</figcaption><img src="../docs/renders/screens/2.1-graph-90s.svg" alt="Live rate graph with a 90-second window" loading="lazy"></figure>
@@ -478,6 +480,14 @@
           <input class="release-history-toggle-input" id="release-history-toggle" type="checkbox">
           <div class="release-history-content">
         <ul class="release-list">
+          <li>
+            <time datetime="2026-11-03">2026-11-03</time> - Logging accuracy and graph display fixes:
+            <ul>
+              <li><strong>Logging:</strong> minute and hour boundaries now use the monotonic uptime clock with a stable RTC offset, preventing small RTC phase differences from creating false partial coverage.</li>
+              <li><strong>Coverage:</strong> the Logs view reserves green for genuinely complete records; an incomplete record that rounds to 100% is shown in yellow.</li>
+              <li><strong>Graphs:</strong> cursor movement now repaints the complete graph area, removing stale selected bars and leftover cursor pixels after navigation.</li>
+            </ul>
+          </li>
           <li>
             <time datetime="2026-11-02">2026-11-02</time> — Release: search, graphs, logging, firmware safety, and app updates:
             <ul>

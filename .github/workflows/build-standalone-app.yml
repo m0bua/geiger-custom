@@ -253,6 +253,8 @@ jobs:
           The HTML and EXE include a recovery-backed SPI NOR dump flow and the matching temporary SPI service firmware.
 
           ## Changes
+          - Stabilized log minute/hour boundaries on monotonic uptime with a stable RTC offset, preventing small RTC phase differences from creating false partial coverage. The Logs view now reserves green for genuinely complete coverage and shows rounded-but-incomplete 100% records in yellow.
+          - Cursor navigation on LCD log graphs now repaints the complete graph area, clearing stale selected bars and leftover cursor pixels.
           - Fixed LTO startup by preserving the real SysTick handler; aligned standalone and PlatformIO build settings, added startup/vector validation, and verified UART HEX programming.
           - Dose calculations now follow logged pulse counts. Automatic hourly dose resynchronization is disabled; loading the DAY graph corrects DAY and TOTAL from stored records. DOSE ROW 2 CPM uses measured CPM.
           - Improved minute coverage tracking to avoid false partial records when second sampling is delayed. Persistent logs exclude the 30-pulse blue warm-up while RAM graph history, the app's live minute row, and live dose continue to include it. Extended live rate graphs to 3, 5, and 10 minutes with separate history resolutions and fixed cursor cleanup at graph edges.

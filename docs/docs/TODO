@@ -1,2 +1,2 @@
 BUG: battery % grows on discharge sometimes.
-BUG: lost seconds in log - done?
+DONE: lost seconds in log - stabilized the sampling timebase and coverage boundaries.
