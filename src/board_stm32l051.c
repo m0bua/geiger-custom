@@ -2833,9 +2833,6 @@ static bool lcd_graph_move_bar(bool older)
 
     const uint8_t old_record = lcd_graph_selected_record;
     const uint8_t old_window = lcd_graph_log_window_start;
-    const bool wrapped = older ?
-        old_record == (uint8_t)(lcd_graph_log_available - 1u) :
-        old_record == 0u;
     lcd_graph_previous_selected = lcd_graph_selected;
     if (older) {
         lcd_graph_selected_record = (uint8_t)(
@@ -2888,11 +2885,13 @@ static bool lcd_graph_move_bar(bool older)
         }
         lcd_graph_selected = (uint8_t)(lcd_graph_selected_record -
             lcd_graph_log_window_start);
-        lcd_graph_partial_kind = LCD_GRAPH_PARTIAL_WINDOW;
+        /* Cursor moves can change both the selected bar and the visible
+         * window. Repaint the complete graph to avoid stale pixels from the
+         * previous selection. */
+        lcd_graph_partial_kind = 0u;
     } else {
         lcd_graph_selected = (uint8_t)(lcd_graph_selected_record - old_window);
-        lcd_graph_partial_kind = wrapped ? LCD_GRAPH_PARTIAL_WINDOW :
-            LCD_GRAPH_PARTIAL_CURSOR;
+        lcd_graph_partial_kind = 0u;
     }
     lcd_graph_selected_point_valid = false;
     lcd_graph_input_locked = true;
@@ -4039,7 +4038,7 @@ bool board_display_graph_long_press(void)
             lcd_graph_selected_record = 0u;
             lcd_graph_selected = 0u;
         }
-        lcd_graph_partial_kind = LCD_GRAPH_PARTIAL_CURSOR;
+        lcd_graph_partial_kind = 0u;
         lcd_graph_partial_pending = true;
     } else {
         lcd_graph_range_index = (uint8_t)((lcd_graph_range_index + 1u) % 7u);
@@ -4061,7 +4060,7 @@ bool board_display_graph_back(void)
     lcd_graph_cursor_mode = false;
     lcd_graph_input_locked = true;
     lcd_graph_refresh_deadline = board_millis + 5000u;
-    lcd_graph_partial_kind = LCD_GRAPH_PARTIAL_CURSOR;
+    lcd_graph_partial_kind = 0u;
     lcd_graph_partial_pending = true;
     return true;
 }
