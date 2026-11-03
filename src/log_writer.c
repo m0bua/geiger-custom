@@ -61,6 +61,12 @@ static bool have_clock_sample;
 static uint32_t previous_uptime;
 static uint32_t previous_calendar;
 static bool previous_calendar_valid;
+/* Keep the calendar-to-uptime relationship stable between RTC reads.  The
+ * RTC and SysTick are independent clocks; using the raw RTC second for every
+ * sample can otherwise move a sample across a minute boundary when their
+ * phases differ by one second. */
+static int32_t calendar_uptime_offset;
+static bool have_calendar_uptime_offset;
 static uint8_t active_log_memory = 0xFFu;
 
 static bool minute_location(uint32_t seconds, bool calendar_valid,
@@ -301,6 +307,7 @@ bool log_writer_init(void)
     hour_accumulator.active = false;
     day_accumulator.active = false;
     have_clock_sample = false;
+    have_calendar_uptime_offset = false;
     active_log_memory = log_memory;
 
     if (!log_eeprom_init()) goto failed;
@@ -342,9 +349,6 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
     }
     if (!writer_ready) return;
     if (!have_clock_sample && !calendar_valid) ++current_epoch;
-    source_time = calendar_valid ? calendar_seconds : uptime_seconds;
-    if (source_time != 0u) --source_time;
-
     if (have_clock_sample && calendar_valid && previous_calendar_valid) {
         const uint32_t uptime_delta = uptime_seconds - previous_uptime;
         const uint32_t expected = previous_calendar + uptime_delta;
@@ -358,6 +362,7 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
             minute_accumulator.active = false;
             hour_accumulator.active = false;
             day_accumulator.active = false;
+            have_calendar_uptime_offset = false;
         }
     } else if (have_clock_sample && calendar_valid != previous_calendar_valid) {
         close_alert();
@@ -368,6 +373,29 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
         minute_accumulator.active = false;
         hour_accumulator.active = false;
         day_accumulator.active = false;
+        have_calendar_uptime_offset = false;
+    }
+
+    if (calendar_valid && !have_calendar_uptime_offset) {
+        calendar_uptime_offset = (int32_t)((int64_t)calendar_seconds -
+            (int64_t)uptime_seconds);
+        have_calendar_uptime_offset = true;
+    }
+
+    /* Use uptime as the sampling clock.  The stable offset preserves the
+     * calendar date/time without allowing a one-second RTC phase change to
+     * create a false gap in minute coverage. */
+    {
+        int64_t stable_time = (int64_t)uptime_seconds;
+        if (calendar_valid && have_calendar_uptime_offset)
+            stable_time += calendar_uptime_offset;
+        if (stable_time <= 0) {
+            source_time = 0u;
+        } else {
+            --stable_time;
+            source_time = stable_time > UINT32_MAX ? UINT32_MAX :
+                (uint32_t)stable_time;
+        }
     }
 
     if (!minute_location(source_time, calendar_valid, &minute_key,

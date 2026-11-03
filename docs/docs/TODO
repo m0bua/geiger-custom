@@ -1,1 +1,3 @@
 BUG: battery % grows on discharge sometimes.
+BUG: lost seconds in log - done?
+FIX: APP log: green on full (not ~100%), yellow on >90%.
