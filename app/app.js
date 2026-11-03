@@ -344,11 +344,12 @@ const elements = {
   doseFoot: document.querySelector('#dose-foot'),
   uptime: document.querySelector('#uptime'),
   debugBatteryPercent: document.querySelector('#debug-battery-percent'),
-  debugBatteryRaw: document.querySelector('#debug-battery-raw'),
+  debugBatteryDetail: document.querySelector('#debug-battery-detail'),
   debugBatteryStartPercent: document.querySelector('#debug-battery-start-percent'),
-  debugBatteryStartRaw: document.querySelector('#debug-battery-start-raw'),
+  debugBatteryStartDetail: document.querySelector('#debug-battery-start-detail'),
   debugSolarPercent: document.querySelector('#debug-solar-percent'),
   debugSolarRaw: document.querySelector('#debug-solar-raw'),
+  debugUsbRaw: document.querySelector('#debug-usb-raw'),
   debugChargePercent: document.querySelector('#debug-charge-percent'),
   debugChargeTime: document.querySelector('#debug-charge-time'),
   debugScreenPercent: document.querySelector('#debug-screen-percent'),
@@ -1046,6 +1047,12 @@ function percentFromAdc(raw, empty, full) {
   if (raw <= empty) return 0;
   if (raw >= full) return 100;
   return 100 - Math.floor(((full - raw) * 100) / (full - empty));
+}
+
+function voltageFromPowerAdc(raw) {
+  const decivolts = raw < 1209 ? 27 :
+    (raw > 2082 ? 43 : 27 + Math.floor((raw - 1182) / 55));
+  return `${Math.floor(decivolts / 10)}.${decivolts % 10}V`;
 }
 
 function formatRadiation(valueUsv, prefixSetting, symbol, perHour, digitLimit = null) {
@@ -2610,11 +2617,12 @@ function renderOfflinePreview() {
   elements.debugTime.textContent = '--:--:--';
   elements.debugCount.textContent = '0';
   elements.debugBatteryPercent.textContent = '0%';
-  elements.debugBatteryRaw.textContent = '0';
+  elements.debugBatteryDetail.textContent = '0 · 0.0V';
   elements.debugBatteryStartPercent.textContent = '0%';
-  elements.debugBatteryStartRaw.textContent = '0';
+  elements.debugBatteryStartDetail.textContent = '0 · 0.0V';
   elements.debugSolarPercent.textContent = '0%';
   elements.debugSolarRaw.textContent = '0';
+  elements.debugUsbRaw.textContent = '0';
   for (const [percentElement, timeElement] of [
     [elements.debugChargePercent, elements.debugChargeTime],
     [elements.debugScreenPercent, elements.debugScreenTime],
@@ -2920,6 +2928,7 @@ function handleStatus(payload) {
   const doseNsv = doseNsvWhole + doseFraction / 3600;
   const batteryRaw = view.getUint16(17, true);
   const solarRaw = view.getUint16(19, true);
+  const usbRaw = view.getUint16(21, true);
   const countTotal = payload.length >= 29 ? view.getUint32(25, true) : count;
   const lifetimePulses = payload.length >= 35 ? view.getUint32(31, true) : countTotal;
   const screenSeconds = payload.length >= 47 ? view.getUint32(35, true) : null;
@@ -3007,13 +3016,15 @@ function handleStatus(payload) {
   const batteryPercent = percentFromAdc(batteryRaw, 1300, 2000);
   elements.batteryPercent.textContent = `${batteryPercent}%`;
   elements.debugBatteryPercent.textContent = `${batteryPercent}%`;
-  elements.debugBatteryRaw.textContent = formatGroupedNumber(batteryRaw);
   elements.debugBatteryStartPercent.textContent = batteryStartRaw === null ? '—' :
     `${percentFromAdc(batteryStartRaw, 1300, 2000)}%`;
-  elements.debugBatteryStartRaw.textContent = batteryStartRaw === null ? '—' :
-    formatGroupedNumber(batteryStartRaw);
+  elements.debugBatteryDetail.textContent =
+    `${formatGroupedNumber(batteryRaw)} · ${voltageFromPowerAdc(batteryRaw)}`;
+  elements.debugBatteryStartDetail.textContent = batteryStartRaw === null ? '—' :
+    `${formatGroupedNumber(batteryStartRaw)} · ${voltageFromPowerAdc(batteryStartRaw)}`;
   elements.debugSolarPercent.textContent = `${solarPercent}%`;
   elements.debugSolarRaw.textContent = formatGroupedNumber(solarRaw);
+  elements.debugUsbRaw.textContent = formatGroupedNumber(usbRaw);
   for (const [seconds, percentElement, timeElement] of [
     [usbSeconds, elements.debugChargePercent, elements.debugChargeTime],
     [screenSeconds, elements.debugScreenPercent, elements.debugScreenTime],

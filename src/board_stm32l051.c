@@ -213,6 +213,7 @@ static void lcd_backlight_auto_ramp_service(void);
 static void lcd_backlight_fade_service(void);
 static void lcd_format_dose(uint32_t dose_thousandths,
                             uint32_t dose_fraction);
+static void lcd_format_percent(uint16_t value, uint8_t offset);
 static void lcd_format_dose_uptime_row(void);
 static uint8_t lcd_dose_row_option(uint8_t option_index);
 static bool button_pressed(uint32_t base, uint32_t pin);
@@ -1975,14 +1976,24 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
         if (row <= 3u) {
             const uint16_t raw = row == 1u ? lcd_adc_sun_raw :
                 (row == 2u ? lcd_adc_battery_raw : lcd_adc_battery_start_raw);
-            const uint16_t percent = row == 1u ?
+            const uint8_t percent = row == 1u ?
                 lcd_displayed_solar_percent : (row == 2u ?
                     lcd_displayed_battery_percent : lcd_battery_start_percent);
             label = row == 1u ? "SOL" :
-                (row == 2u ? "BATT" : "BATT START");
+                (row == 2u ? "BATT" : "BATT ST");
             for (uint8_t i = 0u; label[i] != '\0'; ++i) line[i] = label[i];
-            value_length = lcd_debug_u32_digits(value, percent);
-            value[value_length++] = '%';
+            if (row == 1u) {
+                value_length = lcd_debug_u32_digits(value, percent);
+                value[value_length++] = '%';
+            } else {
+                const uint8_t decivolts = (uint8_t)(27u +
+                    (percent + 3u) / 7u);
+                (void)lcd_debug_u32_digits(value, decivolts);
+                value[2] = value[1];
+                value[1] = '.';
+                value[3] = 'V';
+                value_length = 4u;
+            }
             lcd_debug_put_right(line, 16u, value, value_length);
             value_length = lcd_debug_u32_digits(value, raw);
             lcd_debug_put_right(line, 20u, value, value_length);
