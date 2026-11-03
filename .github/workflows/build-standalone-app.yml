@@ -253,17 +253,20 @@ jobs:
           The HTML and EXE include a recovery-backed SPI NOR dump flow and the matching temporary SPI service firmware.
 
           ## Changes
-          - Stabilized log minute/hour boundaries on monotonic uptime with a stable RTC offset, preventing small RTC phase differences from creating false partial coverage. The Logs view now reserves green for genuinely complete coverage and shows rounded-but-incomplete 100% records in yellow.
-          - Cursor navigation on LCD log graphs now repaints the complete graph area, clearing stale selected bars and leftover cursor pixels.
-          - Fixed LTO startup by preserving the real SysTick handler; aligned standalone and PlatformIO build settings, added startup/vector validation, and verified UART HEX programming.
-          - Dose calculations now follow logged pulse counts. Automatic hourly dose resynchronization is disabled; loading the DAY graph corrects DAY and TOTAL from stored records. DOSE ROW 2 CPM uses measured CPM.
-          - Improved minute coverage tracking to avoid false partial records when second sampling is delayed. Persistent logs exclude the 30-pulse blue warm-up while RAM graph history, the app's live minute row, and live dose continue to include it. Extended live rate graphs to 3, 5, and 10 minutes with separate history resolutions and fixed cursor cleanup at graph edges.
-          - SEARCH updates every 100 ms, reacts immediately to pulses, eases down between pulses, displays up to five decimal places for Sv/R, and uses a brighter LED. NORMAL updates every 500 ms; with the display off, rate updates follow pulses.
-          - Added a full-screen Logs view, compact coverage formatting, and alert durations without unit suffixes or zero leading fields. Log loading requests up to ten records per exchange, updates incrementally, and supports Stop-after-current-request and More for extending Latest, Count, All, or Dates. Fixed hover flicker and kept headers/totals visible while scrolling; the table defaults to ten rows and can be resized vertically.
-          - Added permanent browser-stored FLASH backup before the first firmware or SPI write, separate manual FLASH dump/restore storage, and temporary recovery backups for SPI service operations. Restore actions are available in Quick, Firmware, and SPI; operations stop before erase if backup capture fails.
-          - Grouped Firmware Activity entries by action, keeping the log visible and clearing it only on request. Added F5 refresh to the Windows app.
-          - Refined Overview rate/dose metrics and Settings layout; fixed blue warm-up CNT alignment, complementary CPM/CPS selection in CNT mode, and the demo clock placeholder. Added a smooth backlight fade after the configured timeout.
-          - Reset dose counters with the active logs and block log erasure over unrecognized SPI contents, including stock assets.
+          - Reworked the device settings menu and persistence: reordered menu items, separated LED TIME from LED BRIGHT, added configurable startup-screen behavior, fixed two-row unit handling, improved battery-life behavior, and added smooth screen-timeout dimming.
+          - Improved battery diagnostics and display behavior: the main device screen keeps battery percentage, device DEBUG shows Li-ion voltage for BATT and BATT START, and app DEBUG shows battery percentage, RAW, and Li-ion voltage plus SOL percentage/RAW and USB RAW.
+          - Improved rate/search behavior: SEARCH updates every 100 ms, reacts immediately to pulses, eases down between pulses, supports more Sv/R precision, and uses brighter LED indication; NORMAL updates every 500 ms and continues rate updates while the display is off.
+          - Reworked dose and logging calculations to follow logged pulse counts, disabled automatic hourly dose resynchronization, corrected DAY/TOTAL after loading the DAY graph, and fixed DOSE ROW 2 CPM to use measured CPM.
+          - Improved minute/hour/day logging and coverage: monotonic minute/hour boundaries with a stable RTC offset, delayed-sampling protection, correct complete/partial coverage colors, exclusion of the 30-pulse warm-up from persistent logs, and continued live RAM history/dose updates.
+          - Expanded live rate history to 3, 5, and 10 minutes with separate resolutions and fixed graph cursor redraw, edge cleanup, and stale-pixel handling.
+          - Expanded the Logs viewer with full-screen mode, compact coverage and alert-duration formatting, incremental loading, up to ten records per exchange, Stop-after-current-request, More for Latest/Count/All/Dates, stable headers/totals, hover fixes, and an adaptive window-height panel that scrolls only its records.
+          - Added permanent browser-stored FLASH backups before firmware/SPI writes, separate manual FLASH dump/restore storage, temporary SPI recovery backups, restore actions, and erase protection when SPI contents are unrecognized.
+          - Improved Firmware Activity and diagnostics: grouped activity by action, retained the visible log until manually cleared, added protocol/firmware operation reporting, and added F5 refresh to the Windows app.
+          - Refined Overview metrics, Settings layout, warm-up CNT alignment, complementary CPM/CPS selection, demo placeholders, backlight fading, and reset behavior for active logs.
+          - Added Android/PWA USB support and improved mobile layout, Web Serial/WebUSB reconnect behavior, Windows COM-port selection, application naming, and standalone release packaging.
+          - Expanded the stock firmware catalog with newly published images and source links; improved Quick flash, firmware validation, startup/recovery handling, and release portal versioning.
+          - Fixed LTO startup by preserving the real SysTick handler; aligned standalone and PlatformIO builds, added startup/vector validation, and verified UART HEX programming.
+          - Added battery/ADC, display, logging, protocol, storage, and release documentation plus regression coverage for dose, logs, storage, and embedded images.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded; used for app compatibility checks): ${canonical_sha256}

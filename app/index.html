@@ -482,8 +482,11 @@
           <div class="release-history-content">
         <ul class="release-list">
           <li>
-            <time datetime="2026-11-03">2026-11-03</time> - Logging accuracy and graph display fixes:
+            <time datetime="2026-11-03">2026-11-03</time> - Responsive logs, power diagnostics, and logging/graph fixes:
             <ul>
+              <li><strong>Logs:</strong> the log panel now adapts to the available window height, keeps a small bottom margin, and scrolls only the records instead of the whole page.</li>
+              <li><strong>Battery:</strong> the device's main screen keeps the battery percentage; the device DEBUG screen now shows Li-ion voltage for BATT and BATT START. The app DEBUG view keeps battery percentages and adds RAW plus Li-ion voltage.</li>
+              <li><strong>Power diagnostics:</strong> the app DEBUG view keeps SOL percentage and RAW readings and adds the USB RAW reading.</li>
               <li><strong>Logging:</strong> minute and hour boundaries now use the monotonic uptime clock with a stable RTC offset, preventing small RTC phase differences from creating false partial coverage.</li>
               <li><strong>Coverage:</strong> the Logs view reserves green for genuinely complete records; an incomplete record that rounds to 100% is shown in yellow.</li>
               <li><strong>Graphs:</strong> cursor movement now repaints the complete graph area, removing stale selected bars and leftover cursor pixels after navigation.</li>
