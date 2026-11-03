@@ -213,6 +213,13 @@ button { font: inherit; }
 .settings-clock > p[data-level="success"] { color: var(--green); }
 .settings-clock > p[data-level="error"] { color: #ff7474; }
 .logs-panel { padding: 18px; border: 1px solid var(--line); border-radius: 11px; background: rgba(17,26,31,.8); }
+body.logs-page-active { overflow: hidden; }
+body.logs-page-active .shell { display: flex; height: 100dvh; min-height: 0; flex-direction: column; }
+body.logs-page-active .logs-panel { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; overflow: hidden; margin-bottom: 12px; }
+body.logs-page-active .logs-panel > .panel-heading,
+body.logs-page-active .logs-panel > .log-tabs,
+body.logs-page-active .logs-panel > .logs-tools { flex: 0 0 auto; }
+body.logs-page-active .log-content { height: auto; min-height: 0; max-height: none; flex: 1 1 auto; resize: none; }
 .logs-heading-actions { min-width: 0; }
 .logs-heading-actions > #logs-status { min-width: 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .logs-fullscreen-button { min-width: 36px; min-height: 32px; padding: 0 8px; font-size: 18px; line-height: 1; }

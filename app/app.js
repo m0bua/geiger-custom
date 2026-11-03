@@ -1216,6 +1216,7 @@ function selectPage(page, updateUrl = true) {
   if (page === 'instructions') page = 'manual';
   const pages = ['overview', 'debug', 'settings', 'logs', 'firmware', 'manual', 'about'];
   if (!pages.includes(page)) return;
+  document.body.classList.toggle('logs-page-active', page === 'logs');
   if (page !== 'logs') setLogsFullscreen(false);
   for (const name of pages) {
     const active = name === page;
