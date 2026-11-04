@@ -42,11 +42,12 @@ uint32_t second_log_add(uint32_t pulses)
     head = (uint8_t)((head + 1u) % SECOND_LOG_CAPACITY);
     if (count < SECOND_LOG_CAPACITY) ++count;
     const uint8_t missing_seconds = (uint8_t)(60u - rate_window_count);
-    const uint64_t startup_estimate_x60 = (uint64_t)rolling_pulses * 60u +
+    /* 60 saturated uint16 samples keep both products below UINT32_MAX. */
+    const uint32_t startup_estimate_x60 = rolling_pulses * 60u +
         (uint32_t)RATE_STARTUP_BASELINE_CPM * missing_seconds;
     estimated_rate_cpm = (uint32_t)((startup_estimate_x60 + 30u) / 60u);
-    return (uint32_t)(((uint64_t)rolling_pulses * 60u +
-        rate_window_count / 2u) / rate_window_count);
+    return (rolling_pulses * 60u + rate_window_count / 2u) /
+        rate_window_count;
 }
 
 uint32_t second_log_rate_cpm(void)

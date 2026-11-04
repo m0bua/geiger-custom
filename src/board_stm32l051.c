@@ -215,6 +215,7 @@ static void lcd_format_dose(uint32_t dose_thousandths,
                             uint32_t dose_fraction);
 static void lcd_format_percent(uint16_t value, uint8_t offset);
 static void lcd_format_dose_uptime_row(void);
+static void lcd_write_two_digits(char *text, uint8_t value);
 static uint8_t lcd_dose_row_option(uint8_t option_index);
 static bool button_pressed(uint32_t base, uint32_t pin);
 static void pin_input_with_pull(uint32_t base, uint32_t pin);
@@ -458,12 +459,6 @@ static uint32_t lcd_count_total;
 static uint32_t lcd_daily_pulse_count;
 static uint32_t lcd_dose_period_pulses[3];
 static uint8_t lcd_settings_sequence;
-static uint8_t lcd_row_settings_sequence;
-static uint8_t lcd_timer_sequence;
-static uint8_t lcd_alarm_sequence;
-static uint8_t lcd_light_alarm_sequence;
-static uint8_t lcd_dose_alarm_sequence;
-static uint8_t lcd_hv_sequence;
 static uint32_t lcd_dose_value_thousandths;
 static uint32_t lcd_dose_fraction;
 static uint32_t lcd_dose_measurement_seconds;
@@ -648,22 +643,21 @@ static bool rtc_exit_init_and_sync(void)
 
 static void rtc_seed_from_build(rtc_calendar_t *calendar)
 {
-    static const char *const months[] = {
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-    };
     const char *date = __DATE__;
     const char *time = __TIME__;
 
     calendar->year = (uint16_t)((date[7] - '0') * 1000u +
         (date[8] - '0') * 100u + (date[9] - '0') * 10u + date[10] - '0');
-    calendar->month = 1u;
-    for (uint8_t i = 0u; i < 12u; ++i) {
-        if (date[0] == months[i][0] && date[1] == months[i][1] &&
-            date[2] == months[i][2]) {
-            calendar->month = (uint8_t)(i + 1u);
-            break;
-        }
+    /* __DATE__ is constant, so the compiler folds this to a numeric month. */
+    if (date[0] == 'J') {
+        calendar->month = date[1] == 'a' ? 1u : (date[2] == 'n' ? 6u : 7u);
+    } else if (date[0] == 'M') {
+        calendar->month = date[2] == 'r' ? 3u : 5u;
+    } else if (date[0] == 'A') {
+        calendar->month = date[1] == 'p' ? 4u : 8u;
+    } else {
+        calendar->month = date[0] == 'F' ? 2u : (date[0] == 'S' ? 9u :
+            (date[0] == 'O' ? 10u : (date[0] == 'N' ? 11u : 12u)));
     }
     calendar->day = (uint8_t)((date[4] == ' ' ? 0u :
         (uint8_t)(date[4] - '0') * 10u) + (uint8_t)(date[5] - '0'));
@@ -1279,14 +1273,11 @@ static void lcd_format_dose_uptime_row(void)
         const uint32_t minutes = (seconds / 60u) % 60u;
         const uint32_t remaining = seconds % 60u;
         const uint8_t offset = 1u;
-        lcd_cpm_text[offset] = (char)('0' + hours / 10u);
-        lcd_cpm_text[offset + 1u] = (char)('0' + hours % 10u);
+        lcd_write_two_digits(&lcd_cpm_text[offset], (uint8_t)hours);
         lcd_cpm_text[offset + 2u] = ':';
-        lcd_cpm_text[offset + 3u] = (char)('0' + minutes / 10u);
-        lcd_cpm_text[offset + 4u] = (char)('0' + minutes % 10u);
+        lcd_write_two_digits(&lcd_cpm_text[offset + 3u], (uint8_t)minutes);
         lcd_cpm_text[offset + 5u] = ':';
-        lcd_cpm_text[offset + 6u] = (char)('0' + remaining / 10u);
-        lcd_cpm_text[offset + 7u] = (char)('0' + remaining % 10u);
+        lcd_write_two_digits(&lcd_cpm_text[offset + 6u], (uint8_t)remaining);
     } else {
         uint32_t days = seconds / 86400u;
         if (days > 999u) days = 999u;
@@ -1305,8 +1296,8 @@ static void lcd_format_dose_uptime_row(void)
         }
         lcd_cpm_text[position++] = 'D';
         lcd_cpm_text[position++] = ' ';
-        lcd_cpm_text[position++] = (char)('0' + hours / 10u);
-        lcd_cpm_text[position++] = (char)('0' + hours % 10u);
+        lcd_write_two_digits(&lcd_cpm_text[position], (uint8_t)hours);
+        position += 2u;
         lcd_cpm_text[position] = 'H';
     }
     lcd_cpm_text[LCD_CPM_TEXT_LENGTH] = '\0';
@@ -1920,11 +1911,9 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
                 line[7] = (char)('0' + (calendar.year / 10u) % 10u);
                 line[8] = (char)('0' + calendar.year % 10u);
                 line[9] = '-';
-                line[10] = (char)('0' + calendar.month / 10u);
-                line[11] = (char)('0' + calendar.month % 10u);
+                lcd_write_two_digits(&line[10], calendar.month);
                 line[12] = '-';
-                line[13] = (char)('0' + calendar.day / 10u);
-                line[14] = (char)('0' + calendar.day % 10u);
+                lcd_write_two_digits(&line[13], calendar.day);
             } else {
                 const char unset[] = "---- -- --";
                 for (uint8_t i = 0u; i < 10u; ++i) line[5u + i] = unset[i];
@@ -3142,6 +3131,12 @@ static uint16_t lcd_graph_pixel(uint16_t x, uint16_t y)
         LCD_GRAPH_COLOR : LCD_TEXT_BACKGROUND;
 }
 
+static __attribute__((noinline)) void lcd_write_two_digits(char *text, uint8_t value)
+{
+    text[0] = (char)('0' + value / 10u);
+    text[1] = (char)('0' + value % 10u);
+}
+
 static void lcd_graph_prepare_header(void)
 {
     static const uint8_t seconds_table[4] = {10u, 30u, 60u, 90u};
@@ -3158,8 +3153,7 @@ static void lcd_graph_prepare_header(void)
     if (!lcd_graph_log_type) {
         if (lcd_graph_range_index < 4u) {
             const uint8_t seconds = seconds_table[lcd_graph_range_index];
-            line[0] = (char)('0' + seconds / 10u);
-            line[1] = (char)('0' + seconds % 10u);
+            lcd_write_two_digits(line, seconds);
             line[2] = 's';
         } else {
             const uint8_t minutes = minute_table[lcd_graph_range_index - 4u];
@@ -3167,8 +3161,7 @@ static void lcd_graph_prepare_header(void)
                 line[0] = (char)('0' + minutes);
                 line[1] = 'm';
             } else {
-                line[0] = (char)('0' + minutes / 10u);
-                line[1] = (char)('0' + minutes % 10u);
+                lcd_write_two_digits(line, minutes);
                 line[2] = 'm';
             }
         }
@@ -3187,33 +3180,24 @@ static void lcd_graph_prepare_header(void)
                 lcd_graph_selected_time, &calendar);
             if (lcd_graph_log_type == 1u) {
                 /* MIN: DD hh:mm */
-                line[0] = (char)('0' + calendar.day / 10u);
-                line[1] = (char)('0' + calendar.day % 10u);
-                line[3] = (char)('0' + calendar.hour / 10u);
-                line[4] = (char)('0' + calendar.hour % 10u);
+                lcd_write_two_digits(&line[0], calendar.day);
+                lcd_write_two_digits(&line[3], calendar.hour);
                 line[5] = ':';
-                line[6] = (char)('0' + calendar.minute / 10u);
-                line[7] = (char)('0' + calendar.minute % 10u);
+                lcd_write_two_digits(&line[6], calendar.minute);
             } else if (lcd_graph_log_type == 2u) {
                 /* HOUR: MM-DD hh */
-                line[0] = (char)('0' + calendar.month / 10u);
-                line[1] = (char)('0' + calendar.month % 10u);
+                lcd_write_two_digits(&line[0], calendar.month);
                 line[2] = '-';
-                line[3] = (char)('0' + calendar.day / 10u);
-                line[4] = (char)('0' + calendar.day % 10u);
-                line[6] = (char)('0' + calendar.hour / 10u);
-                line[7] = (char)('0' + calendar.hour % 10u);
+                lcd_write_two_digits(&line[3], calendar.day);
+                lcd_write_two_digits(&line[6], calendar.hour);
             } else {
                 /* DAY: YY-MM-DD */
                 const uint8_t year = (uint8_t)(calendar.year % 100u);
-                line[0] = (char)('0' + year / 10u);
-                line[1] = (char)('0' + year % 10u);
+                lcd_write_two_digits(&line[0], year);
                 line[2] = '-';
-                line[3] = (char)('0' + calendar.month / 10u);
-                line[4] = (char)('0' + calendar.month % 10u);
+                lcd_write_two_digits(&line[3], calendar.month);
                 line[5] = '-';
-                line[6] = (char)('0' + calendar.day / 10u);
-                line[7] = (char)('0' + calendar.day % 10u);
+                lcd_write_two_digits(&line[6], calendar.day);
             }
         } else {
             memcpy(line, "UP   ", 5u);
@@ -3468,11 +3452,9 @@ settings_line_draw:
                 if (lcd_text_glyph_index == 1u) {
                     rtc_calendar_t calendar;
                     if (rtc_time_valid && rtc_read_calendar(&calendar)) {
-                        clock_text[0] = (char)('0' + calendar.hour / 10u);
-                        clock_text[1] = (char)('0' + calendar.hour % 10u);
+                        lcd_write_two_digits(&clock_text[0], calendar.hour);
                         clock_text[2] = ':';
-                        clock_text[3] = (char)('0' + calendar.minute / 10u);
-                        clock_text[4] = (char)('0' + calendar.minute % 10u);
+                        lcd_write_two_digits(&clock_text[3], calendar.minute);
                     } else {
                         clock_text[0] = '-'; clock_text[1] = '-';
                         clock_text[2] = ':';
@@ -4195,209 +4177,18 @@ static void lcd_debug_probe_spi(void)
     }
 }
 
-#define SETTINGS_EEPROM_LEGACY_SLOT_SIZE 5u
-#define SETTINGS_EEPROM_V2_BASE 16u
-#define SETTINGS_EEPROM_V2_SLOT_SIZE 7u
-#define SETTINGS_EEPROM_V3_BASE 32u
-#define SETTINGS_EEPROM_V3_SLOT_SIZE 9u
-#define SETTINGS_TIMER_EEPROM_BASE 64u
-#define SETTINGS_TIMER_EEPROM_SLOT_SIZE 4u
-#define SETTINGS_ALARM_EEPROM_BASE 80u
-#define SETTINGS_ALARM_EEPROM_SLOT_SIZE 5u
-#define SETTINGS_HV_EEPROM_BASE 96u
-#define SETTINGS_HV_EEPROM_SLOT_SIZE 4u
-#define SETTINGS_LIGHT_ALARM_EEPROM_BASE 104u
-#define SETTINGS_LIGHT_ALARM_EEPROM_SLOT_SIZE 4u
-#define SETTINGS_DOSE_ALARM_EEPROM_BASE 112u
-#define SETTINGS_DOSE_ALARM_EEPROM_SLOT_SIZE 4u
-#define SETTINGS_ROW_EEPROM_BASE 50u
-#define SETTINGS_ROW_EEPROM_SLOT_SIZE 6u
-#define SETTINGS_ROW_EEPROM_MAGIC 0xC8u
-#define SETTINGS_ROW_EEPROM_LEGACY_MAGIC 0xBDu
-#define SETTINGS_EEPROM_MAGIC 0xA7u
-#define SETTINGS_EEPROM_V2_MAGIC 0xA8u
-#define SETTINGS_EEPROM_V3_MAGIC 0xA9u
-#define SETTINGS_EEPROM_V4_MAGIC 0xAAu
-#define SETTINGS_TIMER_EEPROM_MAGIC 0xB1u
-#define SETTINGS_ALARM_EEPROM_MAGIC 0xB2u
-#define SETTINGS_ALARM_V2_EEPROM_MAGIC 0xB7u
-#define SETTINGS_HV_EEPROM_MAGIC 0xB3u
-#define SETTINGS_LIGHT_ALARM_EEPROM_MAGIC 0xB4u
-#define SETTINGS_DOSE_ALARM_EEPROM_MAGIC 0xB5u
+#define SETTINGS_EEPROM_BASE 160u
+#define SETTINGS_EEPROM_SLOT_SIZE (8u + SETTING_COUNT)
+#define SETTINGS_EEPROM_MAGIC 0xD4u
+#define SETTINGS_EEPROM_MASK_OFFSET (2u + SETTING_COUNT)
+#define SETTINGS_EEPROM_SOURCE_OFFSET (SETTINGS_EEPROM_MASK_OFFSET + 4u)
+#define SETTINGS_EEPROM_CRC_OFFSET (SETTINGS_EEPROM_SOURCE_OFFSET + 1u)
 
-static uint8_t settings_record_crc(uint8_t sequence, uint8_t lead_zero,
-                                   uint8_t unit, uint8_t rate_prefix,
-                                   uint8_t dose_prefix)
+static uint8_t settings_next_slot(bool valid0, const uint8_t *sequence0,
+                                  bool valid1, const uint8_t *sequence1)
 {
-    return (uint8_t)(0x5Du ^ sequence ^ lead_zero ^ unit ^
-        (rate_prefix * 17u) ^ (dose_prefix * 31u));
-}
-
-static bool settings_v2_record_read(uint8_t slot, uint8_t *sequence,
-                                    uint8_t *lead_zero, uint8_t *unit,
-                                    uint8_t *rate_prefix, uint8_t *dose_prefix)
-{
-    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
-        DATA_EEPROM_BASE + SETTINGS_EEPROM_V2_BASE +
-        slot * SETTINGS_EEPROM_V2_SLOT_SIZE);
-    const uint8_t magic = record[0];
-    *sequence = record[1];
-    *lead_zero = record[2];
-    *unit = record[3];
-    *rate_prefix = record[4];
-    *dose_prefix = record[5];
-    return magic == SETTINGS_EEPROM_V2_MAGIC && *lead_zero < 2u &&
-        *unit < 3u && *rate_prefix < (*unit == 1u ? 2u : 4u) &&
-        *dose_prefix < (*unit == 1u ? 2u : 4u) &&
-        record[6] == settings_record_crc(*sequence, *lead_zero, *unit,
-            *rate_prefix, *dose_prefix);
-}
-
-static uint8_t settings_v3_crc(uint8_t sequence, uint8_t lead_zero,
-                               uint8_t unit, uint8_t rate_prefix,
-                               uint8_t dose_prefix, uint8_t led_brightness,
-                               uint8_t screen_brightness)
-{
-    return (uint8_t)(settings_record_crc(sequence, lead_zero, unit,
-        rate_prefix, dose_prefix) ^ (led_brightness * 13u) ^
-        (screen_brightness * 23u));
-}
-
-static uint8_t settings_row_crc(uint8_t sequence, uint8_t rate_row,
-                                uint8_t dose_row, uint8_t dose_period)
-{
-    return (uint8_t)(0x6Bu ^ (sequence * 3u) ^ (rate_row * 7u) ^
-        (dose_row * 11u) ^ (dose_period * 17u));
-}
-
-static bool settings_row_record_read(uint8_t slot, uint8_t *sequence,
-                                     uint8_t *rate_row, uint8_t *dose_row,
-                                     uint8_t *dose_period, bool *legacy)
-{
-    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
-        DATA_EEPROM_BASE + SETTINGS_ROW_EEPROM_BASE +
-        slot * SETTINGS_ROW_EEPROM_SLOT_SIZE);
-    *sequence = record[1];
-    *rate_row = record[2];
-    *dose_row = record[3];
-    *dose_period = record[4];
-    const bool old_format = record[0] == SETTINGS_ROW_EEPROM_LEGACY_MAGIC;
-    if (legacy != NULL) *legacy = old_format;
-    return (record[0] == SETTINGS_ROW_EEPROM_MAGIC && *rate_row < 5u &&
-            *dose_row < 7u && *dose_period < 3u &&
-            record[5] == settings_row_crc(*sequence, *rate_row, *dose_row,
-                *dose_period)) ||
-        (old_format && *rate_row < 9u && *dose_row < 4u &&
-            *dose_period < 3u && record[5] == settings_row_crc(*sequence,
-                *rate_row, *dose_row, *dose_period));
-}
-
-static bool settings_eeprom_write_byte(uint16_t offset, uint8_t value);
-static bool settings_row_save(void);
-
-static void settings_row_load(void)
-{
-    uint8_t seq0, rate0, dose0, period0;
-    uint8_t seq1, rate1, dose1, period1;
-    bool legacy0, legacy1;
-    const bool valid0 = settings_row_record_read(0u, &seq0, &rate0,
-        &dose0, &period0, &legacy0);
-    const bool valid1 = settings_row_record_read(1u, &seq1, &rate1,
-        &dose1, &period1, &legacy1);
-    if (!valid0 && !valid1) return;
-    const bool use1 = valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0);
-    lcd_row_settings_sequence = use1 ? seq1 : seq0;
-    const bool legacy = use1 ? legacy1 : legacy0;
-    lcd_settings_value_index[SETTING_RATE_ROW_2] = use1 ? rate1 : rate0;
-    lcd_settings_value_index[SETTING_DOSE_ROW_2] = use1 ? dose1 : dose0;
-    lcd_settings_value_index[SETTING_DOSE_PERIOD] = use1 ? period1 : period0;
-    if (legacy && lcd_settings_value_index[SETTING_RATE_ROW_2] >= 3u)
-        lcd_settings_value_index[SETTING_RATE_ROW_2] = 0u;
-    if (lcd_settings_value_index[SETTING_RATE_ROW_2] >=
-            lcd_settings_value_count(SETTING_RATE_ROW_2)) {
-        lcd_settings_value_index[SETTING_RATE_ROW_2] = 0u;
-    }
-    if (lcd_settings_value_index[SETTING_DOSE_ROW_2] >=
-            lcd_settings_value_count(SETTING_DOSE_ROW_2)) {
-        lcd_settings_value_index[SETTING_DOSE_ROW_2] = 0u;
-    }
-    if (legacy) (void)settings_row_save();
-}
-
-static bool settings_row_save(void)
-{
-    uint8_t seq0, rate0, dose0, period0;
-    uint8_t seq1, rate1, dose1, period1;
-    const bool valid0 = settings_row_record_read(0u, &seq0, &rate0,
-        &dose0, &period0, NULL);
-    const bool valid1 = settings_row_record_read(1u, &seq1, &rate1,
-        &dose1, &period1, NULL);
-    const uint8_t current = valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0) ?
-        1u : 0u;
-    const uint8_t target = (valid0 || valid1) ? (uint8_t)(current ^ 1u) : 0u;
-    const uint8_t sequence = (uint8_t)(lcd_row_settings_sequence + 1u);
-    const uint8_t base = (uint8_t)(SETTINGS_ROW_EEPROM_BASE +
-        target * SETTINGS_ROW_EEPROM_SLOT_SIZE);
-    const uint8_t rate_row = lcd_settings_value_index[SETTING_RATE_ROW_2];
-    const uint8_t dose_row = lcd_settings_value_index[SETTING_DOSE_ROW_2];
-    const uint8_t period = lcd_settings_value_index[SETTING_DOSE_PERIOD];
-    if (!settings_eeprom_write_byte(base, 0u) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 1u), sequence) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 2u), rate_row) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 3u), dose_row) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 4u), period) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 5u),
-            settings_row_crc(sequence, rate_row, dose_row, period)) ||
-        !settings_eeprom_write_byte(base, SETTINGS_ROW_EEPROM_MAGIC)) {
-        return false;
-    }
-    lcd_row_settings_sequence = sequence;
-    return true;
-}
-
-static bool settings_v3_record_read(uint8_t slot, uint8_t *sequence,
-                                    uint8_t *lead_zero, uint8_t *unit,
-                                    uint8_t *rate_prefix, uint8_t *dose_prefix,
-                                    uint8_t *led_brightness,
-                                    uint8_t *screen_brightness,
-                                    uint8_t *led_time)
-{
-    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
-        DATA_EEPROM_BASE + SETTINGS_EEPROM_V3_BASE +
-        slot * SETTINGS_EEPROM_V3_SLOT_SIZE);
-    *sequence = record[1];
-    *lead_zero = record[2];
-    *unit = record[3];
-    *rate_prefix = record[4];
-    *dose_prefix = record[5];
-    const uint8_t magic = record[0];
-    const uint8_t led_record = record[6];
-    *led_brightness = magic == SETTINGS_EEPROM_V4_MAGIC ?
-        (uint8_t)(led_record & 0x0Fu) : led_record;
-    *led_time = magic == SETTINGS_EEPROM_V4_MAGIC ?
-        (uint8_t)(led_record >> 4) : 0u;
-    *screen_brightness = record[7];
-    return (magic == SETTINGS_EEPROM_V3_MAGIC ||
-            magic == SETTINGS_EEPROM_V4_MAGIC) && *lead_zero < 2u &&
-        *unit < 3u && *rate_prefix < (*unit == 1u ? 2u : 4u) &&
-        *dose_prefix < (*unit == 1u ? 2u : 4u) &&
-        *led_brightness < 9u && *screen_brightness < 9u && *led_time < 9u &&
-        record[8] == settings_v3_crc(*sequence, *lead_zero, *unit,
-            *rate_prefix, *dose_prefix, magic == SETTINGS_EEPROM_V4_MAGIC ?
-                led_record : *led_brightness, *screen_brightness);
-}
-
-static bool settings_legacy_record_read(uint8_t slot, uint8_t *sequence,
-                                        uint8_t *lead_zero, uint8_t *unit)
-{
-    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
-        DATA_EEPROM_BASE + slot * SETTINGS_EEPROM_LEGACY_SLOT_SIZE);
-    *sequence = record[1];
-    *lead_zero = record[2];
-    *unit = record[3];
-    return record[0] == SETTINGS_EEPROM_MAGIC && *lead_zero < 2u &&
-        *unit < 3u && record[4] == (uint8_t)(0x5Du ^ *sequence ^
-            *lead_zero ^ *unit);
+    return valid1 && (!valid0 || (int8_t)(*sequence1 - *sequence0) > 0) ?
+        0u : (valid0 ? 1u : 0u);
 }
 
 static bool settings_eeprom_write_byte(uint16_t offset, uint8_t value)
@@ -4406,7 +4197,6 @@ static bool settings_eeprom_write_byte(uint16_t offset, uint8_t value)
     volatile uint8_t *address = (volatile uint8_t *)(uintptr_t)(
         DATA_EEPROM_BASE + offset);
     uint32_t timeout = 1000000u;
-
     while ((FLASH_SR & FLASH_SR_BSY) != 0u && --timeout != 0u) { }
     if (timeout == 0u) return false;
     if ((FLASH_PECR & FLASH_PECR_PELOCK) != 0u) {
@@ -4442,28 +4232,6 @@ static bool board_eeprom_clear_all(void)
     return true;
 }
 
-#define SETTINGS_CLICKS_EEPROM_BASE 120u
-#define SETTINGS_CLICKS_MAGIC 0xB6u
-#define SETTINGS_CLICK_TONE_EEPROM_BASE 124u
-#define SETTINGS_CLICK_TONE_MAGIC 0xB8u
-#define SETTINGS_SOUND_ALARM_EEPROM_BASE 128u
-#define SETTINGS_SOUND_ALARM_MAGIC 0xB9u
-#define SETTINGS_ALARM_STOP_EEPROM_BASE 132u
-#define SETTINGS_ALARM_STOP_MAGIC 0xBAu
-#define SETTINGS_SPI_EEPROM_BASE 136u
-#define SETTINGS_SPI_EEPROM_MAGIC 0xBCu
-#define SETTINGS_LONG_PRESS_EEPROM_BASE 77u
-#define SETTINGS_LONG_PRESS_LEGACY_EEPROM_BASE 140u
-#define SETTINGS_LONG_PRESS_MAGIC 0xBDu
-#define SETTINGS_RATE_CUSTOM_EEPROM_BASE 144u
-#define SETTINGS_RATE_CUSTOM_MAGIC 0xC1u
-#define SETTINGS_DOSE_SCREEN_EEPROM_BASE 147u
-#define SETTINGS_DOSE_LIGHT_EEPROM_BASE 150u
-#define SETTINGS_DOSE_SOUND_EEPROM_BASE 153u
-#define SETTINGS_VISIBILITY_EEPROM_BASE 72u
-#define SETTINGS_VISIBILITY_MAGIC 0xC7u
-#define SETTINGS_VISIBILITY_OLD_MAGIC 0xC6u
-static bool settings_visibility_save(uint32_t mask);
 static uint32_t settings_visibility_default_mask(void)
 {
     return (1UL << SETTING_RATE_CUSTOM) |
@@ -4483,137 +4251,112 @@ static uint32_t settings_visibility_default_mask(void)
         (1UL << SETTING_REBOOT);
 }
 
-static bool settings_value_read(uint16_t offset, uint8_t magic, uint8_t salt,
-                                 uint8_t count, uint8_t *value)
+static uint8_t settings_record_crc(const uint8_t *record)
 {
-    uint8_t stored_magic, stored_value, stored_crc;
-    if (!board_eeprom_read(offset, &stored_magic) ||
-        !board_eeprom_read(offset + 1u, &stored_value) ||
-        !board_eeprom_read(offset + 2u, &stored_crc) ||
-        stored_magic != magic || stored_value >= count ||
-        stored_crc != (uint8_t)(salt ^ stored_value)) return false;
-    *value = stored_value;
+    uint8_t crc = 0x6Du;
+    for (uint8_t i = 1u; i < SETTINGS_EEPROM_CRC_OFFSET; ++i) {
+        crc = (uint8_t)((crc << 1u) | (crc >> 7u));
+        crc ^= record[i];
+    }
+    return crc;
+}
+
+static bool settings_record_read(uint8_t slot, uint8_t *record)
+{
+    const uint16_t base = (uint16_t)(SETTINGS_EEPROM_BASE +
+        slot * SETTINGS_EEPROM_SLOT_SIZE);
+    const volatile uint8_t *stored = (const volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + base);
+    for (uint8_t i = 0u; i < SETTINGS_EEPROM_SLOT_SIZE; ++i) {
+        record[i] = stored[i];
+    }
+    if (record[0] != SETTINGS_EEPROM_MAGIC ||
+        record[SETTINGS_EEPROM_CRC_OFFSET] != settings_record_crc(record)) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < SETTING_COUNT; ++i) {
+        if (record[2u + i] >= lcd_settings_value_counts[i]) return false;
+    }
+    if (record[2u + SETTING_UNIT] == 1u &&
+        (record[2u + SETTING_RATE_PREFIX] >= 2u ||
+         record[2u + SETTING_DOSE_PREFIX] >= 2u)) return false;
+    if (record[2u + SETTING_RATE_ROW_2] >=
+            (record[2u + SETTING_UNIT] == 1u ? 5u : 4u) ||
+        record[2u + SETTING_DOSE_ROW_2] >= 7u ||
+        record[SETTINGS_EEPROM_SOURCE_OFFSET] > BOARD_LOG_MEMORY_SPI) {
+        return false;
+    }
     return true;
 }
 
-static bool settings_value_write(uint16_t offset, uint8_t magic, uint8_t salt,
-                                  uint8_t value)
+static bool settings_eeprom_save(void)
 {
-    return board_eeprom_write(offset, 0u) &&
-        board_eeprom_write(offset + 1u, value) &&
-        board_eeprom_write(offset + 2u, (uint8_t)(salt ^ value)) &&
-        board_eeprom_write(offset, magic);
+    uint8_t record0[SETTINGS_EEPROM_SLOT_SIZE];
+    uint8_t record1[SETTINGS_EEPROM_SLOT_SIZE];
+    const bool valid0 = settings_record_read(0u, record0);
+    const bool valid1 = settings_record_read(1u, record1);
+    const uint8_t target = settings_next_slot(valid0, &record0[1],
+        valid1, &record1[1]);
+    const uint8_t sequence = (uint8_t)(lcd_settings_sequence + 1u);
+    const uint16_t base = (uint16_t)(SETTINGS_EEPROM_BASE +
+        target * SETTINGS_EEPROM_SLOT_SIZE);
+    uint8_t record[SETTINGS_EEPROM_SLOT_SIZE];
+    record[0] = SETTINGS_EEPROM_MAGIC;
+    record[1] = sequence;
+    for (uint8_t i = 0u; i < SETTING_COUNT; ++i) {
+        record[2u + i] = lcd_settings_value_index[i];
+    }
+    for (uint8_t i = 0u; i < 4u; ++i) {
+        record[SETTINGS_EEPROM_MASK_OFFSET + i] =
+            (uint8_t)(lcd_settings_hidden_mask >> (8u * i));
+    }
+    record[SETTINGS_EEPROM_SOURCE_OFFSET] = settings_log_source;
+    record[SETTINGS_EEPROM_CRC_OFFSET] = settings_record_crc(record);
+    if (!settings_eeprom_write_byte(base, 0u)) return false;
+    for (uint8_t i = 1u; i < SETTINGS_EEPROM_SLOT_SIZE; ++i) {
+        if (!settings_eeprom_write_byte((uint16_t)(base + i), record[i])) {
+            return false;
+        }
+    }
+    if (!settings_eeprom_write_byte(base, SETTINGS_EEPROM_MAGIC)) return false;
+    lcd_settings_sequence = sequence;
+    return true;
 }
 
-static void settings_visibility_load(void)
+static void settings_eeprom_load(void)
 {
-    uint8_t magic;
-    uint8_t bytes[4];
-    if (!board_eeprom_read(SETTINGS_VISIBILITY_EEPROM_BASE, &magic) ||
-        (magic != SETTINGS_VISIBILITY_MAGIC &&
-         magic != SETTINGS_VISIBILITY_OLD_MAGIC)) {
+    uint8_t record0[SETTINGS_EEPROM_SLOT_SIZE];
+    uint8_t record1[SETTINGS_EEPROM_SLOT_SIZE];
+    const bool valid0 = settings_record_read(0u, record0);
+    const bool valid1 = settings_record_read(1u, record1);
+    if (!valid0 && !valid1) {
         lcd_settings_hidden_mask = settings_visibility_default_mask();
         return;
     }
-    for (uint8_t i = 0u; i < 4u; ++i) {
-        if (!board_eeprom_read((uint16_t)(SETTINGS_VISIBILITY_EEPROM_BASE + 1u + i),
-                &bytes[i])) return;
+    const uint8_t *record = valid1 && (!valid0 ||
+        (int8_t)(record1[1] - record0[1]) > 0) ? record1 : record0;
+    lcd_settings_sequence = record[1];
+    for (uint8_t i = 0u; i < SETTING_COUNT; ++i) {
+        lcd_settings_value_index[i] = record[2u + i];
     }
-    lcd_settings_hidden_mask = (uint32_t)bytes[0] |
-        ((uint32_t)bytes[1] << 8u) | ((uint32_t)bytes[2] << 16u) |
-        ((uint32_t)bytes[3] << 24u);
+    lcd_settings_hidden_mask = (uint32_t)record[SETTINGS_EEPROM_MASK_OFFSET] |
+        ((uint32_t)record[SETTINGS_EEPROM_MASK_OFFSET + 1u] << 8u) |
+        ((uint32_t)record[SETTINGS_EEPROM_MASK_OFFSET + 2u] << 16u) |
+        ((uint32_t)record[SETTINGS_EEPROM_MASK_OFFSET + 3u] << 24u);
     lcd_settings_hidden_mask &= ((1UL << SETTING_COUNT) - 1UL);
-    if (magic == SETTINGS_VISIBILITY_OLD_MAGIC) {
-        lcd_settings_hidden_mask |= 0x071A4D00u;
-        (void)settings_visibility_save(lcd_settings_hidden_mask);
-    }
     if (!lcd_settings_has_visible_non_dose_prefix(lcd_settings_hidden_mask)) {
         lcd_settings_hidden_mask = settings_visibility_default_mask();
     }
+    settings_log_source = record[SETTINGS_EEPROM_SOURCE_OFFSET];
+    settings_log_memory = lcd_settings_value_index[SETTING_USE_SPI];
+    settings_spi_enabled = settings_log_memory == BOARD_LOG_MEMORY_SPI;
 }
 
-static bool settings_visibility_save(uint32_t mask)
+static bool settings_spi_apply(void)
 {
-    if (!settings_eeprom_write_byte(SETTINGS_VISIBILITY_EEPROM_BASE, 0u)) {
-        return false;
-    }
-    for (uint8_t i = 0u; i < 4u; ++i) {
-        if (!settings_eeprom_write_byte(
-                (uint16_t)(SETTINGS_VISIBILITY_EEPROM_BASE + 1u + i),
-                (uint8_t)(mask >> (8u * i)))) return false;
-    }
-    return settings_eeprom_write_byte(SETTINGS_VISIBILITY_EEPROM_BASE,
-        SETTINGS_VISIBILITY_MAGIC);
-}
-
-static void settings_rate_custom_load(void)
-{
-    (void)settings_value_read(SETTINGS_RATE_CUSTOM_EEPROM_BASE,
-        SETTINGS_RATE_CUSTOM_MAGIC, 0xD1u, 9u,
-        &lcd_settings_value_index[SETTING_RATE_CUSTOM]);
-}
-
-static void settings_rate_custom_save(void)
-{
-    (void)settings_value_write(SETTINGS_RATE_CUSTOM_EEPROM_BASE,
-        SETTINGS_RATE_CUSTOM_MAGIC, 0xD1u,
-        lcd_settings_value_index[SETTING_RATE_CUSTOM]);
-}
-
-static void settings_dose_actions_load(void)
-{
-    (void)settings_value_read(SETTINGS_DOSE_SCREEN_EEPROM_BASE,
-        0xC2u, 0xD2u, 4u, &lcd_settings_value_index[SETTING_DOSE_SCREEN]);
-    (void)settings_value_read(SETTINGS_DOSE_LIGHT_EEPROM_BASE,
-        0xC3u, 0xD3u, 4u, &lcd_settings_value_index[SETTING_DOSE_LIGHT]);
-    (void)settings_value_read(SETTINGS_DOSE_SOUND_EEPROM_BASE,
-        0xC4u, 0xD4u, 4u, &lcd_settings_value_index[SETTING_DOSE_SOUND]);
-}
-
-static void settings_dose_action_save(uint8_t setting)
-{
-    if (setting == SETTING_DOSE_SCREEN) {
-        (void)settings_value_write(SETTINGS_DOSE_SCREEN_EEPROM_BASE,
-            0xC2u, 0xD2u, lcd_settings_value_index[SETTING_DOSE_SCREEN]);
-    } else if (setting == SETTING_DOSE_LIGHT) {
-        (void)settings_value_write(SETTINGS_DOSE_LIGHT_EEPROM_BASE,
-            0xC3u, 0xD3u, lcd_settings_value_index[SETTING_DOSE_LIGHT]);
-    } else if (setting == SETTING_DOSE_SOUND) {
-        (void)settings_value_write(SETTINGS_DOSE_SOUND_EEPROM_BASE,
-            0xC4u, 0xD4u, lcd_settings_value_index[SETTING_DOSE_SOUND]);
-    }
-}
-
-static void settings_clicks_load(void)
-{
-    (void)settings_value_read(SETTINGS_CLICKS_EEPROM_BASE,
-        SETTINGS_CLICKS_MAGIC, 0x6Du, 6u,
-        &lcd_settings_value_index[SETTING_CLICKS]);
-}
-
-static void settings_clicks_save(void)
-{
-    (void)settings_value_write(SETTINGS_CLICKS_EEPROM_BASE,
-        SETTINGS_CLICKS_MAGIC, 0x6Du, lcd_settings_value_index[SETTING_CLICKS]);
-}
-
-static void settings_spi_load(void)
-{
-    uint8_t value;
-    if (settings_value_read(SETTINGS_SPI_EEPROM_BASE, SETTINGS_SPI_EEPROM_MAGIC, 0xA5u, 4u, &value)) {
-        settings_log_memory = value < 2u ? value : BOARD_LOG_MEMORY_OFF;
-        settings_log_source = value & 1u;
-        lcd_settings_value_index[SETTING_USE_SPI] = settings_log_memory;
-        settings_spi_enabled = settings_log_memory == BOARD_LOG_MEMORY_SPI;
-    }
-}
-
-static bool settings_spi_save(void)
-{
-    uint8_t target = lcd_settings_value_index[SETTING_USE_SPI];
-    uint8_t source = target < 2u ? target : settings_log_source;
-    if (!log_writer_change_memory(target) || !settings_value_write(SETTINGS_SPI_EEPROM_BASE,
-            SETTINGS_SPI_EEPROM_MAGIC, 0xA5u, target == BOARD_LOG_MEMORY_OFF ? (uint8_t)(2u + source) : target)) {
+    const uint8_t target = lcd_settings_value_index[SETTING_USE_SPI];
+    const uint8_t source = target < 2u ? target : settings_log_source;
+    if (!log_writer_change_memory(target)) {
         lcd_settings_value_index[SETTING_USE_SPI] = settings_log_memory;
         return false;
     }
@@ -4624,511 +4367,12 @@ static bool settings_spi_save(void)
     return true;
 }
 
-static bool settings_long_press_save(void);
-
-static void settings_long_press_load(void)
-{
-    const uint8_t count = (uint8_t)(sizeof(long_press_milliseconds) /
-                                    sizeof(long_press_milliseconds[0]));
-    if (settings_value_read(SETTINGS_LONG_PRESS_EEPROM_BASE,
-            SETTINGS_LONG_PRESS_MAGIC, 0x37u, count,
-            &lcd_settings_value_index[SETTING_LONG_PRESS])) {
-        return;
-    }
-
-    if (settings_value_read(SETTINGS_LONG_PRESS_LEGACY_EEPROM_BASE,
-            SETTINGS_LONG_PRESS_MAGIC, 0x37u, count,
-            &lcd_settings_value_index[SETTING_LONG_PRESS])) {
-        (void)settings_long_press_save();
-        return;
-    }
-
-    /* Migrate the previous 500/800/1000/1200/1500 ms option index. */
-    uint8_t old_index;
-    if (settings_value_read(SETTINGS_LONG_PRESS_LEGACY_EEPROM_BASE,
-            SETTINGS_LONG_PRESS_MAGIC, 0x36u, 5u, &old_index)) {
-        static const uint8_t migrated_index[] = { 1u, 3u, 3u, 4u, 5u };
-        lcd_settings_value_index[SETTING_LONG_PRESS] =
-            migrated_index[old_index];
-        (void)settings_long_press_save();
-    }
-}
-
-static bool settings_long_press_save(void)
-{
-    return settings_value_write(SETTINGS_LONG_PRESS_EEPROM_BASE,
-        SETTINGS_LONG_PRESS_MAGIC, 0x37u,
-        lcd_settings_value_index[SETTING_LONG_PRESS]);
-}
-
 static uint16_t settings_long_press_ms(void)
 {
     const uint8_t index = lcd_settings_value_index[SETTING_LONG_PRESS];
     const uint8_t count = (uint8_t)(sizeof(long_press_milliseconds) /
                                     sizeof(long_press_milliseconds[0]));
     return long_press_milliseconds[index < count ? index : 3u];
-}
-
-/* Keep legacy EEPROM ordering: old index 1 was MODERN, index 2 CLASSIC. */
-static uint8_t settings_tone_swap(uint8_t value)
-{
-    return value == 1u ? 2u : (value == 2u ? 1u : 0u);
-}
-
-static void settings_click_tone_load(void)
-{
-    uint8_t value;
-    if (settings_value_read(SETTINGS_CLICK_TONE_EEPROM_BASE,
-            SETTINGS_CLICK_TONE_MAGIC, 0x73u, 3u, &value)) {
-        value = settings_tone_swap(value);
-        lcd_settings_value_index[SETTING_TONE] = value == 1u ? 0u : value;
-    }
-}
-
-static void settings_click_tone_save(void)
-{
-    (void)settings_value_write(SETTINGS_CLICK_TONE_EEPROM_BASE,
-        SETTINGS_CLICK_TONE_MAGIC, 0x73u,
-        settings_tone_swap(lcd_settings_value_index[SETTING_TONE]));
-}
-
-static void settings_sound_alarm_load(void)
-{
-    (void)settings_value_read(SETTINGS_SOUND_ALARM_EEPROM_BASE,
-        SETTINGS_SOUND_ALARM_MAGIC, 0x85u, 4u,
-        &lcd_settings_value_index[SETTING_RATE_SOUND]);
-}
-
-static void settings_sound_alarm_save(void)
-{
-    (void)settings_value_write(SETTINGS_SOUND_ALARM_EEPROM_BASE,
-        SETTINGS_SOUND_ALARM_MAGIC, 0x85u,
-        lcd_settings_value_index[SETTING_RATE_SOUND]);
-}
-
-static void settings_alarm_stop_load(void)
-{
-    (void)settings_value_read(SETTINGS_ALARM_STOP_EEPROM_BASE,
-        SETTINGS_ALARM_STOP_MAGIC, 0xA7u, 2u,
-        &lcd_settings_value_index[SETTING_ALARM_STOP]);
-}
-
-static void settings_alarm_stop_save(void)
-{
-    (void)settings_value_write(SETTINGS_ALARM_STOP_EEPROM_BASE,
-        SETTINGS_ALARM_STOP_MAGIC, 0xA7u,
-        lcd_settings_value_index[SETTING_ALARM_STOP]);
-}
-
-static bool settings_timer_record_read(uint8_t slot, uint8_t *sequence,
-                                       uint8_t *timer_index)
-{
-    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
-        DATA_EEPROM_BASE + SETTINGS_TIMER_EEPROM_BASE +
-        slot * SETTINGS_TIMER_EEPROM_SLOT_SIZE);
-    *sequence = record[1];
-    *timer_index = record[2];
-    return record[0] == SETTINGS_TIMER_EEPROM_MAGIC && *timer_index < 6u &&
-        record[3] == (uint8_t)(0x6Bu ^ *sequence ^ (*timer_index * 29u));
-}
-
-static void settings_timer_load(void)
-{
-    uint8_t seq0, timer0, seq1, timer1;
-    const bool valid0 = settings_timer_record_read(0u, &seq0, &timer0);
-    const bool valid1 = settings_timer_record_read(1u, &seq1, &timer1);
-
-    if (valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0)) {
-        lcd_timer_sequence = seq1;
-        lcd_settings_value_index[SETTING_SCREEN_TIMER] = timer1;
-    } else if (valid0) {
-        lcd_timer_sequence = seq0;
-        lcd_settings_value_index[SETTING_SCREEN_TIMER] = timer0;
-    }
-}
-
-static bool settings_timer_save(void)
-{
-    uint8_t seq0, timer0, seq1, timer1;
-    const bool valid0 = settings_timer_record_read(0u, &seq0, &timer0);
-    const bool valid1 = settings_timer_record_read(1u, &seq1, &timer1);
-    const uint8_t current_slot = valid1 &&
-        (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
-    const uint8_t target_slot = (valid0 || valid1) ?
-        (uint8_t)(current_slot ^ 1u) : 0u;
-    const uint8_t sequence = (uint8_t)(lcd_timer_sequence + 1u);
-    const uint8_t timer_index = lcd_settings_value_index[SETTING_SCREEN_TIMER];
-    const uint8_t base = (uint8_t)(SETTINGS_TIMER_EEPROM_BASE +
-        target_slot * SETTINGS_TIMER_EEPROM_SLOT_SIZE);
-
-    if (!settings_eeprom_write_byte(base, 0u) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 1u), sequence) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 2u), timer_index) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 3u),
-            (uint8_t)(0x6Bu ^ sequence ^ (timer_index * 29u))) ||
-        !settings_eeprom_write_byte(base, SETTINGS_TIMER_EEPROM_MAGIC)) {
-        return false;
-    }
-    lcd_timer_sequence = sequence;
-    return true;
-}
-
-static bool settings_alarm_record_read(uint8_t slot, uint8_t *sequence,
-                                       uint8_t *led_mode,
-                                       uint8_t *screen_alarm)
-{
-    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
-        DATA_EEPROM_BASE + SETTINGS_ALARM_EEPROM_BASE +
-        slot * SETTINGS_ALARM_EEPROM_SLOT_SIZE);
-    *sequence = record[1];
-    *led_mode = record[2];
-    *screen_alarm = record[3];
-    if (*screen_alarm >= 4u || record[4] != (uint8_t)(0x39u ^ *sequence ^
-        (*led_mode * 17u) ^ (*screen_alarm * 29u))) return false;
-    if (record[0] == SETTINGS_ALARM_V2_EEPROM_MAGIC) return *led_mode < 6u;
-    if (record[0] == SETTINGS_ALARM_EEPROM_MAGIC && *led_mode < 3u) {
-        /* Migrate old order ALWAYS/ON/OFF to OFF/ON/ALWAYS. */
-        *led_mode = *led_mode == 0u ? 2u :
-            (*led_mode == 2u ? 0u : 1u);
-        return true;
-    }
-    return false;
-}
-
-static void settings_alarm_load(void)
-{
-    uint8_t seq0, led0, alarm0, seq1, led1, alarm1;
-    const bool valid0 = settings_alarm_record_read(0u, &seq0, &led0, &alarm0);
-    const bool valid1 = settings_alarm_record_read(1u, &seq1, &led1, &alarm1);
-
-    if (valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0)) {
-        lcd_alarm_sequence = seq1;
-        lcd_settings_value_index[SETTING_LED] = led1;
-        lcd_settings_value_index[SETTING_RATE_SCREEN] = alarm1;
-    } else if (valid0) {
-        lcd_alarm_sequence = seq0;
-        lcd_settings_value_index[SETTING_LED] = led0;
-        lcd_settings_value_index[SETTING_RATE_SCREEN] = alarm0;
-    }
-}
-
-static bool settings_alarm_save(void)
-{
-    uint8_t seq0, led0, alarm0, seq1, led1, alarm1;
-    const bool valid0 = settings_alarm_record_read(0u, &seq0, &led0, &alarm0);
-    const bool valid1 = settings_alarm_record_read(1u, &seq1, &led1, &alarm1);
-    const uint8_t current_slot = valid1 &&
-        (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
-    const uint8_t target_slot = (valid0 || valid1) ?
-        (uint8_t)(current_slot ^ 1u) : 0u;
-    const uint8_t sequence = (uint8_t)(lcd_alarm_sequence + 1u);
-    const uint8_t led_mode = lcd_settings_value_index[SETTING_LED];
-    const uint8_t screen_alarm = lcd_settings_value_index[SETTING_RATE_SCREEN];
-    const uint8_t base = (uint8_t)(SETTINGS_ALARM_EEPROM_BASE +
-        target_slot * SETTINGS_ALARM_EEPROM_SLOT_SIZE);
-
-    if (!settings_eeprom_write_byte(base, 0u) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 1u), sequence) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 2u), led_mode) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 3u), screen_alarm) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 4u),
-            (uint8_t)(0x39u ^ sequence ^ (led_mode * 17u) ^
-                (screen_alarm * 29u))) ||
-        !settings_eeprom_write_byte(base, SETTINGS_ALARM_V2_EEPROM_MAGIC)) {
-        return false;
-    }
-    lcd_alarm_sequence = sequence;
-    return true;
-}
-
-static bool settings_hv_record_read(uint8_t slot, uint8_t *sequence,
-                                    uint8_t *hv_mode)
-{
-    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
-        DATA_EEPROM_BASE + SETTINGS_HV_EEPROM_BASE +
-        slot * SETTINGS_HV_EEPROM_SLOT_SIZE);
-    *sequence = record[1];
-    *hv_mode = record[2];
-    return record[0] == SETTINGS_HV_EEPROM_MAGIC && *hv_mode < 2u &&
-        record[3] == (uint8_t)(0xC7u ^ *sequence ^ (*hv_mode * 53u));
-}
-
-static void settings_hv_load(void)
-{
-    uint8_t seq0, hv0, seq1, hv1;
-    const bool valid0 = settings_hv_record_read(0u, &seq0, &hv0);
-    const bool valid1 = settings_hv_record_read(1u, &seq1, &hv1);
-
-    if (valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0)) {
-        lcd_hv_sequence = seq1;
-        lcd_settings_value_index[SETTING_HV] = hv1;
-    } else if (valid0) {
-        lcd_hv_sequence = seq0;
-        lcd_settings_value_index[SETTING_HV] = hv0;
-    }
-}
-
-static bool settings_hv_save(void)
-{
-    uint8_t seq0, hv0, seq1, hv1;
-    const bool valid0 = settings_hv_record_read(0u, &seq0, &hv0);
-    const bool valid1 = settings_hv_record_read(1u, &seq1, &hv1);
-    const uint8_t current_slot = valid1 &&
-        (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
-    const uint8_t target_slot = (valid0 || valid1) ?
-        (uint8_t)(current_slot ^ 1u) : 0u;
-    const uint8_t sequence = (uint8_t)(lcd_hv_sequence + 1u);
-    const uint8_t hv_mode = lcd_settings_value_index[SETTING_HV];
-    const uint8_t base = (uint8_t)(SETTINGS_HV_EEPROM_BASE +
-        target_slot * SETTINGS_HV_EEPROM_SLOT_SIZE);
-
-    if (!settings_eeprom_write_byte(base, 0u) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 1u), sequence) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 2u), hv_mode) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 3u),
-            (uint8_t)(0xC7u ^ sequence ^ (hv_mode * 53u))) ||
-        !settings_eeprom_write_byte(base, SETTINGS_HV_EEPROM_MAGIC)) {
-        return false;
-    }
-    lcd_hv_sequence = sequence;
-    return true;
-}
-
-static bool settings_light_alarm_record_read(uint8_t slot,
-                                             uint8_t *sequence,
-                                             uint8_t *mode)
-{
-    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
-        DATA_EEPROM_BASE + SETTINGS_LIGHT_ALARM_EEPROM_BASE +
-        slot * SETTINGS_LIGHT_ALARM_EEPROM_SLOT_SIZE);
-    *sequence = record[1];
-    *mode = record[2];
-    return record[0] == SETTINGS_LIGHT_ALARM_EEPROM_MAGIC && *mode < 4u &&
-        record[3] == (uint8_t)(0x5Du ^ *sequence ^ (*mode * 37u));
-}
-
-static void settings_light_alarm_load(void)
-{
-    uint8_t seq0, mode0, seq1, mode1;
-    const bool valid0 = settings_light_alarm_record_read(0u, &seq0, &mode0);
-    const bool valid1 = settings_light_alarm_record_read(1u, &seq1, &mode1);
-
-    if (valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0)) {
-        lcd_light_alarm_sequence = seq1;
-        lcd_settings_value_index[SETTING_RATE_LIGHT] = mode1;
-    } else if (valid0) {
-        lcd_light_alarm_sequence = seq0;
-        lcd_settings_value_index[SETTING_RATE_LIGHT] = mode0;
-    }
-}
-
-static bool settings_light_alarm_save(void)
-{
-    uint8_t seq0, mode0, seq1, mode1;
-    const bool valid0 = settings_light_alarm_record_read(0u, &seq0, &mode0);
-    const bool valid1 = settings_light_alarm_record_read(1u, &seq1, &mode1);
-    const uint8_t current_slot = valid1 &&
-        (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
-    const uint8_t target_slot = (valid0 || valid1) ?
-        (uint8_t)(current_slot ^ 1u) : 0u;
-    const uint8_t sequence = (uint8_t)(lcd_light_alarm_sequence + 1u);
-    const uint8_t mode = lcd_settings_value_index[SETTING_RATE_LIGHT];
-    const uint8_t base = (uint8_t)(SETTINGS_LIGHT_ALARM_EEPROM_BASE +
-        target_slot * SETTINGS_LIGHT_ALARM_EEPROM_SLOT_SIZE);
-
-    if (!settings_eeprom_write_byte(base, 0u) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 1u), sequence) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 2u), mode) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 3u),
-            (uint8_t)(0x5Du ^ sequence ^ (mode * 37u))) ||
-        !settings_eeprom_write_byte(base, SETTINGS_LIGHT_ALARM_EEPROM_MAGIC)) {
-        return false;
-    }
-    lcd_light_alarm_sequence = sequence;
-    return true;
-}
-
-static bool settings_dose_alarm_record_read(uint8_t slot,
-                                            uint8_t *sequence,
-                                            uint8_t *mode)
-{
-    const volatile uint8_t *record = (const volatile uint8_t *)(uintptr_t)(
-        DATA_EEPROM_BASE + SETTINGS_DOSE_ALARM_EEPROM_BASE +
-        slot * SETTINGS_DOSE_ALARM_EEPROM_SLOT_SIZE);
-    const uint8_t stored_mode = record[2];
-    *sequence = record[1];
-    if (record[3] != (uint8_t)(0xA3u ^ *sequence ^ (stored_mode * 23u))) {
-        return false;
-    }
-    if (record[0] == 0xC5u && stored_mode < 8u) {
-        *mode = stored_mode;
-        return true;
-    }
-    if (record[0] == SETTINGS_DOSE_ALARM_EEPROM_MAGIC && stored_mode < 11u) {
-        /* Preserve old fixed dose limits; AUTO/OFF migrate to 5 uSv. */
-        *mode = stored_mode < 3u ? 0u : (uint8_t)(stored_mode - 3u);
-        return true;
-    }
-    return false;
-}
-
-static void settings_dose_alarm_load(void)
-{
-    uint8_t seq0, mode0, seq1, mode1;
-    const bool valid0 = settings_dose_alarm_record_read(0u, &seq0, &mode0);
-    const bool valid1 = settings_dose_alarm_record_read(1u, &seq1, &mode1);
-
-    if (valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0)) {
-        lcd_dose_alarm_sequence = seq1;
-        lcd_settings_value_index[SETTING_DOSE_CUSTOM] = mode1;
-    } else if (valid0) {
-        lcd_dose_alarm_sequence = seq0;
-        lcd_settings_value_index[SETTING_DOSE_CUSTOM] = mode0;
-    }
-}
-
-static bool settings_dose_alarm_save(void)
-{
-    uint8_t seq0, mode0, seq1, mode1;
-    const bool valid0 = settings_dose_alarm_record_read(0u, &seq0, &mode0);
-    const bool valid1 = settings_dose_alarm_record_read(1u, &seq1, &mode1);
-    const uint8_t current_slot = valid1 &&
-        (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
-    const uint8_t target_slot = (valid0 || valid1) ?
-        (uint8_t)(current_slot ^ 1u) : 0u;
-    const uint8_t sequence = (uint8_t)(lcd_dose_alarm_sequence + 1u);
-    const uint8_t mode = lcd_settings_value_index[SETTING_DOSE_CUSTOM];
-    const uint8_t base = (uint8_t)(SETTINGS_DOSE_ALARM_EEPROM_BASE +
-        target_slot * SETTINGS_DOSE_ALARM_EEPROM_SLOT_SIZE);
-
-    if (!settings_eeprom_write_byte(base, 0u) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 1u), sequence) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 2u), mode) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 3u),
-            (uint8_t)(0xA3u ^ sequence ^ (mode * 23u))) ||
-        !settings_eeprom_write_byte(base, 0xC5u)) {
-        return false;
-    }
-    lcd_dose_alarm_sequence = sequence;
-    return true;
-}
-
-static void settings_eeprom_load(void)
-{
-    uint8_t seq0, lead0, unit0, rate0, dose0, led0, screen0, time0;
-    uint8_t seq1, lead1, unit1, rate1, dose1, led1, screen1, time1;
-    bool valid0 = settings_v3_record_read(0u, &seq0, &lead0, &unit0,
-        &rate0, &dose0, &led0, &screen0, &time0);
-    bool valid1 = settings_v3_record_read(1u, &seq1, &lead1, &unit1,
-        &rate1, &dose1, &led1, &screen1, &time1);
-    uint8_t slot;
-
-    if (valid0 || valid1) {
-        slot = valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
-        if (slot == 0u) {
-            lcd_settings_sequence = seq0;
-            lcd_settings_value_index[SETTING_LEAD_ZERO] = lead0;
-            lcd_settings_value_index[SETTING_UNIT] = unit0;
-            lcd_settings_value_index[SETTING_RATE_PREFIX] = rate0;
-            lcd_settings_value_index[SETTING_DOSE_PREFIX] = dose0;
-            lcd_settings_value_index[SETTING_LED_BRIGHT] = led0;
-            lcd_settings_value_index[SETTING_SCREEN_BRIGHT] = screen0;
-            lcd_settings_value_index[SETTING_LED_TIME] = time0;
-        } else {
-            lcd_settings_sequence = seq1;
-            lcd_settings_value_index[SETTING_LEAD_ZERO] = lead1;
-            lcd_settings_value_index[SETTING_UNIT] = unit1;
-            lcd_settings_value_index[SETTING_RATE_PREFIX] = rate1;
-            lcd_settings_value_index[SETTING_DOSE_PREFIX] = dose1;
-            lcd_settings_value_index[SETTING_LED_BRIGHT] = led1;
-            lcd_settings_value_index[SETTING_SCREEN_BRIGHT] = screen1;
-            lcd_settings_value_index[SETTING_LED_TIME] = time1;
-        }
-        return;
-    }
-    valid0 = settings_v2_record_read(0u, &seq0, &lead0, &unit0,
-                                     &rate0, &dose0);
-    valid1 = settings_v2_record_read(1u, &seq1, &lead1, &unit1,
-                                     &rate1, &dose1);
-    if (valid0 || valid1) {
-        slot = valid1 && (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
-        if (slot == 0u) {
-            lcd_settings_sequence = seq0;
-            lcd_settings_value_index[SETTING_LEAD_ZERO] = lead0;
-            lcd_settings_value_index[SETTING_UNIT] = unit0;
-            lcd_settings_value_index[SETTING_RATE_PREFIX] = rate0;
-            lcd_settings_value_index[SETTING_DOSE_PREFIX] = dose0;
-        } else {
-            lcd_settings_sequence = seq1;
-            lcd_settings_value_index[SETTING_LEAD_ZERO] = lead1;
-            lcd_settings_value_index[SETTING_UNIT] = unit1;
-            lcd_settings_value_index[SETTING_RATE_PREFIX] = rate1;
-            lcd_settings_value_index[SETTING_DOSE_PREFIX] = dose1;
-        }
-        return;
-    }
-    /* Migrate values written by the original two-option settings record. */
-    if (settings_legacy_record_read(0u, &seq0, &lead0, &unit0) ||
-        settings_legacy_record_read(1u, &seq1, &lead1, &unit1)) {
-        if (settings_legacy_record_read(1u, &seq1, &lead1, &unit1) &&
-            (!settings_legacy_record_read(0u, &seq0, &lead0, &unit0) ||
-             (int8_t)(seq1 - seq0) > 0)) {
-            lcd_settings_sequence = seq1;
-            lcd_settings_value_index[SETTING_LEAD_ZERO] = lead1;
-            lcd_settings_value_index[SETTING_UNIT] = unit1;
-        } else {
-            lcd_settings_sequence = seq0;
-            lcd_settings_value_index[SETTING_LEAD_ZERO] = lead0;
-            lcd_settings_value_index[SETTING_UNIT] = unit0;
-        }
-        lcd_settings_value_index[SETTING_RATE_PREFIX] =
-            lcd_settings_value_index[SETTING_UNIT] == 1u ? 0u : 1u;
-        lcd_settings_value_index[SETTING_DOSE_PREFIX] = lcd_settings_value_index[SETTING_RATE_PREFIX];
-    }
-    settings_row_load();
-}
-
-static bool settings_eeprom_save(void)
-{
-    uint8_t seq0, lead0, unit0, rate0, dose0, led0, screen0, time0;
-    uint8_t seq1, lead1, unit1, rate1, dose1, led1, screen1, time1;
-    const bool valid0 = settings_v3_record_read(0u, &seq0, &lead0, &unit0,
-        &rate0, &dose0, &led0, &screen0, &time0);
-    const bool valid1 = settings_v3_record_read(1u, &seq1, &lead1, &unit1,
-        &rate1, &dose1, &led1, &screen1, &time1);
-    const uint8_t current_slot = valid1 &&
-        (!valid0 || (int8_t)(seq1 - seq0) > 0) ? 1u : 0u;
-    const uint8_t target_slot =
-        (valid0 || valid1) ? (uint8_t)(current_slot ^ 1u) : 0u;
-    const uint8_t sequence = (uint8_t)(lcd_settings_sequence + 1u);
-    const uint8_t lead_zero = lcd_settings_value_index[SETTING_LEAD_ZERO];
-    const uint8_t unit = lcd_settings_value_index[SETTING_UNIT];
-    const uint8_t rate_prefix = lcd_settings_value_index[SETTING_RATE_PREFIX];
-    const uint8_t dose_prefix = lcd_settings_value_index[SETTING_DOSE_PREFIX];
-    const uint8_t led_brightness = lcd_settings_value_index[SETTING_LED_BRIGHT];
-    const uint8_t led_time = lcd_settings_value_index[SETTING_LED_TIME];
-    const uint8_t screen_brightness = lcd_settings_value_index[SETTING_SCREEN_BRIGHT];
-    const uint8_t base = (uint8_t)(SETTINGS_EEPROM_V3_BASE +
-        target_slot * SETTINGS_EEPROM_V3_SLOT_SIZE);
-
-    if (!settings_eeprom_write_byte(base, 0u) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 1u), sequence) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 2u), lead_zero) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 3u), unit) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 4u), rate_prefix) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 5u), dose_prefix) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 6u),
-            (uint8_t)((led_time << 4) | led_brightness)) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 7u), screen_brightness) ||
-        !settings_eeprom_write_byte((uint8_t)(base + 8u),
-            settings_v3_crc(sequence, lead_zero, unit, rate_prefix,
-                dose_prefix, (uint8_t)((led_time << 4) | led_brightness),
-                screen_brightness)) ||
-        !settings_eeprom_write_byte(base, SETTINGS_EEPROM_V4_MAGIC)) {
-        return false;
-    }
-    lcd_settings_sequence = sequence;
-    return true;
 }
 
 bool board_display_settings_list_active(void)
@@ -5154,10 +4398,8 @@ static void lcd_settings_apply_current(void)
         lcd_dose_row_hidden = false;
         lcd_format_cpm(lcd_current_cpm);
         lcd_format_dose_row();
-        (void)settings_row_save();
     }
     if (lcd_settings_selected >= 8u && lcd_settings_selected <= 11u) {
-        (void)settings_eeprom_save();
         if (lcd_screen_page == 0u) {
             lcd_format_rate_display(lcd_rate_value_100000ths);
         } else if (lcd_screen_page == 1u) {
@@ -5169,7 +4411,6 @@ static void lcd_settings_apply_current(void)
     }
     if (lcd_settings_selected == 12u) {
         lcd_format_cpm(lcd_current_cpm);
-        (void)settings_row_save();
         lcd_cpm_redraw_pending = true;
     }
     if (lcd_settings_selected == SETTING_DOSE_ROW_2 ||
@@ -5183,48 +4424,20 @@ static void lcd_settings_apply_current(void)
             lcd_settings_value_index[SETTING_DOSE_ROW_2] = 0u;
         }
         lcd_dose_row_hidden = false;
-        (void)settings_row_save();
         lcd_format_dose_row();
         lcd_cpm_redraw_pending = true;
     }
     if (lcd_settings_selected == SETTING_LED_BRIGHT ||
         lcd_settings_selected == SETTING_SCREEN_BRIGHT ||
         lcd_settings_selected == SETTING_LED_TIME) {
-        (void)settings_eeprom_save();
         lcd_apply_brightness_settings();
     }
-    if (lcd_settings_selected == 7u) settings_timer_save();
-    if (lcd_settings_selected == 1u) settings_clicks_save();
-    if (lcd_settings_selected == 4u) settings_sound_alarm_save();
-    if (lcd_settings_selected == 20u) settings_click_tone_save();
-    if (lcd_settings_selected == SETTING_LONG_PRESS) {
-        (void)settings_long_press_save();
-    }
-    if (lcd_settings_selected == 17u) settings_alarm_stop_save();
     if (lcd_settings_selected == 13u) {
-        (void)settings_spi_save();
+        (void)settings_spi_apply();
         if (settings_log_source != BOARD_LOG_MEMORY_SPI) spi_nor_deinit();
-    }
-    if (lcd_settings_selected == 0u || lcd_settings_selected == 2u) {
-        (void)settings_alarm_save();
-    }
-    if (lcd_settings_selected == 3u) {
-        (void)settings_light_alarm_save();
-    }
-    if (lcd_settings_selected == SETTING_RATE_CUSTOM) {
-        settings_rate_custom_save();
-    }
-    if (lcd_settings_selected == SETTING_DOSE_CUSTOM) {
-        (void)settings_dose_alarm_save();
-    }
-    if (lcd_settings_selected == SETTING_DOSE_SCREEN ||
-        lcd_settings_selected == SETTING_DOSE_LIGHT ||
-        lcd_settings_selected == SETTING_DOSE_SOUND) {
-        settings_dose_action_save(lcd_settings_selected);
     }
     if (lcd_settings_selected == 15u) {
         board_hv_set_enabled(lcd_settings_value_index[SETTING_HV] == 0u);
-        (void)settings_hv_save();
         if (lcd_settings_value_index[SETTING_HV] == 0u) {
             lcd_rate_value_100000ths = 0u;
             lcd_current_cpm = 0u;
@@ -5238,6 +4451,7 @@ static void lcd_settings_apply_current(void)
         lcd_background_pending = true;
         lcd_cpm_redraw_pending = true;
     }
+    (void)settings_eeprom_save();
 }
 
 uint8_t board_display_settings_remote_count(void)
@@ -5274,8 +4488,12 @@ bool board_display_setting_remote_write(uint8_t setting_id, uint8_t value)
         if (LCD_CLEANUP_MENU_ACTIVE || value > 1u ||
             lcd_settings_count_visible_for_mask(candidate) == 0u) return false;
         if (candidate == lcd_settings_hidden_mask) return true;
-        if (!settings_visibility_save(candidate)) return false;
+        const uint32_t previous_mask = lcd_settings_hidden_mask;
         lcd_settings_hidden_mask = candidate;
+        if (!settings_eeprom_save()) {
+            lcd_settings_hidden_mask = previous_mask;
+            return false;
+        }
         if (lcd_screen_page == 3u) {
             if ((candidate & (1UL << lcd_settings_selected)) != 0u) {
                 lcd_settings_selected = lcd_settings_visible_to_item(0u);
@@ -5324,26 +4542,9 @@ bool board_display_setting_remote_write(uint8_t setting_id, uint8_t value)
 
 static bool settings_reset_all(void)
 {
-    static const uint8_t record_magic_offsets[] = {
-        0u, 5u, 16u, 23u, 32u, 41u, SETTINGS_ROW_EEPROM_BASE,
-        SETTINGS_ROW_EEPROM_BASE + SETTINGS_ROW_EEPROM_SLOT_SIZE,
-        64u, 68u, 80u, 85u,
-        96u, 100u, 104u, 108u, 112u, 116u, 120u, 124u, 128u, 132u,
-        SETTINGS_SPI_EEPROM_BASE, SETTINGS_LONG_PRESS_EEPROM_BASE,
-        SETTINGS_RATE_CUSTOM_EEPROM_BASE, SETTINGS_DOSE_SCREEN_EEPROM_BASE,
-        SETTINGS_DOSE_LIGHT_EEPROM_BASE, SETTINGS_DOSE_SOUND_EEPROM_BASE,
-        SETTINGS_VISIBILITY_EEPROM_BASE
-    };
-
-    for (uint8_t i = 0u;
-         i < sizeof(record_magic_offsets) / sizeof(record_magic_offsets[0]);
-         ++i) {
-        if (!settings_eeprom_write_byte(record_magic_offsets[i], 0u)) {
-            return false;
-        }
-    }
-    return settings_value_write(SETTINGS_LONG_PRESS_EEPROM_BASE,
-        SETTINGS_LONG_PRESS_MAGIC, 0x37u, 3u);
+    return settings_eeprom_write_byte(SETTINGS_EEPROM_BASE, 0u) &&
+        settings_eeprom_write_byte((uint16_t)(SETTINGS_EEPROM_BASE +
+            SETTINGS_EEPROM_SLOT_SIZE), 0u);
 }
 
 static bool lcd_cleanup_clear_spi(void)
@@ -6607,21 +5808,6 @@ void board_display_init(void)
     lcd_background_pending = true;
     board_rtc_init();
     settings_eeprom_load();
-    settings_row_load();
-    settings_spi_load();
-    settings_clicks_load();
-    settings_long_press_load();
-    settings_click_tone_load();
-    settings_sound_alarm_load();
-    settings_alarm_stop_load();
-    settings_timer_load();
-    settings_alarm_load();
-    settings_hv_load();
-    settings_light_alarm_load();
-    settings_dose_alarm_load();
-    settings_rate_custom_load();
-    settings_dose_actions_load();
-    settings_visibility_load();
     lcd_screen_page = 0u;
     lcd_last_extra_page = 3u;
     lcd_main_return_page = 0u;

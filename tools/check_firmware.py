@@ -8,7 +8,7 @@ FLASH_BASE = 0x08000000
 FLASH_SIZE = 65536
 
 
-def check_firmware(elf_path):
+def check_firmware(elf_path, flash_size=FLASH_SIZE):
     data = Path(elf_path).read_bytes()
     if data[:6] != b'\x7fELF\x01\x01':
         raise ValueError('Expected an ELF32 little-endian firmware image')
@@ -47,7 +47,7 @@ def check_firmware(elf_path):
         vector, = struct.unpack_from('<I', vectors, slot * 4)
         if binding != 1 or index == 0 or vector != (value | 1) or vector == default:
             raise ValueError(f'{name} must be a strong handler referenced by vector {slot}')
-        if not FLASH_BASE <= (value & ~1) < FLASH_BASE + FLASH_SIZE:
+        if not FLASH_BASE <= (value & ~1) < FLASH_BASE + flash_size:
             raise ValueError(f'{name} is outside Flash')
 
     end = FLASH_BASE
@@ -56,6 +56,6 @@ def check_firmware(elf_path):
             '<8I', data, header[5] + i * header[9])
         if kind == 1 and size and FLASH_BASE <= address < 0x10000000:
             end = max(end, address + size)
-    if end > FLASH_BASE + FLASH_SIZE:
-        raise ValueError(f'Firmware exceeds Flash by {end - FLASH_BASE - FLASH_SIZE} bytes')
-    print(f'Verified startup/IRQ vectors; Flash image: {end - FLASH_BASE} / {FLASH_SIZE} bytes')
+    if end > FLASH_BASE + flash_size:
+        raise ValueError(f'Firmware exceeds Flash by {end - FLASH_BASE - flash_size} bytes')
+    print(f'Verified startup/IRQ vectors; Flash image: {end - FLASH_BASE} / {flash_size} bytes')

@@ -24,6 +24,10 @@ START = 845769600  # overwritten below from a calendar conversion
 from datetime import datetime, timezone
 START = int((datetime(2026, 10, 22, tzinfo=timezone.utc) - datetime(2000, 1, 1, tzinfo=timezone.utc)).total_seconds())
 
+def record_bytes(index, count, maximum, duration, segment_id, covered=0):
+    return struct.pack('<IIIHBxI', index, count, maximum, duration,
+                       segment_id, covered)
+
 
 class PowerCut(Exception):
     pass
@@ -36,7 +40,7 @@ class Engine:
         if self.symbols is None:
             Engine.symbols = read_symbols(TOOLS, '.exe', BUILD / 'firmware.elf')
         self.eeprom = bytearray(eeprom if eeprom is not None else b'\xff' * 2048)
-        self.nor = bytearray(nor if nor is not None else b'\xff' * 49152)
+        self.nor = bytearray(nor if nor is not None else b'\xff' * 73728)
         self.mode = self.source = mode
         self.now, self.uptime, self.valid, self.level = START, 0, True, 2
         self.ready = mode == 1
@@ -50,7 +54,7 @@ class Engine:
 
     def reset(self):
         self.cpu = Uc(UC_ARCH_ARM, UC_MODE_THUMB | UC_MODE_MCLASS)
-        for base, size in ((0x08000000, 0x10000), (0x20000000, 0x2000),
+        for base, size in ((0x08000000, 0x12000), (0x20000000, 0x2000),
                            (SCRATCH, 0x4000), (0x40000000, 0x30000),
                            (0x50000000, 0x2000), (0xe000e000, 0x1000)):
             self.cpu.mem_map(base, size)
@@ -153,9 +157,16 @@ class Engine:
         self.cpu.mem_write(self.symbols[name], value.to_bytes(size, 'little'))
 
     def append(self, kind, index, count, maximum=60, duration=0, epoch=0):
-        self.cpu.mem_write(SCRATCH, struct.pack('<IIIHBx', index, count, maximum, duration, epoch % 64))
+        covered = (60, 3600, 86400, 0)[kind]
+        self.cpu.mem_write(SCRATCH, record_bytes(index, count, maximum,
+            duration, epoch % 64, covered))
         if self.mode == 1:
             result = self.call('spi_log_prepare', kind, epoch, YEAR, SCRATCH + 128)
+            if result == 1:
+                assert self.call('spi_log_find_oldest', kind, SCRATCH + 128)
+                assert self.call('spi_log_erase_oldest', kind, SCRATCH + 128)
+                result = self.call('spi_log_prepare', kind, epoch, YEAR,
+                                   SCRATCH + 128)
             assert result == 0, result
             assert self.call('spi_log_append', kind, epoch, SCRATCH)
         else:
@@ -176,11 +187,15 @@ def test_codec_and_time():
     fw = Engine()
     for kind, count, duration in ((0, 262144, 0), (1, 262144 * 60, 0),
                                   (2, 262144 * 1440, 0), (3, 262144 * 4096 // 60, 4096)):
-        fw.cpu.mem_write(SCRATCH, struct.pack('<IIIHBx', 0, count, 262144, duration, 63))
-        size = 11 if kind == 3 else 8
+        covered = (60, 3600, 86400, 0)[kind]
+        fw.cpu.mem_write(SCRATCH, record_bytes(0, count, 262144, duration,
+            63, covered))
+        size = 11 if kind == 3 else 9
         assert fw.call('log_record_encode', kind, SCRATCH, SCRATCH + 32, size)
         assert fw.call('log_record_decode', kind, SCRATCH + 32, size, SCRATCH + 64)
-        assert fw.cpu.mem_read(SCRATCH, 15) == fw.cpu.mem_read(SCRATCH + 64, 15)
+        decoded = struct.unpack('<IIIHBxI', fw.cpu.mem_read(SCRATCH + 64, 20))
+        assert decoded[:5] == (0, count, 262144, duration, 63)
+        assert decoded[5] == covered
     for year in (2000, 2026, 2032, 2060, 2099):
         ref = int((datetime(year, 7, 1, tzinfo=timezone.utc) - datetime(2000, 1, 1, tzinfo=timezone.utc)).total_seconds())
         assert fw.call('log_record_time', 0, 0, 0x20 | (year & 31), ref, SCRATCH)
@@ -198,13 +213,14 @@ def test_atomic_alert_and_epoch_reuse():
     for cut in range(writes + 1):
         trial = Engine(eeprom=baseline); assert trial.call('log_eeprom_init')
         trial.writes = 0; trial.cut = cut
-        trial.cpu.mem_write(SCRATCH, struct.pack('<IIIHBx', 999, 262144, 60, 4096, 0))
+        trial.cpu.mem_write(SCRATCH, record_bytes(999, 262144, 60, 4096, 0))
         try: trial.call('log_eeprom_append', 3, 0, SCRATCH, YEAR)
         except PowerCut: pass
         trial.cut = None; trial.reset(); assert trial.call('log_eeprom_init')
         assert trial.call('log_eeprom_count', 3) == 30
         assert trial.call('log_eeprom_read', 3, 0, SCRATCH)
-        index, count, maximum, duration, segment = struct.unpack('<IIIHBx', trial.cpu.mem_read(SCRATCH, 16))
+        index, count, maximum, duration, segment, _ = struct.unpack(
+            '<IIIHBxI', trial.cpu.mem_read(SCRATCH, 20))
         assert (index, count, maximum, duration, segment) in ((29, 129, 60, 4096, 0), (999, 262144, 60, 4096, 0))
         assert trial.eeprom[:316] == baseline[:316], 'Settings/reserve modified'
     fw = Engine(); fw.call('log_eeprom_init')
@@ -222,18 +238,18 @@ def test_atomic_alert_and_epoch_reuse():
 def test_uptime_and_clock_epochs():
     fw = Engine(); fw.valid = False; fw.now = 0
     assert fw.call('log_writer_init')
-    for second in range(1, 61): fw.call('log_writer_second', 1, 60, second, 0, 0)
+    for second in range(1, 61): fw.call('log_writer_second', 1, 60, second, 0, 0, 1)
     fw.reset(); fw.valid = True; fw.now = START
     assert fw.call('log_writer_init')
     points = fw.points(0, 60, 4)
     assert points[0]['time'] == 0 and not points[0]['calendar'] and points[0]['count'] == 60
     fw = Engine(); assert fw.call('log_writer_init')
     fw.now = START + 120; fw.call('test_feed_seconds', 120, 1, 60, START)
-    fw.now = START + 100; fw.call('log_writer_second', 1, 60, 121, fw.now, 1)
+    fw.now = START + 100; fw.call('log_writer_second', 1, 60, 120, fw.now, 1, 1)
     points = fw.points(0, 60, 4)
-    assert points[0]['epoch'] == 0 and points[0]['count'] == 61
+    assert points[1]['epoch'] == 0 and points[1]['count'] == 61
     assert len({(p['epoch'], p['time']) for p in points}) == len(points)
-    fw.now = START + 3680; fw.call('log_writer_second', 1, 60, 122, fw.now, 1)
+    fw.now = START + 3680; fw.call('log_writer_second', 1, 60, 122, fw.now, 1, 1)
     points = fw.points(0, 60, 4)
     assert points[0]['epoch'] == 1 and any(p['epoch'] == 0 for p in points)
     print('PASS: unknown-time history stays uptime after RTC setup, minor sync extends a minute, large jumps separate epochs')
@@ -243,13 +259,13 @@ def test_segment_table_commit_and_corruption():
     fw = Engine(); fw.call('log_eeprom_init'); fw.append(3, 1, 10, duration=2)
     baseline = bytes(fw.eeprom)
     fw.writes = 0
-    fw.cpu.mem_write(SCRATCH, struct.pack('<IIIHBx', 0, 20, 60, 2, 1))
+    fw.cpu.mem_write(SCRATCH, record_bytes(0, 20, 60, 2, 1))
     assert fw.call('log_eeprom_append', 3, 1, SCRATCH, YEAR + 1)
     writes = fw.writes
     for cut in range(writes + 1):
         trial = Engine(eeprom=baseline); assert trial.call('log_eeprom_init')
         trial.writes = 0; trial.cut = cut
-        trial.cpu.mem_write(SCRATCH, struct.pack('<IIIHBx', 0, 20, 60, 2, 1))
+        trial.cpu.mem_write(SCRATCH, record_bytes(0, 20, 60, 2, 1))
         try: trial.call('log_eeprom_append', 3, 1, SCRATCH, YEAR + 1)
         except PowerCut: pass
         trial.cut = None; trial.reset(); assert trial.call('log_eeprom_init')
@@ -279,7 +295,9 @@ def test_live_cascade_and_dates():
     # A reset loses the open minute and cannot turn a gap into a complete hour.
     fw.reset(); fw.now = START + 3630; fw.uptime = 0; assert fw.call('log_writer_init')
     fw.now = START + 3660; fw.call('test_feed_seconds', 30, 1, 60, START + 3630)
-    assert fw.call('log_eeprom_count', 0) == 60
+    assert fw.call('log_eeprom_count', 0) == 61
+    restarted = fw.points(0, 60, 3)
+    assert restarted[1]['count'] == 30 and restarted[1]['covered'] == 30 and restarted[1]['partial']
     dated = fw.points(0, 60, 4, START + 3599)
     assert dated[0]['time'] == START + 3540 and not dated[0]['live']
     print('PASS: full-minute/hour cascade, live overlay, partial restart and near-date bound')
@@ -297,21 +315,21 @@ def test_shared_aggregation_and_migration():
     expected_day = fw.points(2, 86400, 2)[0]
     assert fw.call('log_writer_change_memory', 1)
     fw.mode = fw.source = 1; fw.call('log_writer_memory_committed', 1)
-    assert fw.points(0, 60, 70) == original
-    assert fw.points(2, 86400, 2)[0] == expected_day
+    assert fw.call('spi_log_count', 0) == 0
+    assert fw.points(0, 60, 70) == []
     assert expected_day['count'] == 84630, 'Younger complete minutes must take precedence over stored hours'
     assert fw.call('log_writer_change_memory', 0)
     fw.mode = fw.source = 0; fw.call('log_writer_memory_committed', 0)
-    assert fw.points(0, 60, 70) == original
-    assert fw.call('log_eeprom_count', 2) >= 1
+    assert fw.points(0, 60, 70) == []
+    assert fw.call('log_eeprom_count', 2) == 0
     before = bytes(fw.eeprom), bytes(fw.nor)
     assert fw.call('log_writer_change_memory', 2)
     fw.mode = 2; fw.call('log_writer_memory_committed', 2)
-    fw.call('log_writer_second', 10, 600, 1, fw.now + 1, 1)
+    fw.call('log_writer_second', 10, 600, 1, fw.now + 1, 1, 1)
     assert (bytes(fw.eeprom), bytes(fw.nor)) == before
-    assert fw.points(0, 60, 70) == original
+    assert fw.points(0, 60, 70) == []
     assert fw.minimum_sp - fw.symbols['_ebss'] > 560, 'Insufficient headroom for main/protocol frames'
-    print('PASS: identical canonical records across EEPROM/SPI round trip, daily aggregation, OFF and stack headroom')
+    print('PASS: daily aggregation, independent EEPROM/SPI stores, OFF and stack headroom')
 
 
 def test_palette_dma():
@@ -384,11 +402,18 @@ def test_protocol_and_graph_parity():
         timestamp, cnt, avg, maximum, covered, epoch, flags, identity = struct.unpack('<5IHBH', response[12 + i * 25:37 + i * 25])
         assert (timestamp, cnt, avg, maximum, covered, epoch) == tuple(point[k] for k in ('time', 'count', 'avg', 'max', 'covered', 'epoch'))
         assert flags == point['available'] | point['partial'] << 1 | point['live'] << 2 | point['calendar'] << 3
-    fw.set('lcd_graph_log_type', 1); fw.set('lcd_graph_selected', 0); fw.set('lcd_text_glyph_index', 0)
+    fw.set('lcd_graph_log_type', 1)
+    fw.set('lcd_graph_log_summary_count', 0xffffffff, 4)
+    fw.set('lcd_graph_log_summary_valid', 0)
+    fw.set('lcd_graph_loading', 0)
+    assert fw.call('lcd_graph_update_log_summary')
+    fw.set('lcd_graph_loading', 0)
+    fw.call('lcd_graph_build_logs')
+    fw.set('lcd_graph_selected', 0); fw.set('lcd_text_glyph_index', 0)
     assert fw.call('lcd_graph_prepare_glyph')
     columns = bytes(fw.cpu.mem_read(fw.symbols['lcd_graph_column_y'], 160))
-    assert columns[53] & 127 == 79, 'First graph column must be the current zero-length point'
-    assert columns[54] & 127 < 79, 'Saved nonzero minute disappeared from graph'
+    assert columns[0] & 127 == 70, 'First graph column must be the current zero-length point'
+    assert columns[8] & 127 < 70, 'Saved nonzero minute disappeared from graph'
     info = request(fw, 5, b'')
     assert len(info) == 30 and info[26] == 2 and int.from_bytes(info[2:4], 'little') == 2
     print('PASS: canonical protocol rows exactly match reader points and graph columns; live log counts')
@@ -398,26 +423,28 @@ def test_spi_rollover_and_torn_records():
     fw = Engine(mode=1); assert fw.call('log_writer_init')
     assert fw.call('log_record_location', 0, START, 1, SCRATCH + 128, SCRATCH + 132)
     base = int.from_bytes(fw.cpu.mem_read(SCRATCH + 128, 4), 'little')
-    for i in range(3 * 369): fw.append(0, base + i, 60)
-    fw.now = START + (3 * 369 + 1) * 60
-    fw.call('test_feed_seconds', 60, 1, 60, START + 3 * 369 * 60)
+    records_per_sector = (4096 - 32) // (9 + 3)
+    rollover_at = 6 * records_per_sector
+    for i in range(rollover_at): fw.append(0, base + i, 60)
+    fw.now = START + (rollover_at + 1) * 60
+    fw.call('test_feed_seconds', 60, 1, 60, START + rollover_at * 60)
     fw.cpu.mem_write(SCRATCH + 128, b'\x01')
-    assert fw.call('spi_log_query_read', SCRATCH + 128, 1, 0, START, SCRATCH + 64, SCRATCH + 132)
-    assert struct.unpack('<IIIHBx', fw.cpu.mem_read(SCRATCH + 64, 16))[1] == 3600
-    assert fw.call('spi_log_count', 1) == 7, 'Hours crossing sector edges must be promoted before erase'
-    assert fw.call('spi_log_count', 0) == 739
+    assert not fw.call('spi_log_query_read', SCRATCH + 128, 0, 0, START,
+                       SCRATCH + 64, SCRATCH + 132), 'Evicted minute remained readable'
+    assert fw.call('spi_log_count', 0) == rollover_at - 2 * records_per_sector + 1
     trial = Engine(mode=1); assert trial.call('log_writer_init'); trial.append(0, base, 123)
     baseline = bytes(trial.nor)
+    baseline_eeprom = bytes(trial.eeprom)
     for cut in range(12):
-        item = Engine(mode=1, nor=baseline); assert item.call('log_writer_init')
-        item.cpu.mem_write(SCRATCH, struct.pack('<IIIHBx', base + 1, 456, 60, 0, 0))
+        item = Engine(mode=1, eeprom=baseline_eeprom, nor=baseline); assert item.call('spi_log_init')
+        item.cpu.mem_write(SCRATCH, record_bytes(base + 1, 456, 60, 0, 0, 60))
         item.spi_cut = cut; item.spi_writes = 0
         try: item.call('spi_log_append', 0, 0, SCRATCH)
         except PowerCut: pass
-        item.spi_cut = None; item.reset(); assert item.call('log_writer_init')
+        item.spi_cut = None; item.reset(); assert item.call('spi_log_init'), f'SPI reboot failed after byte cut {cut}'
         points = item.points(0, 60, 3)
         assert [p['count'] for p in points] in ([123], [456, 123])
-    print('PASS: SPI ring rollover, cross-sector hour cascade, and every torn record byte/commit position')
+    print('PASS: SPI ring rollover, eviction visibility, and every torn record byte/commit position')
 
 
 def test_alert_identity_and_checkpoint_map():
@@ -429,11 +456,11 @@ def test_alert_identity_and_checkpoint_map():
         events = fw.points(3, 60, 4)
         assert [p['count'] for p in events] == [20, 10] and events[0]['id'] != events[1]['id']
         fw.level = 3; fw.now = START + 1
-        fw.call('log_writer_second', 2, 90, 1, START + 1, 1)
+        fw.call('log_writer_second', 2, 90, 1, START + 1, 1, 1)
         events = fw.points(3, 60, 4)
         assert len(events) == 3 and events[0]['live'] and [p['count'] for p in events[1:]] == [20, 10]
         fw.level = 2; fw.now = START + 2
-        fw.call('log_writer_second', 2, 30, 2, START + 2, 1)
+        fw.call('log_writer_second', 2, 30, 2, START + 2, 1, 1)
         events = fw.points(3, 60, 4)
         assert [p['count'] for p in events] == [4, 20, 10] and not events[0]['live']
     fw = Engine(); before = bytes(fw.eeprom)

@@ -56,10 +56,10 @@ bool log_history_next_from(uint8_t memory, uint8_t type, uint32_t period,
         current_alert.epoch == cursor->epoch && current_alert.time == cursor->time) --backend_skip;
     log_stored_t best = {0}, candidate;
     bool found = false, live_point = false;
-    uint8_t first_kind = type == LOG_RECORD_ALERT ? LOG_RECORD_ALERT :
+    uint8_t last_kind = type == LOG_RECORD_ALERT ? LOG_RECORD_ALERT :
         (period >= 86400u ? LOG_RECORD_DAY :
          (period >= 3600u ? LOG_RECORD_HOUR : LOG_RECORD_MINUTE));
-    uint8_t last_kind = first_kind;
+    uint8_t first_kind = type == LOG_RECORD_ALERT ? LOG_RECORD_ALERT : LOG_RECORD_MINUTE;
     for (uint8_t kind = first_kind; kind <= last_kind; ++kind) {
         bool got = memory == BOARD_LOG_MEMORY_SPI ?
             spi_log_find((log_record_kind_t)kind, cursor->epoch, cursor->time,
@@ -93,7 +93,7 @@ bool log_history_next_from(uint8_t memory, uint8_t type, uint32_t period,
         };
         cursor->skip = best.epoch == cursor->epoch && best.time == cursor->time ?
             (uint16_t)(cursor->skip + 1u) : 1u;
-    } else if (!live_point || period == 60u) {
+    } else if (period == 60u) {
         uint32_t start = best.time - best.time % period;
         uint32_t coverage = best.record.covered_seconds;
         uint32_t count = best.record.count;
