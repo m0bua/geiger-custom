@@ -1,2 +1,6 @@
 BUG: battery % grows on discharge sometimes.
-DONE: lost seconds in log - stabilized the sampling timebase and coverage boundaries.
+FEAT: Modes change from app, curn screen on
+FEAT: flollow theme colors LED option.
+FEAT: custom yellow option
+FEAT: dual back on graph
+FEAT: 3s back every where
