@@ -1942,10 +1942,6 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
         } else {
             label = "";
         }
-        for (uint8_t i = 0u; label[i] != '\0' && i < 12u; ++i) {
-            line[i] = label[i];
-        }
-        lcd_debug_put_right(line, 20u, value, value_length);
     } else if (subpage == 2u) {
         static const char *const labels[] = {"MIN", "HOUR", "DAY", "ALERT", "SPI", "STORE"};
         if (row >= 1u && row <= 6u) {
@@ -1976,23 +1972,24 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
         if (row <= 3u) {
             const uint16_t raw = row == 1u ? lcd_adc_sun_raw :
                 (row == 2u ? lcd_adc_battery_raw : lcd_adc_battery_start_raw);
-            const uint8_t percent = row == 1u ?
-                lcd_displayed_solar_percent : (row == 2u ?
-                    lcd_displayed_battery_percent : lcd_battery_start_percent);
             label = row == 1u ? "SOL" :
-                (row == 2u ? "BATT" : "BATT ST");
+                (row == 2u ? "BATTERY" : "B START");
             for (uint8_t i = 0u; label[i] != '\0'; ++i) line[i] = label[i];
             if (row == 1u) {
-                value_length = lcd_debug_u32_digits(value, percent);
+                value_length = lcd_debug_u32_digits(value, lcd_displayed_solar_percent);
                 value[value_length++] = '%';
             } else {
-                const uint8_t decivolts = (uint8_t)(27u +
-                    (percent + 3u) / 7u);
-                (void)lcd_debug_u32_digits(value, decivolts);
+                /* For 0..873, this fixed-point expression equals delta * 160 / 873. */
+                const uint16_t centivolts = raw < 1209u ? 270u :
+                    (raw > 2082u ? 430u : (uint16_t)(270u +
+                        (((uint32_t)(raw - 1209u) * 48045u) >> 18u)));
+                (void)lcd_debug_u32_digits(value, centivolts);
+                value[3] = value[2];
                 value[2] = value[1];
                 value[1] = '.';
-                value[3] = 'V';
-                value_length = 4u;
+                value[4] = 'V';
+                value[5] = ' ';
+                value_length = 6u;
             }
             lcd_debug_put_right(line, 16u, value, value_length);
             value_length = lcd_debug_u32_digits(value, raw);
