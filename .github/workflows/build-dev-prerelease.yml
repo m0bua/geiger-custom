@@ -290,12 +290,7 @@ jobs:
 
           ## Changes
           **Changes since DEV-202611031622-63fe549:**
-          - Added BATT FORMAT (% / V / RAW) to device and app settings. The main screens show the selected format; Debug shows voltage for %, percentage for V, and voltage plus percentage for RAW. Existing settings migrate with % as the default.
-          - Added editable LCD palettes and presets, theme-aware rate levels, configurable dimming for incomplete graph columns, and palette-code export/import for the dimming value.
-          - Reorganized device Debug pages and power diagnostics; the app now displays battery voltage to two decimal places and places USB RAW before SOL.
-          - Switched to the high clock while aggregating hourly and daily records, then returned to the idle clock.
-          - Removed unused legacy display code and simplified rendering helpers to recover firmware Flash space.
-          - Refined status-bar and Debug spacing for battery, solar, mode, and flashlight indicators.
+          - Fixed false one-second partial coverage after log cleanup, added RAM live aggregates for the current hour and day, and made hour/day history use matching aggregate streams to avoid duplicate SPI scans.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded): ${canonical_sha256}
