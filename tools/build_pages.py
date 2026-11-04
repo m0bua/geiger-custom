@@ -122,7 +122,7 @@ def main() -> int:
             html_download = html.escape(str(html_asset.get("browser_download_url", "")), quote=True)
             if html_download:
                 downloads.append(f'<a href="{html_download}">HTML</a>')
-        for asset_name, label in (("Dosimetr.exe", "Windows EXE"),
+        for asset_name, label in (("Dosimetr.exe", "Windows"),
                                   ("firmware.bin", "BIN"),
                                   ("spi-service-firmware.bin", "SPI service")):
             release_asset = assets.get(asset_name)
