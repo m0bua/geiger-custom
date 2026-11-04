@@ -1,4 +1,4 @@
-name: Deploy Dosimetr portal
+name: Deploy Dosimeter portal
 
 on:
   workflow_run:
