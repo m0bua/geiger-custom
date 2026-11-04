@@ -386,7 +386,7 @@
           <li><strong>SCREEN TIMER — 1 / 5 / 10 / 30 / 60 / 90 seconds:</strong> inactivity time before the display turns off. SEARCH keeps the display on; INVISIBLE uses a one-second timeout.</li>
           <li><strong>TONE — STOCK / CLASSIC:</strong> selects the sound character for pulse clicks and the siren.</li>
           <li><strong>LONG PRESS — 300 / 500 / 700 / 900 / 1100 / 1300 ms:</strong> sets the time required to trigger a long button press.</li>
-          <li><strong>BATT FORMAT — % / V / RAW:</strong> selects the battery value shown on the device's main screens. Debug shows the complementary value: voltage for %, percentage for V, and voltage plus percentage for RAW.</li>
+          <li><strong>BATT FORMAT — % / V / RAW:</strong> selects the battery value shown on the device's main screens. Debug shows voltage and RAW for %, percentage and RAW for V, or voltage and percentage for RAW.</li>
           <li><strong>UNIT — Sv / CNT / R:</strong> selects the unit for both main screens and the app's Overview and Logs. R follows the device's stock-compatible ×100 scaling of Sv. Changing UNIT resets the rate and dose prefixes to their defaults for that unit.</li>
           <li><strong>RATE PREFIX:</strong> for Sv/R, choose m, µ, n, or AUTO; for CNT, choose CPM or CPS.</li>
           <li><strong>DOSE PREFIX:</strong> for Sv/R, choose m, µ, n, or AUTO. It is unavailable for CNT.</li>
@@ -509,6 +509,17 @@
           <input class="release-history-toggle-input" id="release-history-toggle" type="checkbox">
           <div class="release-history-content">
         <ul class="release-list">
+          <li>
+            <time datetime="2026-11-04">2026-11-04</time> — Pre-release: battery formats, display themes, and diagnostics:
+            <ul>
+              <li><strong>Battery:</strong> added BATT FORMAT (% / V / RAW) to device and app settings. The main screens show the selected format; Debug shows voltage and RAW for %, percentage and RAW for V, or voltage and percentage for RAW. Existing settings migrate with % as the default.</li>
+              <li><strong>Themes:</strong> added editable display palettes and presets, including Monokai, Dracula, Nord, and Solarized; added configurable dimming for incomplete graph columns and included it in palette export/import.</li>
+              <li><strong>Debug:</strong> reorganized device diagnostics to show time, date, and CNT prominently, with power and uptime details on the next page. The app now shows higher-resolution battery voltage and USB RAW.</li>
+              <li><strong>Logging and power:</strong> temporarily use the high clock while aggregating hourly and daily records, then return to the idle clock.</li>
+              <li><strong>Firmware size:</strong> removed unused legacy display code and simplified rendering helpers to recover Flash space.</li>
+              <li><strong>Status bar:</strong> adjusted spacing for the mode and flashlight indicators, solar reading, and Debug values.</li>
+            </ul>
+          </li>
           <li>
             <time datetime="2026-11-03">2026-11-03</time> - Responsive logs, power diagnostics, and logging/graph fixes:
             <ul>

@@ -253,8 +253,13 @@ jobs:
           The HTML and EXE include a recovery-backed SPI NOR dump flow and the matching temporary SPI service firmware.
 
           ## Changes
+          **Changes since APP-202610291321:**
           - Reworked the device settings menu and persistence: reordered menu items, separated LED TIME from LED BRIGHT, added configurable startup-screen behavior, fixed two-row unit handling, improved battery-life behavior, and added smooth screen-timeout dimming.
-          - Improved battery diagnostics and display behavior: the main device screen keeps battery percentage, device DEBUG shows Li-ion voltage for BATT and BATT START, and app DEBUG shows battery percentage, RAW, and Li-ion voltage plus SOL percentage/RAW and USB RAW.
+          - Added BATT FORMAT (% / V / RAW) for the device's main screens and app settings. Debug shows complementary battery readings: voltage for %, percentage for V, and voltage plus percentage for RAW; app Debug includes battery RAW and Li-ion voltage.
+          - Added editable LCD palettes and presets (Dark, Light, Ocean, Amber, Violet, Monokai, Dracula, Nord, and Solarized Dark), theme-aware rate levels, configurable dimming for incomplete graph columns, and palette-code export/import.
+          - Reorganized device Debug pages to emphasize time/date/CNT, with battery and power readings plus combined WAKE/SLEEP/UPTIME on the next page. Improved app Debug voltage precision and USB/SOL presentation.
+          - Raised the clock temporarily while aggregating hourly and daily records, then returned to the idle clock to preserve logging accuracy with low-power timing.
+          - Reduced firmware Flash use by removing unused legacy display code and simplifying rendering helpers.
           - Improved rate/search behavior: SEARCH updates every 100 ms, reacts immediately to pulses, eases down between pulses, supports more Sv/R precision, and uses brighter LED indication; NORMAL updates every 500 ms and continues rate updates while the display is off.
           - Reworked dose and logging calculations to follow logged pulse counts, disabled automatic hourly dose resynchronization, corrected DAY/TOTAL after loading the DAY graph, and fixed DOSE ROW 2 CPM to use measured CPM.
           - Improved minute/hour/day logging and coverage: monotonic minute/hour boundaries with a stable RTC offset, delayed-sampling protection, correct complete/partial coverage colors, exclusion of the 30-pulse warm-up from persistent logs, and continued live RAM history/dose updates.
