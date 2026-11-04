@@ -1046,7 +1046,7 @@ const diagnosticsLog = [];
 let demoLogRenderer = null;
 let clockSyncBusy = false;
 const rateHistory = [];
-const demoSettings = Array.from({ length: 29 }, () => 0);
+const demoSettings = Array.from({ length: 30 }, () => 0);
 const demoHiddenSettings = new Set([
   8, 10, 11, 13, 14, 15, 16, 17, 19, 20, 21, 24, 25, 26, 27,
 ]);
@@ -1076,6 +1076,7 @@ const remoteSettings = [
   { id: 7, label: 'SCREEN TIMER', options: ['1 s', '5 s', '10 s', '30 s', '60 s', '90 s'] },
   { id: 20, label: 'TONE', options: ['STOCK', 'CLASSIC'] },
   { id: 21, label: 'LONG PRESS', options: ['300 ms', '500 ms', '700 ms', '900 ms', '1100 ms', '1300 ms'] },
+  { id: 29, label: 'BATT FORMAT', options: ['%', 'V', 'RAW'] },
   { id: 9, label: 'UNIT', options: ['Sv', 'CNT', 'R'] },
   { id: 10, label: 'RATE PREFIX', options: ['m', 'µ', 'n', 'AUTO'] },
   { id: 11, label: 'DOSE PREFIX', options: ['m', 'µ', 'n', 'AUTO'] },
@@ -3076,7 +3077,7 @@ async function loadSettings() {
   try {
     const payload = await serial.request(OP_GET_SETTINGS, Uint8Array.of(1));
     if (payload.length < 2 || payload[0] !== 0 ||
-        ![21, 22, 24, 28, 29].includes(payload[1]) ||
+        ![21, 22, 24, 28, 29, 30].includes(payload[1]) ||
         (payload.length !== payload[1] + 2 &&
          payload.length !== payload[1] + 6)) {
       throw new ProtocolError('Invalid settings response.');

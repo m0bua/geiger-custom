@@ -378,6 +378,7 @@ typedef enum {
     SETTING_REBOOT, SETTING_TONE, SETTING_LONG_PRESS, SETTING_DOSE_ROW_2,
     SETTING_DOSE_PERIOD, SETTING_DOSE_SCREEN, SETTING_DOSE_LIGHT,
     SETTING_DOSE_SOUND, SETTING_DOSE_CUSTOM, SETTING_LED_TIME,
+    SETTING_BATT_FORMAT,
     SETTING_COUNT
 } setting_id_t;
 
@@ -1796,6 +1797,55 @@ static void lcd_top_row_draw_percent(uint8_t offset, char icon,
     }
 }
 
+static uint16_t lcd_battery_voltage_centivolts(uint16_t raw)
+{
+    return raw < 1209u ? 270u : (raw > 2082u ? 430u :
+        (uint16_t)(270u + (((uint32_t)(raw - 1209u) * 48045u) >> 18u)));
+}
+
+static void lcd_top_row_draw_battery(uint16_t color)
+{
+    char text[5];
+    uint8_t length = 0u;
+    const uint8_t format = lcd_settings_value_index[SETTING_BATT_FORMAT];
+    if (format == 0u) {
+        lcd_top_row_draw_percent(13u, FONT_SMALL_GLYPH_BATTERY, 154u,
+                                 color);
+        return;
+    }
+    if (format == 1u) {
+        const uint16_t centivolts =
+            lcd_battery_voltage_centivolts(lcd_adc_battery_raw);
+        text[0] = (char)('0' + centivolts / 100u);
+        text[1] = '.';
+        text[2] = (char)('0' + (centivolts / 10u) % 10u);
+        text[3] = (char)('0' + centivolts % 10u);
+        text[4] = 'V';
+        length = 5u;
+    } else {
+        char reversed[4];
+        uint16_t raw = lcd_adc_battery_raw;
+        do {
+            reversed[length++] = (char)('0' + raw % 10u);
+            raw /= 10u;
+        } while (raw != 0u && length < sizeof(reversed));
+        for (uint8_t i = 0u; i < length; ++i) {
+            text[i] = reversed[length - i - 1u];
+        }
+    }
+    const uint16_t cells = (uint16_t)length + 1u;
+    const uint16_t width = cells * FONT_SMALL_CELL_WIDTH +
+        (cells - 1u) * LCD_SMALL_TEXT_GAP;
+    uint16_t x = (uint16_t)(154u + 1u - width);
+    lcd_top_row_draw_glyph(FONT_SMALL_GLYPH_BATTERY, x, LCD_WIDTH,
+                           LCD_TEXT_FOREGROUND);
+    x = (uint16_t)(x + FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP);
+    for (uint8_t i = 0u; i < length; ++i) {
+        lcd_top_row_draw_glyph(text[i], x, LCD_WIDTH, color);
+        x = (uint16_t)(x + FONT_SMALL_CELL_WIDTH + LCD_SMALL_TEXT_GAP);
+    }
+}
+
 static void lcd_top_row_draw_uptime(void)
 {
     const uint32_t total_minutes = board_uptime_seconds / 60u;
@@ -1824,16 +1874,16 @@ static void lcd_top_row_draw_uptime(void)
 static void lcd_top_row_draw_mode_letter(void)
 {
     if (lcd_indication_mode == 0u) {
-        lcd_top_row_draw_glyph('I', 60u, LCD_WIDTH, LCD_TEXT_RED);
+        lcd_top_row_draw_glyph('I', 48u, LCD_WIDTH, LCD_TEXT_RED);
     } else if (lcd_indication_mode == 2u) {
-        lcd_top_row_draw_glyph('S', 60u, LCD_WIDTH, LCD_TEXT_GREEN);
+        lcd_top_row_draw_glyph('S', 48u, LCD_WIDTH, LCD_TEXT_GREEN);
     }
 }
 
 static void lcd_top_row_draw_flashlight_letter(void)
 {
     if (!flashlight_manual_enabled) return;
-    lcd_top_row_draw_glyph('L', 68u, LCD_WIDTH, LCD_TEXT_YELLOW);
+    lcd_top_row_draw_glyph('L', 56u, LCD_WIDTH, LCD_TEXT_YELLOW);
 }
 
 static uint8_t lcd_debug_u32_digits(char *text, uint32_t value)
@@ -1974,20 +2024,35 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
                 value_length = lcd_debug_u32_digits(value, lcd_displayed_solar_percent);
                 value[value_length++] = '%';
             } else {
-                /* For 0..873, this fixed-point expression equals delta * 160 / 873. */
-                const uint16_t centivolts = raw < 1209u ? 270u :
-                    (raw > 2082u ? 430u : (uint16_t)(270u +
-                        (((uint32_t)(raw - 1209u) * 48045u) >> 18u)));
-                (void)lcd_debug_u32_digits(value, centivolts);
-                value[3] = value[2];
-                value[2] = value[1];
-                value[1] = '.';
-                value[4] = 'V';
-                value[5] = ' ';
-                value_length = 6u;
+                const uint8_t format =
+                    lcd_settings_value_index[SETTING_BATT_FORMAT];
+                if (format == 1u) {
+                    value_length = lcd_debug_u32_digits(value,
+                        row == 2u ? lcd_displayed_battery_percent :
+                            lcd_battery_start_percent);
+                    value[value_length++] = '%';
+                } else {
+                    const uint16_t centivolts =
+                        lcd_battery_voltage_centivolts(raw);
+                    value[0] = (char)('0' + centivolts / 100u);
+                    value[1] = '.';
+                    value[2] = (char)('0' + (centivolts / 10u) % 10u);
+                    value[3] = (char)('0' + centivolts % 10u);
+                    value[4] = 'V';
+                    value_length = 5u;
+                }
             }
-            lcd_debug_put_right(line, 16u, value, value_length);
-            value_length = lcd_debug_u32_digits(value, raw);
+            lcd_debug_put_right(line, row == 1u ? 14u : 15u,
+                value, value_length);
+            if (row != 1u &&
+                lcd_settings_value_index[SETTING_BATT_FORMAT] == 2u) {
+                value_length = lcd_debug_u32_digits(value,
+                    row == 2u ? lcd_displayed_battery_percent :
+                        lcd_battery_start_percent);
+                value[value_length++] = '%';
+            } else {
+                value_length = lcd_debug_u32_digits(value, raw);
+            }
             lcd_debug_put_right(line, 20u, value, value_length);
         } else {
             const uint32_t uptime = board_uptime_seconds;
@@ -2028,8 +2093,8 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
 
 static const uint8_t lcd_settings_item_order[LCD_SETTINGS_MENU_COUNT] = {
     23u, 0u, 1u, 2u, 3u, 4u, 16u, 24u, 25u, 26u, 27u, 17u,
-    12u, 22u, 28u, 5u, 6u, 7u, 20u, 21u, 9u, 10u, 11u, 8u,
-    15u, 13u, 14u, 18u, 19u
+    12u, 22u, 28u, 5u, 6u, 7u, 20u, 21u, 29u, 9u, 10u, 11u,
+    8u, 15u, 13u, 14u, 18u, 19u
 };
 
 static bool lcd_settings_item_is_visible(uint8_t item)
@@ -2072,7 +2137,7 @@ static const char *const lcd_settings_labels[LCD_SETTINGS_COUNT] = {
     "DOSE PREF", "RATE ROW 2", "LOG MEMORY", "RESET", "HV", "RATE CUSTOM",
     "ALARM STOP", "POWER OFF", "REBOOT", "TONE", "LONG PRESS",
     "DOSE ROW 2", "DOSE PERIOD", "DOSE SCREEN", "DOSE LIGHT",
-    "DOSE SOUND", "DOSE CUSTOM", "LED TIME"
+    "DOSE SOUND", "DOSE CUSTOM", "LED TIME", "BATT FORMAT"
 };
 
 /* Share value lists instead of reserving eleven pointers for every item. */
@@ -2099,6 +2164,7 @@ static const char *const rate_custom_values[] = {
 };
 static const char *const stop_values[] = { "CLEAR", "BUTTON" };
 static const char *const tone_values[] = { "STOCK", "CLASSIC" };
+static const char *const battery_format_values[] = { "%", "V", "RAW" };
 static const char *const long_press_values[] = {
     "300MS", "500MS", "700MS", "900MS", "1100MS", "1300MS"
 };
@@ -2145,17 +2211,18 @@ static uint8_t lcd_dose_row_option_count(void)
 static const char *const *const lcd_settings_value_lists[] = {
     indication_values, scale_values, timer_values, zero_values, unit_values,
     prefix_values, empty_values, reset_values, rate_custom_values, stop_values,
-    tone_values, long_press_values, dose_period_values, dose_alarm_values
+    tone_values, long_press_values, dose_period_values, dose_alarm_values,
+    battery_format_values
 };
 
 static const uint8_t lcd_settings_value_list_map[(LCD_SETTINGS_COUNT + 1u) / 2u] = {
     0x00u, 0x00u, 0x10u, 0x21u, 0x43u, 0x55u, 0x76u, 0x07u,
-    0x98u, 0x66u, 0xBAu, 0xC6u, 0x00u, 0xD0u, 0x01u
+    0x98u, 0x66u, 0xBAu, 0xC6u, 0x00u, 0xD0u, 0xE1u
 };
 
 static const uint8_t lcd_settings_value_counts[LCD_SETTINGS_COUNT] = {
     6u, 6u, 4u, 4u, 4u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 3u, 3u, 6u, 2u,
-    9u, 2u, 1u, 1u, 2u, 6u, 7u, 3u, 4u, 4u, 4u, 8u, 9u
+    9u, 2u, 1u, 1u, 2u, 6u, 7u, 3u, 4u, 4u, 4u, 8u, 9u, 3u
 };
 
 static __attribute__((noinline)) uint8_t lcd_settings_value_count(uint8_t item)
@@ -3577,10 +3644,9 @@ settings_line_draw:
                 LCD_TEXT_YELLOW : LCD_TEXT_FOREGROUND);
             const uint16_t battery_color = lcd_adc_usb_raw > 100u ?
                 LCD_TEXT_GREEN : LCD_TEXT_FOREGROUND;
-            lcd_top_row_draw_percent(7u, FONT_SMALL_GLYPH_SUN, 106u,
+            lcd_top_row_draw_percent(7u, FONT_SMALL_GLYPH_SUN, 101u,
                                      sun_color);
-            lcd_top_row_draw_percent(13u, FONT_SMALL_GLYPH_BATTERY, 154u,
-                                     battery_color);
+            lcd_top_row_draw_battery(battery_color);
 
             x_window[0] = 0u;
             x_window[1] = 0u;
@@ -4185,6 +4251,8 @@ static void lcd_debug_probe_spi(void)
 
 #define SETTINGS_EEPROM_BASE 160u
 #define SETTINGS_EEPROM_SLOT_SIZE (8u + SETTING_COUNT)
+#define SETTINGS_EEPROM_LEGACY_COUNT 29u
+#define SETTINGS_EEPROM_LEGACY_SLOT_SIZE 37u
 #define SETTINGS_EEPROM_MAGIC 0xD4u
 #define SETTINGS_EEPROM_MASK_OFFSET (2u + SETTING_COUNT)
 #define SETTINGS_EEPROM_SOURCE_OFFSET (SETTINGS_EEPROM_MASK_OFFSET + 4u)
@@ -4278,6 +4346,36 @@ static uint8_t settings_record_crc(const uint8_t *record)
     return crc;
 }
 
+static bool settings_legacy_record_read(uint8_t slot, uint8_t *record)
+{
+    const uint16_t base = (uint16_t)(SETTINGS_EEPROM_BASE +
+        slot * SETTINGS_EEPROM_LEGACY_SLOT_SIZE);
+    const volatile uint8_t *stored = (const volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + base);
+    uint8_t crc = 0x6Du;
+    for (uint8_t i = 0u; i < SETTINGS_EEPROM_LEGACY_SLOT_SIZE; ++i) {
+        record[i] = stored[i];
+    }
+    for (uint8_t i = 1u; i < 36u; ++i) {
+        crc = (uint8_t)((crc << 1u) | (crc >> 7u));
+        crc ^= record[i];
+    }
+    if (record[0] != SETTINGS_EEPROM_MAGIC || record[36] != crc) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < SETTINGS_EEPROM_LEGACY_COUNT; ++i) {
+        if (record[2u + i] >= lcd_settings_value_counts[i]) return false;
+    }
+    if (record[2u + SETTING_UNIT] == 1u &&
+        (record[2u + SETTING_RATE_PREFIX] >= 2u ||
+         record[2u + SETTING_DOSE_PREFIX] >= 2u)) return false;
+    if (record[2u + SETTING_RATE_ROW_2] >=
+            (record[2u + SETTING_UNIT] == 1u ? 5u : 4u) ||
+        record[2u + SETTING_DOSE_ROW_2] >= 7u || record[35] >
+            BOARD_LOG_MEMORY_SPI) return false;
+    return true;
+}
+
 static bool settings_record_read(uint8_t slot, uint8_t *record)
 {
     const uint16_t base = (uint16_t)(SETTINGS_EEPROM_BASE +
@@ -4347,6 +4445,34 @@ static void settings_eeprom_load(void)
     const bool valid0 = settings_record_read(0u, record0);
     const bool valid1 = settings_record_read(1u, record1);
     if (!valid0 && !valid1) {
+        uint8_t legacy0[SETTINGS_EEPROM_LEGACY_SLOT_SIZE];
+        uint8_t legacy1[SETTINGS_EEPROM_LEGACY_SLOT_SIZE];
+        const bool old0 = settings_legacy_record_read(0u, legacy0);
+        const bool old1 = settings_legacy_record_read(1u, legacy1);
+        if (old0 || old1) {
+            const uint8_t *legacy = old1 && (!old0 ||
+                (int8_t)(legacy1[1] - legacy0[1]) > 0) ? legacy1 : legacy0;
+            lcd_settings_sequence = legacy[1];
+            for (uint8_t i = 0u; i < SETTINGS_EEPROM_LEGACY_COUNT; ++i) {
+                lcd_settings_value_index[i] = legacy[2u + i];
+            }
+            lcd_settings_value_index[SETTING_BATT_FORMAT] = 0u;
+            lcd_settings_hidden_mask = (uint32_t)legacy[31] |
+                ((uint32_t)legacy[32] << 8u) |
+                ((uint32_t)legacy[33] << 16u) |
+                ((uint32_t)legacy[34] << 24u);
+            lcd_settings_hidden_mask &= ((1UL << SETTING_COUNT) - 1UL);
+            if (!lcd_settings_has_visible_non_dose_prefix(
+                    lcd_settings_hidden_mask)) {
+                lcd_settings_hidden_mask = settings_visibility_default_mask();
+            }
+            settings_log_source = legacy[35];
+            settings_log_memory = lcd_settings_value_index[SETTING_USE_SPI];
+            settings_spi_enabled = settings_log_memory ==
+                BOARD_LOG_MEMORY_SPI;
+            (void)settings_eeprom_save();
+            return;
+        }
         lcd_settings_hidden_mask = settings_visibility_default_mask();
         return;
     }
@@ -4571,6 +4697,10 @@ static void lcd_settings_apply_current(void)
         lcd_settings_selected == SETTING_SCREEN_BRIGHT ||
         lcd_settings_selected == SETTING_LED_TIME) {
         lcd_apply_brightness_settings();
+    }
+    if (lcd_settings_selected == SETTING_BATT_FORMAT) {
+        lcd_cpm_redraw_pending = true;
+        lcd_debug_redraw_pending = true;
     }
     if (lcd_settings_selected == 13u) {
         (void)settings_spi_apply();
