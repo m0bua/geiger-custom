@@ -28,7 +28,8 @@ static bool read_record(void *context, log_record_kind_t kind, uint16_t epoch,
     history_reader_t *reader = context;
     if (reader->date_limit && start > reader->date_limit) return false;
     log_stored_t current;
-    if (reader->live && kind == LOG_RECORD_MINUTE && log_writer_live(kind, &current) &&
+    if (reader->live && (kind == LOG_RECORD_MINUTE || kind == LOG_RECORD_HOUR || kind == LOG_RECORD_DAY) &&
+        log_writer_live(kind, &current) &&
         current.epoch == epoch && current.time == start &&
         ((current.year & LOG_YEAR_VALID) != 0u) == reader->time.calendar_valid) {
         *record = current.record; *live = true; return true;
@@ -59,7 +60,12 @@ bool log_history_next_from(uint8_t memory, uint8_t type, uint32_t period,
     uint8_t last_kind = type == LOG_RECORD_ALERT ? LOG_RECORD_ALERT :
         (period >= 86400u ? LOG_RECORD_DAY :
          (period >= 3600u ? LOG_RECORD_HOUR : LOG_RECORD_MINUTE));
-    uint8_t first_kind = type == LOG_RECORD_ALERT ? LOG_RECORD_ALERT : LOG_RECORD_MINUTE;
+    /* Minute records are needed to recover an hour that was never closed,
+     * but they make every SPI page perform a second full-stream search. The
+     * current hour/day is now supplied by the RAM live aggregate, so use the
+     * matching persisted stream directly for these graph modes. */
+    uint8_t first_kind = type == LOG_RECORD_ALERT ? LOG_RECORD_ALERT :
+        (period >= 3600u ? last_kind : LOG_RECORD_MINUTE);
     for (uint8_t kind = first_kind; kind <= last_kind; ++kind) {
         bool got = memory == BOARD_LOG_MEMORY_SPI ?
             spi_log_find((log_record_kind_t)kind, cursor->epoch, cursor->time,
@@ -71,7 +77,9 @@ bool log_history_next_from(uint8_t memory, uint8_t type, uint32_t period,
             best = candidate; found = true;
         }
     }
-    log_record_kind_t live_kind = type == LOG_RECORD_ALERT ? LOG_RECORD_ALERT : LOG_RECORD_MINUTE;
+    log_record_kind_t live_kind = type == LOG_RECORD_ALERT ? LOG_RECORD_ALERT :
+        (period >= 86400u ? LOG_RECORD_DAY :
+         (period >= 3600u ? LOG_RECORD_HOUR : LOG_RECORD_MINUTE));
     if (include_live && log_writer_live(live_kind, &candidate) &&
         (!date_limit || ((candidate.year & LOG_YEAR_VALID) && candidate.time <= date_limit)) &&
         (candidate.epoch < cursor->epoch ||

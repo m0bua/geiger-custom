@@ -43,6 +43,9 @@ typedef struct {
     uint32_t key;
     uint32_t period_start;
     uint32_t period_index;
+    uint32_t count;
+    uint32_t maximum_cpm;
+    uint32_t covered_seconds;
     uint16_t epoch;
     uint8_t year_descriptor;
     uint8_t segment_id;
@@ -90,6 +93,43 @@ static uint8_t current_led_level(void)
 static bool append_record(log_record_kind_t kind, uint16_t epoch,
                           uint8_t year_descriptor,
                           const log_record_t *record);
+
+static void seed_live_period(log_record_kind_t kind,
+                             period_accumulator_t *accumulator)
+{
+    log_query_time_context_t context = {
+        (accumulator->year_descriptor & SPI_LOG_YEAR_VALID) != 0u
+    };
+    log_query_read_fn read_record = active_log_memory == BOARD_LOG_MEMORY_EEPROM ?
+        log_eeprom_query_read : spi_log_query_read;
+    log_point_t point;
+
+    accumulator->count = 0u;
+    accumulator->maximum_cpm = 0u;
+    accumulator->covered_seconds = 0u;
+    if (log_query_aggregate(read_record, &context, accumulator->epoch,
+            accumulator->period_start, log_record_period_seconds(kind),
+            &point) && point.available) {
+        accumulator->count = point.count;
+        accumulator->maximum_cpm = point.maximum_cpm;
+        accumulator->covered_seconds = point.covered_seconds;
+    }
+}
+
+static void update_live_period(period_accumulator_t *accumulator,
+                               uint32_t period_seconds, uint32_t pulses,
+                               uint32_t cpm)
+{
+    if (!accumulator->active) return;
+    if (UINT32_MAX - accumulator->count < pulses)
+        accumulator->count = UINT32_MAX;
+    else
+        accumulator->count += pulses;
+    if (cpm > accumulator->maximum_cpm)
+        accumulator->maximum_cpm = cpm;
+    if (accumulator->covered_seconds < period_seconds)
+        ++accumulator->covered_seconds;
+}
 
 #define SPI_LAYOUT_TAG_0 0xD4u
 #define SPI_LAYOUT_TAG_1 0x2Bu
@@ -193,6 +233,11 @@ static void update_period_tracker(log_record_kind_t kind,
         tracker->segment_id =
             (uint8_t)(current_epoch % LOG_SEGMENT_ID_COUNT);
         tracker->year_descriptor = year_descriptor;
+        /* Reconstruct an in-progress period only after boot or a storage
+         * switch.  During a normal hour/day rollover the new period is empty;
+         * rescanning its minute/hour history here would stall the main loop. */
+        if (!have_clock_sample)
+            seed_live_period(kind, tracker);
         tracker->active = true;
     }
 }
@@ -219,14 +264,18 @@ static void minute_cover_through_boundary(void)
     if (!minute_accumulator.active ||
         minute_accumulator.first_source_time == UINT32_MAX) return;
     const uint32_t offset = minute_accumulator.first_source_time % 60u;
-    const uint16_t covered = (uint16_t)(60u - offset);
+    /* The scheduler calls the writer on the first tick after the second
+     * boundary.  With the stable uptime/RTC clock this can leave the first
+     * source timestamp at offset 1 even though the whole minute was sampled;
+     * do not report that scheduler phase as a one-second data gap. */
+    const uint16_t covered = offset == 1u ? 60u : (uint16_t)(60u - offset);
     if (minute_accumulator.samples < covered)
         minute_accumulator.samples = covered;
 
     if (minute_accumulator.persistent_first_source_time != UINT32_MAX) {
         const uint32_t persistent_offset =
             minute_accumulator.persistent_first_source_time % 60u;
-        const uint16_t persistent_covered =
+        const uint16_t persistent_covered = persistent_offset == 1u ? 60u :
             (uint16_t)(60u - persistent_offset);
         if (minute_accumulator.persistent_samples < persistent_covered)
             minute_accumulator.persistent_samples = persistent_covered;
@@ -424,6 +473,8 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
 
     update_period_tracker(LOG_RECORD_HOUR, &hour_accumulator, source_time, calendar_valid);
     update_period_tracker(LOG_RECORD_DAY, &day_accumulator, source_time, calendar_valid);
+    update_live_period(&hour_accumulator, 3600u, pulses, cpm);
+    update_live_period(&day_accumulator, 86400u, pulses, cpm);
     if (minute_accumulator.active) {
         if (minute_accumulator.first_source_time == UINT32_MAX)
             minute_accumulator.first_source_time = source_time;
@@ -537,6 +588,20 @@ bool log_writer_live(log_record_kind_t kind, log_stored_t *item)
             .time = minute_accumulator.minute_key * 60u,
             .epoch = minute_accumulator.epoch,
             .year = minute_accumulator.year_descriptor, .id = UINT16_MAX
+        };
+        return true;
+    }
+    if ((kind == LOG_RECORD_HOUR && hour_accumulator.active) ||
+        (kind == LOG_RECORD_DAY && day_accumulator.active)) {
+        const period_accumulator_t *period = kind == LOG_RECORD_HOUR ?
+            &hour_accumulator : &day_accumulator;
+        *item = (log_stored_t){
+            .record = {period->period_index, period->count,
+                period->maximum_cpm, 0u, period->segment_id,
+                period->covered_seconds},
+            .time = period->period_start,
+            .epoch = period->epoch,
+            .year = period->year_descriptor, .id = UINT16_MAX
         };
         return true;
     }
