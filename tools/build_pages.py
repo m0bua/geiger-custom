@@ -1,4 +1,4 @@
-"""Assemble the static GitHub Pages site for Dosimetr."""
+"""Assemble the static GitHub Pages site for Dosimeter."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def main() -> int:
         if not tag or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for char in tag):
             continue
         assets = {item.get("name"): item for item in release.get("assets", [])}
-        html_asset = assets.get("Dosimetr.html") or next(
+        html_asset = assets.get("Dosimeter.html") or next(
             (item for name, item in assets.items()
              if isinstance(name, str) and name.lower().endswith(".html")),
             None,
@@ -89,8 +89,8 @@ def main() -> int:
             shutil.copy2(ROOT / "app/app-icon.svg", version_dir / "app-icon.svg")
             manifest = {
                 "id": "./index.html",
-                "name": "Dosimetr",
-                "short_name": "Dosimetr",
+                "name": "Dosimeter",
+                "short_name": "Dosimeter",
                 "start_url": "./index.html",
                 "scope": "./",
                 "display": "standalone",
@@ -122,7 +122,7 @@ def main() -> int:
             html_download = html.escape(str(html_asset.get("browser_download_url", "")), quote=True)
             if html_download:
                 downloads.append(f'<a href="{html_download}">HTML</a>')
-        for asset_name, label in (("Dosimetr.exe", "Windows"),
+        for asset_name, label in (("Dosimeter.exe", "Windows"),
                                   ("firmware.bin", "BIN"),
                                   ("spi-service-firmware.bin", "SPI service")):
             release_asset = assets.get(asset_name)

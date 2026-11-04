@@ -147,7 +147,7 @@ def main() -> int:
     spec_dir = SCRATCH / "spec"
     command = [
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile",
-        "--windowed", "--name", "Dosimetr", "--distpath", str(output_dir),
+        "--windowed", "--name", "Dosimeter", "--distpath", str(output_dir),
         "--workpath", str(work_dir), "--specpath", str(spec_dir),
         "--icon", str(icon_path),
         "--add-data", f"{STAGE};.", "--collect-all", "webview",
@@ -155,7 +155,7 @@ def main() -> int:
         "--collect-all", "serial", str(TOOLS / "geiger2_desktop.py"),
     ]
     run(command)
-    executable = output_dir / "Dosimetr.exe"
+    executable = output_dir / "Dosimeter.exe"
     print(f"Windows app: {executable} ({executable.stat().st_size:,} bytes)")
     print("The executable contains the shared UI, firmware image, and local COM bridge.")
     print("Microsoft Edge WebView2 Runtime is required on the target PC.")

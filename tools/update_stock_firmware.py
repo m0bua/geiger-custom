@@ -30,7 +30,7 @@ VERSION_RE = re.compile(r"(?<!\d)(\d+)\.(\d+)\.(\d+)(?!\d)")
 
 
 def fetch(url: str, *, json_response: bool = False) -> bytes | object:
-    request = Request(url, headers={"User-Agent": "Dosimetr-stock-firmware-updater/1.0"})
+    request = Request(url, headers={"User-Agent": "Dosimeter-stock-firmware-updater/1.0"})
     with urlopen(request, timeout=25) as response:
         final = urlparse(response.geturl())
         if final.scheme != "https" or final.hostname not in ALLOWED_HOSTS:
