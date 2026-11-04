@@ -1050,9 +1050,9 @@ function percentFromAdc(raw, empty, full) {
 }
 
 function voltageFromPowerAdc(raw) {
-  const decivolts = raw < 1209 ? 27 :
-    (raw > 2082 ? 43 : 27 + Math.floor((raw - 1182) / 55));
-  return `${Math.floor(decivolts / 10)}.${decivolts % 10}V`;
+  const centivolts = raw < 1209 ? 270 :
+    (raw > 2082 ? 430 : 270 + Math.floor(((raw - 1209) * 160) / 873));
+  return `${Math.floor(centivolts / 100)}.${String(centivolts % 100).padStart(2, '0')}V`;
 }
 
 function formatRadiation(valueUsv, prefixSetting, symbol, perHour, digitLimit = null) {
@@ -2617,9 +2617,9 @@ function renderOfflinePreview() {
   elements.debugTime.textContent = '--:--:--';
   elements.debugCount.textContent = '0';
   elements.debugBatteryPercent.textContent = '0%';
-  elements.debugBatteryDetail.textContent = '0 · 0.0V';
+  elements.debugBatteryDetail.textContent = '0 · 0.00V';
   elements.debugBatteryStartPercent.textContent = '0%';
-  elements.debugBatteryStartDetail.textContent = '0 · 0.0V';
+  elements.debugBatteryStartDetail.textContent = '0 · 0.00V';
   elements.debugSolarPercent.textContent = '0%';
   elements.debugSolarRaw.textContent = '0';
   elements.debugUsbRaw.textContent = '0';
