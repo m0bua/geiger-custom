@@ -189,7 +189,7 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         write_u16(&response[4], PROTOCOL_V1_MAX_PAYLOAD);
         write_u32(&response[6], (1u << 0u) | (1u << 1u) |
             (1u << 2u) | (1u << 3u) | (1u << 4u) | (1u << 5u) |
-            (1u << 6u) | (1u << 7u) | (1u << 8u));
+            (1u << 6u) | (1u << 7u) | (1u << 8u) | (1u << 9u));
         response_length = 10u;
     } else if (opcode == PROTOCOL_V1_OP_GET_STATUS && payload_length == 0u) {
         /* status, uptime, today's CNT, CPM, dose in nSv, ADC raw, flags */
@@ -233,6 +233,30 @@ static void handle_frame(uint8_t *frame, uint8_t length)
     } else if (opcode == PROTOCOL_V1_OP_SET_SETTING &&
                payload_length == 2u) {
         if (!board_display_setting_remote_write(frame[8], frame[9])) {
+            response[0] = PROTOCOL_STATUS_INVALID_VALUE;
+        }
+    } else if (opcode == PROTOCOL_V1_OP_GET_THEME && payload_length == 0u) {
+        const uint8_t count = board_display_theme_color_count();
+        uint16_t colors[7];
+        uint8_t graph_dimming_percent;
+        response[1] = count;
+        if (count > 7u || !board_display_theme_read(colors, 7u,
+                &graph_dimming_percent)) {
+            response[0] = PROTOCOL_STATUS_INVALID_VALUE;
+            response_length = 1u;
+        } else {
+            for (uint8_t i = 0u; i < count; ++i) {
+                write_u16(&response[2u + (uint16_t)i * 2u], colors[i]);
+            }
+            response[2u + (uint16_t)count * 2u] = graph_dimming_percent;
+            response_length = (uint16_t)(3u + count * 2u);
+        }
+    } else if (opcode == PROTOCOL_V1_OP_SET_THEME && payload_length == 15u) {
+        uint16_t colors[7];
+        for (uint8_t i = 0u; i < 7u; ++i) {
+            colors[i] = read_u16(&frame[8u + (uint16_t)i * 2u]);
+        }
+        if (!board_display_theme_write(colors, 7u, frame[22])) {
             response[0] = PROTOCOL_STATUS_INVALID_VALUE;
         }
     } else if (opcode == PROTOCOL_V1_OP_SET_RTC) {

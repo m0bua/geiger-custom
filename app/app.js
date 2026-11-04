@@ -10,6 +10,8 @@ const OP_GET_LOG_PAGE = 6;
 const OP_GET_SPI_DUMP_PAGE = 7;
 const OP_SPI_PROGRAM_PAGE = 10;
 const OP_SPI_ERASE_SECTOR = 11;
+const OP_GET_THEME = 12;
+const OP_SET_THEME = 13;
 const CAP_GET_STATUS = 1 << 0;
 const OP_SET_RTC = 8;
 const OP_DEVICE_ACTION = 9;
@@ -18,6 +20,38 @@ const CAP_SET_SETTING = 1 << 2;
 const CAP_GET_SPI_DUMP = 1 << 5;
 const CAP_SET_RTC = 1 << 6;
 const CAP_DEVICE_ACTION = 1 << 7;
+const CAP_THEME_CONFIG = 1 << 9;
+const THEME_COLORS = [
+  {id: 'background', label: 'Background'}, {id: 'text', label: 'Text'},
+  {id: 'accent', label: 'Accent'}, {id: 'blue', label: 'Blue'},
+  {id: 'green', label: 'Green'}, {id: 'yellow', label: 'Yellow'},
+  {id: 'red', label: 'Red'},
+];
+const THEME_COLOR_GROUPS = [
+  {label: 'Interface', start: 0, end: 3},
+  {label: 'Rate levels', start: 3, end: 7},
+];
+const DEFAULT_THEME_RGB565 = [0x0000, 0xd6ba, 0x77e0, 0x001f, 0x07e0, 0xffe0, 0xf800];
+const DEFAULT_THEME_DIMMING = 30;
+const LIGHT_THEME_RGB565 = [0xffff, 0x0000, 0x0320, 0x02d7, 0x0400, 0xbc21, 0xc145];
+const OCEAN_THEME_RGB565 = [0x0005, 0xc7d9, 0x06bf, 0x4e5e, 0x26b3, 0xfe8c, 0xfb4d];
+const AMBER_THEME_RGB565 = [0x0000, 0xfef7, 0xfd20, 0x5d7c, 0x8dec, 0xfd80, 0xf2c5];
+const VIOLET_THEME_RGB565 = [0x1083, 0xe6de, 0xdbdf, 0x7d1e, 0x8eb3, 0xe60f, 0xe36e];
+const MONOKAI_THEME_RGB565 = [0x2144, 0xffde, 0xa705, 0x66dd, 0xa705, 0xe6ce, 0xf92e];
+const DRACULA_THEME_RGB565 = [0x2946, 0xffde, 0xbc9f, 0x8f5f, 0x57cf, 0xf7d1, 0xfaaa];
+const NORD_THEME_RGB565 = [0x29a8, 0xdefd, 0x8e1a, 0x8518, 0xa5f1, 0xee51, 0xbb0d];
+const SOLARIZED_THEME_RGB565 = [0x0146, 0x84b2, 0x245a, 0x245a, 0x84c0, 0xb440, 0xd985];
+const THEME_PRESETS = {
+  dark: {label: 'Dark', colors: DEFAULT_THEME_RGB565, dimming: DEFAULT_THEME_DIMMING},
+  light: {label: 'Light', colors: LIGHT_THEME_RGB565, dimming: DEFAULT_THEME_DIMMING},
+  ocean: {label: 'Ocean', colors: OCEAN_THEME_RGB565, dimming: DEFAULT_THEME_DIMMING},
+  amber: {label: 'Amber', colors: AMBER_THEME_RGB565, dimming: DEFAULT_THEME_DIMMING},
+  violet: {label: 'Violet', colors: VIOLET_THEME_RGB565, dimming: DEFAULT_THEME_DIMMING},
+  monokai: {label: 'Monokai', colors: MONOKAI_THEME_RGB565, dimming: DEFAULT_THEME_DIMMING},
+  dracula: {label: 'Dracula', colors: DRACULA_THEME_RGB565, dimming: DEFAULT_THEME_DIMMING},
+  nord: {label: 'Nord', colors: NORD_THEME_RGB565, dimming: DEFAULT_THEME_DIMMING},
+  solarized: {label: 'Solarized Dark', colors: SOLARIZED_THEME_RGB565, dimming: DEFAULT_THEME_DIMMING},
+};
 const MAX_PAYLOAD = 262;
 const PROTOCOL_OPCODE_NAMES = new Map([
   [OP_HELLO, 'HELLO'], [OP_GET_STATUS, 'GET_STATUS'],
@@ -26,6 +60,7 @@ const PROTOCOL_OPCODE_NAMES = new Map([
   [OP_GET_SPI_DUMP_PAGE, 'GET_SPI_DUMP_PAGE'], [OP_SET_RTC, 'SET_RTC'],
   [OP_DEVICE_ACTION, 'DEVICE_ACTION'], [OP_SPI_PROGRAM_PAGE, 'SPI_PROGRAM_PAGE'],
   [OP_SPI_ERASE_SECTOR, 'SPI_ERASE_SECTOR'],
+  [OP_GET_THEME, 'GET_THEME'], [OP_SET_THEME, 'SET_THEME'],
 ]);
 const MAX_ENCODED_FRAME = MAX_PAYLOAD + 10 + Math.ceil((MAX_PAYLOAD + 10) / 254);
 const LOG_MAX_RECORDS_PER_REQUEST = 10;
@@ -327,6 +362,11 @@ const elements = {
   aboutPage: document.querySelector('#about-page'),
   settingsStatus: document.querySelector('#settings-status'),
   settingsList: document.querySelector('#settings-list'),
+  themeStatus: document.querySelector('#theme-status'),
+  themePreset: document.querySelector('#theme-preset'),
+  themeColors: document.querySelector('#theme-colors'),
+  themeConfigCode: document.querySelector('#theme-config-code'),
+  themeApply: document.querySelector('#theme-apply'),
   spiConfirmDialog: document.querySelector('#spi-confirm-dialog'),
   spiConfirmCancel: document.querySelector('#spi-confirm-cancel'),
   spiConfirmAccept: document.querySelector('#spi-confirm-accept'),
@@ -964,6 +1004,14 @@ let protocolCapabilities = 0;
 let protocolMaxPayload = 64;
 let deviceSettings = null;
 let deviceHiddenSettings = null;
+let deviceTheme = null;
+let deviceThemeDimming = null;
+let themeDraft = DEFAULT_THEME_RGB565.slice();
+let themeDraftDimming = DEFAULT_THEME_DIMMING;
+let themePreset = 'dark';
+let demoTheme = DEFAULT_THEME_RGB565.slice();
+let demoThemeDimming = DEFAULT_THEME_DIMMING;
+let themeImportInvalid = false;
 let selectedResetAction = 0;
 let logInfo = null;
 let selectedLogType = 'minutes';
@@ -2587,7 +2635,294 @@ function renderSettings() {
     'Use Show to control which settings appear in the device menu. Visibility requires firmware protocol support.';
 }
 
+function rgb565ToHex(color) {
+  const red = (color >> 11) & 0x1f;
+  const green = (color >> 5) & 0x3f;
+  const blue = color & 0x1f;
+  const expand = (value, max) => Math.round(value * 255 / max);
+  return `#${[expand(red, 31), expand(green, 63), expand(blue, 31)]
+    .map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function hexToRgb565(hex) {
+  const value = Number.parseInt(hex.slice(1), 16);
+  return (((value >> 19) & 0x1f) << 11) |
+    (((value >> 10) & 0x3f) << 5) | ((value >> 3) & 0x1f);
+}
+
+function encodeThemeConfigCode(colors, dimming = DEFAULT_THEME_DIMMING) {
+  const bytes = colors.flatMap((color) => [color & 0xff, color >> 8]);
+  bytes.push(dimming);
+  return `T2:${bytes.map((byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+}
+
+function decodeThemeConfigCode(code) {
+  const normalized = code.trim();
+  const v2 = /^T2:([0-9a-f]{30})$/i.exec(normalized);
+  const v1 = /^T1:([0-9a-f]{28})$/i.exec(normalized);
+  const match = v2 || v1;
+  if (!match) return null;
+  const bytes = Array.from({length: v2 ? 15 : 14}, (_, index) =>
+    Number.parseInt(match[1].slice(index * 2, index * 2 + 2), 16));
+  const dimming = v2 ? bytes[14] : DEFAULT_THEME_DIMMING;
+  if (dimming > 100) return null;
+  return {
+    colors: THEME_COLORS.map((_, index) =>
+      bytes[index * 2] | (bytes[index * 2 + 1] << 8)),
+    dimming,
+  };
+}
+
+function syncThemeConfigCode() {
+  elements.themeConfigCode.value = encodeThemeConfigCode(themeDraft, themeDraftDimming);
+  elements.themeConfigCode.removeAttribute('aria-invalid');
+  themeImportInvalid = false;
+}
+
+function detectThemePreset(colors, dimming) {
+  for (const [id, preset] of Object.entries(THEME_PRESETS)) {
+    if (dimming === preset.dimming &&
+        colors.every((color, index) => color === preset.colors[index])) return id;
+  }
+  return 'custom';
+}
+
+function themeCodesValid() {
+  return !themeImportInvalid && decodeThemeConfigCode(elements.themeConfigCode.value) !== null &&
+    [...elements.themeColors.querySelectorAll('input.theme-color-code')]
+    .every((input) => /^#[0-9a-f]{6}$/i.test(input.value));
+}
+
+function updateThemeApplyState(supported) {
+  const current = serial ? deviceTheme : demoTheme;
+  const currentDimming = serial ? deviceThemeDimming : demoThemeDimming;
+  elements.themeApply.disabled = !supported || !current || !themeCodesValid() ||
+    (themeDraftDimming === currentDimming &&
+      themeDraft.every((color, index) => color === current[index]));
+}
+
+function renderThemeControls(colors = themeDraft) {
+  const supported = !serial || (protocolCapabilities & CAP_THEME_CONFIG) !== 0;
+  elements.themePreset.value = themePreset;
+  elements.themePreset.disabled = !supported;
+  elements.themeColors.replaceChildren();
+  THEME_COLOR_GROUPS.forEach(({label: groupLabel, start, end}) => {
+    const group = document.createElement('div');
+    group.className = 'theme-color-group';
+    const title = document.createElement('div');
+    title.className = 'theme-color-group-title';
+    title.textContent = groupLabel;
+    const grid = document.createElement('div');
+    grid.className = 'theme-color-grid';
+    for (let index = start; index < end; index += 1) {
+      const {label} = THEME_COLORS[index];
+      const row = document.createElement('div');
+      row.className = 'theme-color-control';
+      const name = document.createElement('span');
+      name.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'color';
+      input.value = rgb565ToHex(colors[index]);
+      input.dataset.themeColorIndex = String(index);
+      input.disabled = !supported;
+      input.setAttribute('aria-label', `${label} color`);
+      const code = document.createElement('input');
+      code.type = 'text';
+      code.className = 'theme-color-code';
+      code.value = input.value.toUpperCase();
+      code.dataset.themeColorIndex = String(index);
+      code.maxLength = 7;
+      code.pattern = '#[0-9A-Fa-f]{6}';
+      code.spellcheck = false;
+      code.disabled = !supported;
+      code.setAttribute('aria-label', `${label} RGB hex code`);
+      input.addEventListener('pointerdown', () => {
+        themePreset = 'custom';
+        elements.themePreset.value = themePreset;
+      });
+      input.addEventListener('input', () => {
+        code.removeAttribute('aria-invalid');
+        themeDraft[index] = hexToRgb565(input.value);
+        input.value = rgb565ToHex(themeDraft[index]);
+        code.value = input.value.toUpperCase();
+        themePreset = 'custom';
+        elements.themePreset.value = themePreset;
+        syncThemeConfigCode();
+        updateThemeApplyState(supported);
+      });
+      code.addEventListener('input', () => {
+        code.removeAttribute('aria-invalid');
+        if (!/^#[0-9a-f]{6}$/i.test(code.value)) {
+          code.setAttribute('aria-invalid', 'true');
+          updateThemeApplyState(supported);
+          return;
+        }
+        themeDraft[index] = hexToRgb565(code.value);
+        input.value = rgb565ToHex(themeDraft[index]);
+        code.value = input.value.toUpperCase();
+        themePreset = 'custom';
+        elements.themePreset.value = themePreset;
+        syncThemeConfigCode();
+        updateThemeApplyState(supported);
+      });
+      row.append(name, input, code);
+      grid.append(row);
+    }
+    if (groupLabel === 'Interface') {
+      const dimming = document.createElement('label');
+      dimming.className = 'theme-color-control theme-dimming-control';
+      dimming.htmlFor = 'theme-graph-dimming';
+      const name = document.createElement('span');
+      name.textContent = 'Graph dimming';
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.id = 'theme-graph-dimming';
+      input.min = '0';
+      input.max = '100';
+      input.step = '1';
+      input.value = String(themeDraftDimming);
+      input.disabled = !supported;
+      const suffix = document.createElement('span');
+      suffix.textContent = '%';
+      input.addEventListener('input', () => {
+        const value = Number(input.value);
+        if (!Number.isInteger(value) || value < 0 || value > 100) {
+          input.setAttribute('aria-invalid', 'true');
+          updateThemeApplyState(supported);
+          return;
+        }
+        input.removeAttribute('aria-invalid');
+        themeDraftDimming = value;
+        themePreset = detectThemePreset(themeDraft, themeDraftDimming);
+        elements.themePreset.value = themePreset;
+        syncThemeConfigCode();
+        updateThemeApplyState(supported);
+      });
+      dimming.append(name, input, suffix);
+      grid.append(dimming);
+    }
+    group.append(title, grid);
+    elements.themeColors.append(group);
+  });
+  syncThemeConfigCode();
+  updateThemeApplyState(supported);
+  if (!serial) {
+    elements.themeStatus.textContent = 'Offline preview · edit and apply locally; connect to save to a device.';
+  } else if (!supported) {
+    elements.themeStatus.textContent = 'Theme editing is not supported by this firmware.';
+  }
+}
+
+async function loadTheme() {
+  if (!serial || (protocolCapabilities & CAP_THEME_CONFIG) === 0) {
+    renderThemeControls();
+    return;
+  }
+  elements.themeStatus.textContent = 'Reading theme…';
+  try {
+    const payload = await serial.request(OP_GET_THEME);
+    if (payload.length !== 17 || payload[0] !== 0 || payload[1] !== THEME_COLORS.length ||
+        payload[16] > 100) {
+      throw new ProtocolError('Invalid display theme response.');
+    }
+    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    deviceTheme = THEME_COLORS.map((_, index) => view.getUint16(2 + index * 2, true));
+    deviceThemeDimming = payload[16];
+    themeDraft = deviceTheme.slice();
+    themeDraftDimming = deviceThemeDimming;
+    themePreset = detectThemePreset(themeDraft, themeDraftDimming);
+    renderThemeControls();
+    elements.themeStatus.textContent = 'Loaded from device';
+  } catch (error) {
+    elements.themeStatus.textContent = error.message;
+    logDiagnostic('GET_THEME failed.', error);
+  }
+}
+
+async function applyTheme() {
+  if (!serial) {
+    demoTheme = themeDraft.slice();
+    demoThemeDimming = themeDraftDimming;
+    themePreset = detectThemePreset(demoTheme, demoThemeDimming);
+    renderThemeControls();
+    elements.themeStatus.textContent = 'Offline preview updated · connect to save this palette to a device.';
+    return;
+  }
+  if (!deviceTheme || (protocolCapabilities & CAP_THEME_CONFIG) === 0 ||
+      !themeCodesValid()) return;
+  const button = elements.themeApply;
+  button.disabled = true;
+  elements.themeStatus.textContent = 'Saving theme…';
+  try {
+    const payload = new Uint8Array(THEME_COLORS.length * 2 + 1);
+    const view = new DataView(payload.buffer);
+    themeDraft.forEach((color, index) => view.setUint16(index * 2, color, true));
+    payload[payload.length - 1] = themeDraftDimming;
+    const response = await serial.request(OP_SET_THEME, payload);
+    if (response.length !== 1 || response[0] !== 0) {
+      throw new ProtocolError('Device could not save the display theme.');
+    }
+    deviceTheme = themeDraft.slice();
+    deviceThemeDimming = themeDraftDimming;
+    themePreset = detectThemePreset(deviceTheme, deviceThemeDimming);
+    elements.themeStatus.textContent = 'Applied and saved on device';
+    logDiagnostic('Display theme applied and saved.');
+  } catch (error) {
+    elements.themeStatus.textContent = error.message;
+    logDiagnostic('SET_THEME failed.', error);
+    await loadTheme();
+  } finally {
+    renderThemeControls();
+  }
+}
+
+function selectThemePreset(preset) {
+  themePreset = preset;
+  if (THEME_PRESETS[preset]) {
+    themeDraft = THEME_PRESETS[preset].colors.slice();
+    themeDraftDimming = THEME_PRESETS[preset].dimming;
+  }
+  renderThemeControls();
+  elements.themeStatus.textContent = preset === 'custom' ?
+    'Custom palette selected. Edit colors, then apply.' :
+    `${THEME_PRESETS[preset].label} palette selected. Apply to save it to the device.`;
+}
+
+function importThemeConfigCode() {
+  const decoded = decodeThemeConfigCode(elements.themeConfigCode.value);
+  const supported = !serial || (protocolCapabilities & CAP_THEME_CONFIG) !== 0;
+  if (!decoded) {
+    themeImportInvalid = true;
+    elements.themeConfigCode.setAttribute('aria-invalid', 'true');
+    elements.themeStatus.textContent = 'Invalid palette code. Expected T2: followed by 30 hexadecimal digits (T1 codes are also accepted).';
+    updateThemeApplyState(supported);
+    return;
+  }
+  themeDraft = decoded.colors;
+  themeDraftDimming = decoded.dimming;
+  themePreset = detectThemePreset(themeDraft, themeDraftDimming);
+  elements.themePreset.value = themePreset;
+  elements.themeConfigCode.removeAttribute('aria-invalid');
+  themeImportInvalid = false;
+  elements.themeColors.querySelectorAll('[data-theme-color-index]').forEach((input) => {
+    const index = Number(input.dataset.themeColorIndex);
+    if (input.type === 'color') input.value = rgb565ToHex(themeDraft[index]);
+    else input.value = rgb565ToHex(themeDraft[index]).toUpperCase();
+  });
+  const dimmingInput = document.querySelector('#theme-graph-dimming');
+  if (dimmingInput) dimmingInput.value = String(themeDraftDimming);
+  syncThemeConfigCode();
+  updateThemeApplyState(supported);
+  elements.themeStatus.textContent = 'Palette code imported into the color fields. Apply to save it.';
+}
+
 function renderOfflinePreview() {
+  deviceTheme = null;
+  deviceThemeDimming = null;
+  themeDraft = demoTheme.slice();
+  themeDraftDimming = demoThemeDimming;
+  themePreset = detectThemePreset(themeDraft, themeDraftDimming);
+  renderThemeControls();
   elements.solarPercent.textContent = '0%';
   elements.solarPercent.classList.remove('solar-warn', 'solar-good');
   elements.batteryPercent.textContent = '0%';
@@ -2734,6 +3069,7 @@ async function loadSettings() {
       (CAP_GET_SETTINGS | CAP_SET_SETTING)) {
     elements.settingsStatus.textContent = '';
     renderSettings();
+    await loadTheme();
     return;
   }
   elements.settingsStatus.textContent = 'Reading…';
@@ -2764,6 +3100,7 @@ async function loadSettings() {
       }
     }
     renderSettings();
+    await loadTheme();
     if (logInfo && logRecords.length) renderLogSummary();
     elements.settingsStatus.textContent = 'Loaded from device';
   } catch (error) {
@@ -3117,6 +3454,10 @@ elements.overviewTab.addEventListener('click', () => selectPage('overview'));
 elements.debugTab.addEventListener('click', () => selectPage('debug'));
 elements.settingsTab.addEventListener('click', () => selectPage('settings'));
 document.querySelector('#settings-refresh').addEventListener('click', refreshSettingsPage);
+elements.themeApply.addEventListener('click', applyTheme);
+elements.themeConfigCode.addEventListener('input', importThemeConfigCode);
+elements.themePreset.addEventListener('change', () =>
+  selectThemePreset(elements.themePreset.value));
 document.querySelector('#debug-refresh').addEventListener('click', refreshDebugPage);
 elements.syncClock.addEventListener('click', synchronizeDeviceClock);
 elements.logsTab.addEventListener('click', () => selectPage('logs'));

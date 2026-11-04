@@ -20,6 +20,12 @@
 #include <string.h>
 #include <stdint.h>
 
+uint16_t lcd_theme_palette[LCD_THEME_COLOR_COUNT] = {
+    0x0000u, 0xD6BAu, 0x77E0u, 0x001Fu,
+    0x07E0u, 0xFFE0u, 0xF800u
+};
+uint8_t lcd_theme_graph_dimming_percent = 30u;
+
 volatile uint32_t board_millis;
 static volatile uint32_t board_uptime_seconds;
 static volatile uint16_t board_uptime_millisecond_remainder;
@@ -264,8 +270,8 @@ static char lcd_rate_glyphs[LCD_RATE_MAX_GLYPHS + 2u];
 static uint8_t lcd_rate_glyph_count;
 static bool lcd_rate_has_measurement;
 static bool lcd_dose_has_measurement;
-static uint16_t lcd_rate_color = LCD_COUNTER_BLUE;
-static uint16_t lcd_alarm_rate_color = LCD_COUNTER_BLUE;
+static uint16_t lcd_rate_color = 0x001Fu;
+static uint16_t lcd_alarm_rate_color = 0x001Fu;
 static uint8_t lcd_rate_led_mask = 5u;
 static char lcd_rate_label[LCD_RATE_LABEL_LENGTH];
 static char lcd_display_unit_prefix;
@@ -4183,6 +4189,17 @@ static void lcd_debug_probe_spi(void)
 #define SETTINGS_EEPROM_MASK_OFFSET (2u + SETTING_COUNT)
 #define SETTINGS_EEPROM_SOURCE_OFFSET (SETTINGS_EEPROM_MASK_OFFSET + 4u)
 #define SETTINGS_EEPROM_CRC_OFFSET (SETTINGS_EEPROM_SOURCE_OFFSET + 1u)
+#define SETTINGS_THEME_BASE 268u
+#define SETTINGS_THEME_SLOT_SIZE 17u
+#define SETTINGS_THEME_MAGIC 0xD7u
+#define SETTINGS_THEME_CRC_OFFSET 16u
+#define SETTINGS_THEME_DIM_BASE 302u
+#define SETTINGS_THEME_DIM_SLOT_SIZE 4u
+#define SETTINGS_THEME_DIM_MAGIC 0xD8u
+#define SETTINGS_THEME_DIM_DEFAULT 30u
+
+static uint8_t lcd_theme_sequence;
+static uint8_t lcd_theme_dim_sequence;
 
 static uint8_t settings_next_slot(bool valid0, const uint8_t *sequence0,
                                   bool valid1, const uint8_t *sequence1)
@@ -4375,6 +4392,129 @@ static uint16_t settings_long_press_ms(void)
     return long_press_milliseconds[index < count ? index : 3u];
 }
 
+static uint8_t settings_theme_crc(const uint8_t *record)
+{
+    uint8_t crc = 0xA9u;
+    for (uint8_t i = 1u; i < SETTINGS_THEME_CRC_OFFSET; ++i) {
+        crc = (uint8_t)((crc << 1u) | (crc >> 7u));
+        crc ^= record[i];
+    }
+    return crc;
+}
+
+static bool settings_theme_record_read(uint8_t slot, uint8_t *record)
+{
+    const uint16_t base = (uint16_t)(SETTINGS_THEME_BASE +
+        slot * SETTINGS_THEME_SLOT_SIZE);
+    for (uint8_t i = 0u; i < SETTINGS_THEME_SLOT_SIZE; ++i) {
+        if (!board_eeprom_read((uint16_t)(base + i), &record[i])) return false;
+    }
+    return record[0] == SETTINGS_THEME_MAGIC &&
+        record[SETTINGS_THEME_CRC_OFFSET] == settings_theme_crc(record);
+}
+
+static bool settings_theme_save(void)
+{
+    uint8_t record0[SETTINGS_THEME_SLOT_SIZE];
+    uint8_t record1[SETTINGS_THEME_SLOT_SIZE];
+    const bool valid0 = settings_theme_record_read(0u, record0);
+    const bool valid1 = settings_theme_record_read(1u, record1);
+    const uint8_t target = settings_next_slot(valid0, &record0[1],
+        valid1, &record1[1]);
+    const uint8_t sequence = (uint8_t)(lcd_theme_sequence + 1u);
+    const uint16_t base = (uint16_t)(SETTINGS_THEME_BASE +
+        target * SETTINGS_THEME_SLOT_SIZE);
+    uint8_t record[SETTINGS_THEME_SLOT_SIZE];
+    record[0] = SETTINGS_THEME_MAGIC;
+    record[1] = sequence;
+    for (uint8_t i = 0u; i < LCD_THEME_COLOR_COUNT; ++i) {
+        const uint16_t color = lcd_theme_palette[i];
+        record[2u + 2u * i] = (uint8_t)color;
+        record[3u + 2u * i] = (uint8_t)(color >> 8u);
+    }
+    record[SETTINGS_THEME_CRC_OFFSET] = settings_theme_crc(record);
+    if (!settings_eeprom_write_byte(base, 0u)) return false;
+    for (uint8_t i = 1u; i < SETTINGS_THEME_SLOT_SIZE; ++i) {
+        if (!settings_eeprom_write_byte((uint16_t)(base + i), record[i])) {
+            return false;
+        }
+    }
+    if (!settings_eeprom_write_byte(base, SETTINGS_THEME_MAGIC)) return false;
+    lcd_theme_sequence = sequence;
+    return true;
+}
+
+static void settings_theme_load(void)
+{
+    uint8_t record0[SETTINGS_THEME_SLOT_SIZE];
+    uint8_t record1[SETTINGS_THEME_SLOT_SIZE];
+    const bool valid0 = settings_theme_record_read(0u, record0);
+    const bool valid1 = settings_theme_record_read(1u, record1);
+    if (!valid0 && !valid1) return;
+    const uint8_t *record = valid1 && (!valid0 ||
+        (int8_t)(record1[1] - record0[1]) > 0) ? record1 : record0;
+    lcd_theme_sequence = record[1];
+    for (uint8_t i = 0u; i < LCD_THEME_COLOR_COUNT; ++i) {
+        lcd_theme_palette[i] = (uint16_t)record[2u + 2u * i] |
+            (uint16_t)((uint16_t)record[3u + 2u * i] << 8u);
+    }
+}
+
+static bool settings_theme_dim_read(uint8_t slot, uint8_t *sequence,
+                                   uint8_t *percent)
+{
+    const uint16_t base = (uint16_t)(SETTINGS_THEME_DIM_BASE +
+        slot * SETTINGS_THEME_DIM_SLOT_SIZE);
+    uint8_t record[SETTINGS_THEME_DIM_SLOT_SIZE];
+    for (uint8_t i = 0u; i < SETTINGS_THEME_DIM_SLOT_SIZE; ++i) {
+        if (!board_eeprom_read((uint16_t)(base + i), &record[i])) return false;
+    }
+    *sequence = record[1];
+    *percent = record[2];
+    return record[0] == SETTINGS_THEME_DIM_MAGIC && *percent <= 100u &&
+        record[3] == (uint8_t)(0x71u ^ *sequence ^ *percent);
+}
+
+static bool settings_theme_dim_save(void)
+{
+    uint8_t sequence0, percent0, sequence1, percent1;
+    const bool valid0 = settings_theme_dim_read(0u, &sequence0, &percent0);
+    const bool valid1 = settings_theme_dim_read(1u, &sequence1, &percent1);
+    const uint8_t target = settings_next_slot(valid0, &sequence0,
+        valid1, &sequence1);
+    const uint8_t sequence = (uint8_t)(lcd_theme_dim_sequence + 1u);
+    const uint8_t base = (uint8_t)(SETTINGS_THEME_DIM_BASE +
+        target * SETTINGS_THEME_DIM_SLOT_SIZE);
+    const uint8_t record[] = { SETTINGS_THEME_DIM_MAGIC, sequence,
+        lcd_theme_graph_dimming_percent,
+        (uint8_t)(0x71u ^ sequence ^ lcd_theme_graph_dimming_percent) };
+    if (!settings_eeprom_write_byte(base, 0u) ||
+        !settings_eeprom_write_byte((uint16_t)(base + 1u), record[1]) ||
+        !settings_eeprom_write_byte((uint16_t)(base + 2u), record[2]) ||
+        !settings_eeprom_write_byte((uint16_t)(base + 3u), record[3]) ||
+        !settings_eeprom_write_byte(base, SETTINGS_THEME_DIM_MAGIC)) {
+        return false;
+    }
+    lcd_theme_dim_sequence = sequence;
+    return true;
+}
+
+static void settings_theme_dim_load(void)
+{
+    uint8_t sequence0, percent0, sequence1, percent1;
+    const bool valid0 = settings_theme_dim_read(0u, &sequence0, &percent0);
+    const bool valid1 = settings_theme_dim_read(1u, &sequence1, &percent1);
+    if (valid1 && (!valid0 || (int8_t)(sequence1 - sequence0) > 0)) {
+        lcd_theme_dim_sequence = sequence1;
+        lcd_theme_graph_dimming_percent = percent1;
+    } else if (valid0) {
+        lcd_theme_dim_sequence = sequence0;
+        lcd_theme_graph_dimming_percent = percent0;
+    } else {
+        lcd_theme_graph_dimming_percent = SETTINGS_THEME_DIM_DEFAULT;
+    }
+}
+
 bool board_display_settings_list_active(void)
 {
     return lcd_screen_page == 2u && lcd_settings_list_active;
@@ -4473,6 +4613,47 @@ uint32_t board_display_settings_hidden_mask(void)
     return lcd_settings_hidden_mask;
 }
 
+uint8_t board_display_theme_color_count(void)
+{
+    return LCD_THEME_COLOR_COUNT;
+}
+
+bool board_display_theme_read(uint16_t *colors, uint8_t capacity,
+                              uint8_t *graph_dimming_percent)
+{
+    if (colors == NULL || capacity < LCD_THEME_COLOR_COUNT ||
+        graph_dimming_percent == NULL) return false;
+    for (uint8_t i = 0u; i < LCD_THEME_COLOR_COUNT; ++i) {
+        colors[i] = lcd_theme_palette[i];
+    }
+    *graph_dimming_percent = lcd_theme_graph_dimming_percent;
+    return true;
+}
+
+bool board_display_theme_write(const uint16_t *colors, uint8_t count,
+                               uint8_t graph_dimming_percent)
+{
+    uint16_t previous[LCD_THEME_COLOR_COUNT];
+    const uint8_t previous_dimming = lcd_theme_graph_dimming_percent;
+    if (colors == NULL || count != LCD_THEME_COLOR_COUNT ||
+        graph_dimming_percent > 100u) return false;
+    for (uint8_t i = 0u; i < LCD_THEME_COLOR_COUNT; ++i) {
+        previous[i] = lcd_theme_palette[i];
+        lcd_theme_palette[i] = colors[i];
+    }
+    lcd_theme_graph_dimming_percent = graph_dimming_percent;
+    if (!settings_theme_save() || !settings_theme_dim_save()) {
+        for (uint8_t i = 0u; i < LCD_THEME_COLOR_COUNT; ++i) {
+            lcd_theme_palette[i] = previous[i];
+        }
+        lcd_theme_graph_dimming_percent = previous_dimming;
+        return false;
+    }
+    lcd_background_pending = true;
+    lcd_cpm_redraw_pending = true;
+    return true;
+}
+
 bool board_display_setting_remote_write(uint8_t setting_id, uint8_t value)
 {
     const uint8_t previous_selected = lcd_settings_selected;
@@ -4544,7 +4725,13 @@ static bool settings_reset_all(void)
 {
     return settings_eeprom_write_byte(SETTINGS_EEPROM_BASE, 0u) &&
         settings_eeprom_write_byte((uint16_t)(SETTINGS_EEPROM_BASE +
-            SETTINGS_EEPROM_SLOT_SIZE), 0u);
+            SETTINGS_EEPROM_SLOT_SIZE), 0u) &&
+        settings_eeprom_write_byte(SETTINGS_THEME_BASE, 0u) &&
+        settings_eeprom_write_byte((uint16_t)(SETTINGS_THEME_BASE +
+            SETTINGS_THEME_SLOT_SIZE), 0u) &&
+        settings_eeprom_write_byte(SETTINGS_THEME_DIM_BASE, 0u) &&
+        settings_eeprom_write_byte((uint16_t)(SETTINGS_THEME_DIM_BASE +
+            SETTINGS_THEME_DIM_SLOT_SIZE), 0u);
 }
 
 static bool lcd_cleanup_clear_spi(void)
@@ -5808,6 +5995,8 @@ void board_display_init(void)
     lcd_background_pending = true;
     board_rtc_init();
     settings_eeprom_load();
+    settings_theme_load();
+    settings_theme_dim_load();
     lcd_screen_page = 0u;
     lcd_last_extra_page = 3u;
     lcd_main_return_page = 0u;

@@ -123,6 +123,33 @@
       </section>
       <div id="settings-list" class="settings-list"></div>
       <p class="settings-note">Use Show to control which settings appear in the device menu. Visibility requires firmware protocol support.</p>
+      <section class="theme-config" aria-labelledby="theme-config-title">
+        <div class="theme-config-heading">
+          <div><h3 id="theme-config-title">Display theme</h3><p>Set the LCD palette and partial graph-column dimming. Changes are stored on the device.</p></div>
+          <span id="theme-status" role="status" aria-live="polite">Connect to edit the display theme.</span>
+        </div>
+        <div class="theme-toolbar">
+          <label class="theme-preset-control" for="theme-preset">Palette
+            <select id="theme-preset" disabled>
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+              <option value="ocean">Ocean</option>
+              <option value="amber">Amber</option>
+              <option value="violet">Violet</option>
+              <option value="monokai">Monokai</option>
+              <option value="dracula">Dracula</option>
+              <option value="nord">Nord</option>
+              <option value="solarized">Solarized Dark</option>
+              <option value="custom">Custom</option>
+            </select>
+          </label>
+          <label class="theme-code-control" for="theme-config-code">Palette code (export/import)
+            <input id="theme-config-code" type="text" spellcheck="false" autocomplete="off" autocapitalize="off">
+          </label>
+          <button id="theme-apply" class="button button-primary" type="button" disabled>Apply theme</button>
+        </div>
+        <div id="theme-colors" class="theme-colors"></div>
+      </section>
     </section>
 
     <section id="logs-page" class="page logs-panel" hidden>

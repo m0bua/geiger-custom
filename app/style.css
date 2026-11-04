@@ -295,6 +295,30 @@ body.logs-page-active .log-content { height: auto; min-height: 0; max-height: no
 .setting-power-controls { gap: 8px; flex-wrap: wrap; }
 .setting-power-controls .setting-visible { margin-left: 2px; }
 .settings-note { margin: 13px 0 0; color: #77868c; font-size: 10px; }
+.theme-config { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
+.theme-config-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 13px; }
+.theme-config-heading h3 { margin: 0; color: #d8e2e4; font-size: 13px; }
+.theme-config-heading p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+#theme-status { color: var(--muted); font: 10px "DM Mono", Consolas, monospace; }
+.theme-toolbar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.theme-preset-control { display: flex; align-items: center; gap: 9px; width: fit-content; margin: 0; color: var(--muted); font-size: 11px; }
+.theme-preset-control select { min-height: 34px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; color: #e6edf0; background: #111a1f; font: 11px "DM Mono", Consolas, monospace; }
+.theme-colors { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.theme-color-group { display: grid; grid-template-columns: 110px minmax(0, 1fr); align-items: center; gap: 12px; min-width: 0; margin: 0; padding: 9px; border: 1px solid var(--line); border-radius: 8px; }
+.theme-color-group-title { color: var(--muted); font: 10px "DM Mono", Consolas, monospace; }
+.theme-color-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.theme-color-control { display: flex; align-items: center; justify-content: flex-end; gap: 7px; min-height: 40px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; color: #aebbc0; background: #111a1f; font-size: 11px; }
+.theme-color-control > span:first-child { margin-right: auto; }
+.theme-color-control input[type="color"] { width: 36px; height: 27px; padding: 2px; border: 1px solid var(--line); border-radius: 5px; background: transparent; cursor: pointer; }
+.theme-color-control input.theme-color-code { box-sizing: border-box; width: 76px; min-width: 0; min-height: 28px; padding: 0 5px; border: 1px solid var(--line); border-radius: 5px; color: #d8e2e4; background: #0b1115; font: 10px "DM Mono", Consolas, monospace; text-transform: uppercase; }
+.theme-color-control input.theme-color-code[aria-invalid="true"] { border-color: #ff7474; color: #ff7474; }
+.theme-dimming-control { display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; color: #aebbc0; background: #111a1f; font-size: 11px; }
+.theme-dimming-control input { box-sizing: border-box; width: 72px; min-height: 28px; padding: 0 7px; border: 1px solid var(--line); border-radius: 5px; color: #d8e2e4; background: #0b1115; font: 11px "DM Mono", Consolas, monospace; }
+.theme-dimming-control input[aria-invalid="true"] { border-color: #ff7474; color: #ff7474; }
+.theme-dimming-control span:last-child { color: var(--muted); }
+.theme-code-control { display: flex; align-items: center; flex: 1 1 300px; gap: 9px; max-width: none; min-width: 0; margin: 0; color: #aebbc0; font-size: 11px; white-space: nowrap; }
+.theme-code-control input { box-sizing: border-box; flex: 1 1 auto; width: auto; min-width: 0; min-height: 36px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; color: #d8e2e4; background: #0b1115; font: 11px "DM Mono", Consolas, monospace; }
+.theme-code-control input[aria-invalid="true"] { border-color: #ff7474; color: #ff7474; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
 .panel-heading h2 { margin: 0; font-size: 15px; }
 .panel-heading-actions { display: flex; align-items: center; gap: 12px; }
@@ -330,6 +354,7 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
 @keyframes pulse { 50% { opacity: .35; } }
 @media (min-width: 1180px) {
   .settings-pair { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(10, auto); column-gap: 56px; }
+  .theme-color-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .release-history-content { max-height: 160px; }
 }
 @media (max-width: 650px) {
@@ -359,6 +384,8 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .metric-value { margin-top: 14px; }
   .detail-grid { grid-template-columns: repeat(2, 1fr); }
   .settings-pair { grid-template-columns: 1fr; grid-template-rows: none; grid-auto-flow: row; }
+  .theme-color-group { grid-template-columns: 1fr; gap: 8px; }
+  .theme-color-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settings-clock-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .release-history-content { max-height: 300px; }
   .panel-heading { align-items: flex-start; flex-wrap: wrap; gap: 9px; }
