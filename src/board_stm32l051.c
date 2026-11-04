@@ -24,7 +24,7 @@ volatile uint32_t board_millis;
 static volatile uint32_t board_uptime_seconds;
 static volatile uint16_t board_uptime_millisecond_remainder;
 static volatile uint8_t systick_period_ms = 1u;
-static bool idle_clock_active;
+bool board_idle_clock_active;
 static volatile uint32_t detector_pulse_count;
 static volatile bool board_hv_enabled = true;
 static volatile uint16_t lcd_adc_battery_raw;
@@ -5520,11 +5520,11 @@ static void board_sound_timer_config(void)
     const bool lower_tone = sound_alarm_mode &&
         ((sound_alarm_phase == 0u) == (click_sound_profile == 1u));
     /* Keep roughly the same audible frequencies at 131 kHz and 32 MHz. */
-    REG32(TIM2_BASE + TIM_PSC) = idle_clock_active ? 0u :
+    REG32(TIM2_BASE + TIM_PSC) = board_idle_clock_active ? 0u :
         (lower_tone ? 31u : 22u);
-    REG32(TIM2_BASE + TIM_ARR) = idle_clock_active ?
+    REG32(TIM2_BASE + TIM_ARR) = board_idle_clock_active ?
         (lower_tone ? 40u : 29u) : 310u;
-    REG32(TIM2_BASE + TIM_CCR4) = idle_clock_active ?
+    REG32(TIM2_BASE + TIM_CCR4) = board_idle_clock_active ?
         (lower_tone ? 7u : 5u) : 50u;
     REG32(TIM2_BASE + TIM_CNT) = 0u;
     board_rgb_apply();
@@ -7074,7 +7074,7 @@ void board_set_idle_tick(bool idle)
     }
 
     __asm volatile ("mrs %0, primask\n\tcpsid i" : "=r" (primask) :: "memory");
-    SYST_RVR = (((idle_clock_active ? 131072u : 32000000u) *
+    SYST_RVR = (((board_idle_clock_active ? 131072u : 32000000u) *
         period_ms) / 1000u) - 1u;
     SYST_CVR = 0u;
     systick_period_ms = period_ms;
@@ -7087,8 +7087,9 @@ bool board_set_idle_clock(bool idle)
 {
     uint32_t primask;
     uint32_t timeout;
+    bool success = true;
 
-    if (idle_clock_active == idle) return true;
+    if (board_idle_clock_active == idle) return true;
     __asm volatile ("mrs %0, primask\n\tcpsid i" : "=r" (primask) :: "memory");
     SYST_CSR = 0u;
     SCB_ICSR = 1u << 25u; /* Clear pending SysTick across the clock switch. */
@@ -7104,7 +7105,7 @@ bool board_set_idle_clock(bool idle)
         timeout = 2000000u;
         while ((RCC_CFGR & (3u << 2u)) != 0u && --timeout != 0u) { }
         if (timeout == 0u) goto clock_change_failed;
-        idle_clock_active = true;
+        board_idle_clock_active = true;
         RCC_CR &= ~(1u << 24u); /* PLL is no longer needed. */
         timeout = 2000000u;
         while ((RCC_CR & (1u << 25u)) != 0u && --timeout != 0u) { }
@@ -7122,24 +7123,21 @@ bool board_set_idle_clock(bool idle)
         timeout = 2000000u;
         while ((RCC_CFGR & (3u << 2u)) != (3u << 2u) && --timeout != 0u) { }
         if (timeout == 0u) goto clock_change_failed;
-        idle_clock_active = false;
+        board_idle_clock_active = false;
     }
 
-    SYST_RVR = (((idle_clock_active ? 131072u : 32000000u) *
-        systick_period_ms) / 1000u) - 1u;
-    if (click_sound_active) board_sound_timer_config();
-    SYST_CVR = 0u;
-    SYST_CSR = 7u;
-    if ((primask & 1u) == 0u) __asm volatile ("cpsie i" ::: "memory");
-    return true;
+    goto clock_change_done;
 
 clock_change_failed:
-    SYST_RVR = (((idle_clock_active ? 131072u : 32000000u) *
+    success = false;
+clock_change_done:
+    SYST_RVR = (((board_idle_clock_active ? 131072u : 32000000u) *
         systick_period_ms) / 1000u) - 1u;
+    if (success && click_sound_active) board_sound_timer_config();
     SYST_CVR = 0u;
     SYST_CSR = 7u;
     if ((primask & 1u) == 0u) __asm volatile ("cpsie i" ::: "memory");
-    return false;
+    return success;
 }
 
 uint8_t board_buttons_sample_10ms(void)

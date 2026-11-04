@@ -110,11 +110,6 @@ static bool prepare_spi_log_layout(void)
     return format_spi_log_layout();
 }
 
-static bool should_persist_period(log_record_kind_t kind)
-{
-    return kind == LOG_RECORD_HOUR || kind == LOG_RECORD_DAY;
-}
-
 static bool append_record(log_record_kind_t kind, uint16_t epoch,
                           uint8_t year_descriptor,
                           const log_record_t *record)
@@ -146,17 +141,19 @@ static void close_period(log_record_kind_t kind,
     log_query_read_fn read_record;
     const uint32_t period_seconds = log_record_period_seconds(kind);
     bool live = false;
-    if (!accumulator->active || !should_persist_period(kind)) return;
+    if (!accumulator->active) return;
     time_context.calendar_valid =
         (accumulator->year_descriptor & SPI_LOG_YEAR_VALID) != 0u;
     read_record = active_log_memory == BOARD_LOG_MEMORY_EEPROM ?
         log_eeprom_query_read : spi_log_query_read;
     if (read_record(&time_context, kind, accumulator->epoch,
             accumulator->period_start, &existing, &live)) return;
-    if (!log_query_aggregate(read_record, &time_context,
+    live = board_idle_clock_active && board_set_idle_clock(false);
+    (void)log_query_aggregate(read_record, &time_context,
             accumulator->epoch, accumulator->period_start, period_seconds,
-            &aggregate) || !aggregate.available || aggregate.live ||
-        aggregate.covered_seconds == 0u) return;
+            &aggregate);
+    if (live) (void)board_set_idle_clock(true);
+    if (aggregate.live || aggregate.covered_seconds == 0u) return;
     record.period_index = accumulator->period_index;
     record.count = aggregate.count;
     record.maximum_cpm = aggregate.maximum_cpm;

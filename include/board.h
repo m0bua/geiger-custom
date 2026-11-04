@@ -31,6 +31,7 @@ uint8_t board_rtc_clock_source(void);
 uint32_t board_uptime_seconds_get(void);
 void board_set_idle_tick(bool idle);
 bool board_set_idle_clock(bool idle);
+extern bool board_idle_clock_active;
 uint8_t board_buttons_sample_10ms(void);
 void board_buttons_suppress_until_release(uint8_t mask);
 uint8_t board_buttons_pressed_mask(void);
