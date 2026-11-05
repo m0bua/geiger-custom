@@ -378,7 +378,7 @@ typedef enum {
     SETTING_REBOOT, SETTING_TONE, SETTING_LONG_PRESS, SETTING_DOSE_ROW_2,
     SETTING_DOSE_PERIOD, SETTING_DOSE_SCREEN, SETTING_DOSE_LIGHT,
     SETTING_DOSE_SOUND, SETTING_DOSE_CUSTOM, SETTING_LED_TIME,
-    SETTING_BATT_FORMAT,
+    SETTING_BATT_FORMAT, SETTING_LED_COLOR,
     SETTING_COUNT
 } setting_id_t;
 
@@ -2097,7 +2097,7 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
 
 static const uint8_t lcd_settings_item_order[LCD_SETTINGS_MENU_COUNT] = {
     23u, 0u, 1u, 2u, 3u, 4u, 16u, 24u, 25u, 26u, 27u, 17u,
-    12u, 22u, 28u, 5u, 6u, 7u, 20u, 21u, 29u, 9u, 10u, 11u,
+    12u, 22u, 30u, 28u, 5u, 6u, 7u, 20u, 21u, 29u, 9u, 10u, 11u,
     8u, 15u, 13u, 14u, 18u, 19u
 };
 
@@ -2141,7 +2141,7 @@ static const char *const lcd_settings_labels[LCD_SETTINGS_COUNT] = {
     "DOSE PREF", "RATE ROW 2", "LOG MEMORY", "RESET", "HV", "RATE CUSTOM",
     "ALARM STOP", "POWER OFF", "REBOOT", "TONE", "LONG PRESS",
     "DOSE ROW 2", "DOSE PERIOD", "DOSE SCREEN", "DOSE LIGHT",
-    "DOSE SOUND", "DOSE CUSTOM", "LED TIME", "BATT FORMAT"
+    "DOSE SOUND", "DOSE CUSTOM", "LED TIME", "BATT FORMAT", "LED COLOR"
 };
 
 /* Share value lists instead of reserving eleven pointers for every item. */
@@ -2169,6 +2169,7 @@ static const char *const rate_custom_values[] = {
 static const char *const stop_values[] = { "CLEAR", "BUTTON" };
 static const char *const tone_values[] = { "STOCK", "CLASSIC" };
 static const char *const battery_format_values[] = { "%", "V", "RAW" };
+static const char *const led_color_values[] = { "STOCK", "THEME" };
 static const char *const long_press_values[] = {
     "300MS", "500MS", "700MS", "900MS", "1100MS", "1300MS"
 };
@@ -2216,17 +2217,17 @@ static const char *const *const lcd_settings_value_lists[] = {
     indication_values, scale_values, timer_values, zero_values, unit_values,
     prefix_values, empty_values, reset_values, rate_custom_values, stop_values,
     tone_values, long_press_values, dose_period_values, dose_alarm_values,
-    battery_format_values
+    battery_format_values, led_color_values
 };
 
 static const uint8_t lcd_settings_value_list_map[(LCD_SETTINGS_COUNT + 1u) / 2u] = {
     0x00u, 0x00u, 0x10u, 0x21u, 0x43u, 0x55u, 0x76u, 0x07u,
-    0x98u, 0x66u, 0xBAu, 0xC6u, 0x00u, 0xD0u, 0xE1u
+    0x98u, 0x66u, 0xBAu, 0xC6u, 0x00u, 0xD0u, 0xE1u, 0x0Fu
 };
 
 static const uint8_t lcd_settings_value_counts[LCD_SETTINGS_COUNT] = {
     6u, 6u, 4u, 4u, 4u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 3u, 3u, 6u, 2u,
-    9u, 2u, 1u, 1u, 2u, 6u, 7u, 3u, 4u, 4u, 4u, 8u, 9u, 3u
+    9u, 2u, 1u, 1u, 2u, 6u, 7u, 3u, 4u, 4u, 4u, 8u, 9u, 3u, 2u
 };
 
 static __attribute__((noinline)) uint8_t lcd_settings_value_count(uint8_t item)
@@ -4283,6 +4284,8 @@ static void lcd_debug_probe_spi(void)
 #define SETTINGS_EEPROM_SLOT_SIZE (8u + SETTING_COUNT)
 #define SETTINGS_EEPROM_LEGACY_COUNT 29u
 #define SETTINGS_EEPROM_LEGACY_SLOT_SIZE 37u
+#define SETTINGS_EEPROM_PREVIOUS_COUNT 30u
+#define SETTINGS_EEPROM_PREVIOUS_SLOT_SIZE 38u
 #define SETTINGS_EEPROM_MAGIC 0xD4u
 #define SETTINGS_EEPROM_MASK_OFFSET (2u + SETTING_COUNT)
 #define SETTINGS_EEPROM_SOURCE_OFFSET (SETTINGS_EEPROM_MASK_OFFSET + 4u)
@@ -4406,6 +4409,27 @@ static bool settings_legacy_record_read(uint8_t slot, uint8_t *record)
     return true;
 }
 
+static bool settings_previous_record_read(uint8_t slot, uint8_t *record)
+{
+    const uint16_t base = (uint16_t)(SETTINGS_EEPROM_BASE +
+        slot * SETTINGS_EEPROM_PREVIOUS_SLOT_SIZE);
+    const volatile uint8_t *stored = (const volatile uint8_t *)(uintptr_t)(
+        DATA_EEPROM_BASE + base);
+    uint8_t crc = 0x6Du;
+    for (uint8_t i = 0u; i < SETTINGS_EEPROM_PREVIOUS_SLOT_SIZE; ++i) {
+        record[i] = stored[i];
+    }
+    for (uint8_t i = 1u; i < 37u; ++i) {
+        crc = (uint8_t)((crc << 1u) | (crc >> 7u));
+        crc ^= record[i];
+    }
+    if (record[0] != SETTINGS_EEPROM_MAGIC || record[37] != crc) return false;
+    for (uint8_t i = 0u; i < SETTINGS_EEPROM_PREVIOUS_COUNT; ++i) {
+        if (record[2u + i] >= lcd_settings_value_counts[i]) return false;
+    }
+    return true;
+}
+
 static bool settings_record_read(uint8_t slot, uint8_t *record)
 {
     const uint16_t base = (uint16_t)(SETTINGS_EEPROM_BASE +
@@ -4475,6 +4499,28 @@ static void settings_eeprom_load(void)
     const bool valid0 = settings_record_read(0u, record0);
     const bool valid1 = settings_record_read(1u, record1);
     if (!valid0 && !valid1) {
+        uint8_t previous0[SETTINGS_EEPROM_PREVIOUS_SLOT_SIZE];
+        uint8_t previous1[SETTINGS_EEPROM_PREVIOUS_SLOT_SIZE];
+        const bool previous_valid0 = settings_previous_record_read(0u, previous0);
+        const bool previous_valid1 = settings_previous_record_read(1u, previous1);
+        if (previous_valid0 || previous_valid1) {
+            const uint8_t *previous = previous_valid1 && (!previous_valid0 ||
+                (int8_t)(previous1[1] - previous0[1]) > 0) ? previous1 : previous0;
+            lcd_settings_sequence = previous[1];
+            for (uint8_t i = 0u; i < SETTINGS_EEPROM_PREVIOUS_COUNT; ++i) {
+                lcd_settings_value_index[i] = previous[2u + i];
+            }
+            lcd_settings_value_index[SETTING_LED_COLOR] = 0u;
+            lcd_settings_hidden_mask = (uint32_t)previous[32] |
+                ((uint32_t)previous[33] << 8u) |
+                ((uint32_t)previous[34] << 16u) |
+                ((uint32_t)previous[35] << 24u);
+            settings_log_source = previous[36];
+            settings_log_memory = lcd_settings_value_index[SETTING_USE_SPI];
+            settings_spi_enabled = settings_log_memory == BOARD_LOG_MEMORY_SPI;
+            (void)settings_eeprom_save();
+            return;
+        }
         uint8_t legacy0[SETTINGS_EEPROM_LEGACY_SLOT_SIZE];
         uint8_t legacy1[SETTINGS_EEPROM_LEGACY_SLOT_SIZE];
         const bool old0 = settings_legacy_record_read(0u, legacy0);
@@ -5624,7 +5670,12 @@ uint8_t board_display_rate_led_mask(void)
 
 void board_display_set_rate_led(void)
 {
-    if (lcd_rate_color == LCD_COUNTER_BLUE) {
+    if (lcd_settings_value_index[SETTING_LED_COLOR] != 0u) {
+        const uint16_t color = lcd_rate_color;
+        board_rgb_set_color((uint8_t)((((color >> 11u) & 0x1Fu) * 255u) / 31u),
+                             (uint8_t)((((color >> 5u) & 0x3Fu) * 255u) / 63u),
+                             (uint8_t)(((color & 0x1Fu) * 255u) / 31u));
+    } else if (lcd_rate_color == LCD_COUNTER_BLUE) {
         /* Use pure blue for the warm-up indication. */
         board_rgb_set_color(0u, 0u, 255u);
     } else {
