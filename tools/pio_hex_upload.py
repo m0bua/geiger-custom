@@ -34,7 +34,10 @@ if env.subst("$UPLOAD_PROTOCOL") == "serial":
     env.Prepend(UPLOADERFLAGS=["-v"])
     env.Replace(
         UPLOADCMD=(
-            '$UPLOADER $UPLOADERFLAGS '
+            '"{}" "{}" "$UPLOADER" $UPLOADERFLAGS '.format(
+                sys.executable,
+                Path(env.subst("$PROJECT_DIR")) / "tools" / "pio_serial_upload.py",
+            ) +
             '"$BUILD_DIR/${PROGNAME}.hex" '
             '"${__configure_upload_port(__env__)}"'
         )
