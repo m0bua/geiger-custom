@@ -15,9 +15,10 @@
 
 void cpm_history_init(void);
 /* Samples are captured into 30 s, 90 s, and 10 min rings. */
-void cpm_history_push(uint32_t cpm);
+void cpm_history_push(uint32_t cpm, uint32_t pulses);
 uint8_t cpm_history_count(uint8_t tier);
 /* Read by age: age 0 is the newest sample; false means unavailable. */
 bool cpm_history_get(uint8_t tier, uint8_t age, uint32_t *cpm);
+bool cpm_history_get_pulses(uint8_t tier, uint8_t age);
 
 #endif

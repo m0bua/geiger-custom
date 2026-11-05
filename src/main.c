@@ -80,6 +80,7 @@ int main(void)
     uint32_t screen_timeout_ms;
     uint32_t event_count = 0u;
     uint32_t previous_minute_sample = 0u;
+    uint32_t previous_history_sample = 0u;
     uint32_t pulses_since_start = 0u;
     uint32_t session_pulses_total = 0u;
     uint32_t session_elapsed_seconds = 0u;
@@ -192,6 +193,7 @@ int main(void)
     /* Ignore startup transients accumulated while RTC/display were coming up. */
     event_count = board_detector_count();
     previous_minute_sample = event_count;
+    previous_history_sample = event_count;
 
     next_sample = board_millis;
     next_solar_sample = board_millis;
@@ -453,6 +455,7 @@ int main(void)
                     detected_pulses = board_detector_count();
                     event_count = detected_pulses;
                     previous_minute_sample = detected_pulses;
+                    previous_history_sample = detected_pulses;
                     second_log_reset_rate_window();
                     if (hv_enabled) {
                         pulses_since_start = 0u;
@@ -713,7 +716,11 @@ int main(void)
             }
 
             if ((int32_t)(now - next_cpm_history_tick) >= 0) {
-                cpm_history_push((display_rate_cpm_tenths + 5u) / 10u);
+                const uint32_t history_pulses = detected_pulses -
+                    previous_history_sample;
+                previous_history_sample = detected_pulses;
+                cpm_history_push((display_rate_cpm_tenths + 5u) / 10u,
+                    history_pulses);
                 board_display_history_updated();
                 next_cpm_history_tick += 150u;
             }
