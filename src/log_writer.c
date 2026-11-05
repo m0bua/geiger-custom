@@ -233,6 +233,9 @@ static void update_period_tracker(log_record_kind_t kind,
         tracker->segment_id =
             (uint8_t)(current_epoch % LOG_SEGMENT_ID_COUNT);
         tracker->year_descriptor = year_descriptor;
+        tracker->count = 0u;
+        tracker->maximum_cpm = 0u;
+        tracker->covered_seconds = 0u;
         /* Reconstruct an in-progress period only after boot or a storage
          * switch.  During a normal hour/day rollover the new period is empty;
          * rescanning its minute/hour history here would stall the main loop. */
