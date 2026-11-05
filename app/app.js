@@ -1058,6 +1058,16 @@ const diagnosticsLog = [];
 let demoLogRenderer = null;
 let clockSyncBusy = false;
 const rateHistory = [];
+const rateHistoryLevels = [];
+const rateHistoryPulses = [];
+const rateHistoryTimes = [];
+const RATE_CHART_BUFFER_SECONDS = 1000;
+let rateChartZoomSeconds = RATE_CHART_BUFFER_SECONDS;
+let rateChartScrollSeconds = 0;
+let rateChartDragging = false;
+let rateChartDragStartX = 0;
+let rateChartDragStartScroll = 0;
+let previousRateCount = null;
 const demoSettings = Array.from({ length: 31 }, () => 0);
 const demoHiddenSettings = new Set([
   8, 10, 11, 13, 14, 15, 16, 17, 19, 20, 21, 24, 25, 26, 27,
@@ -1146,6 +1156,63 @@ function formatRadiation(valueUsv, prefixSetting, symbol, perHour, digitLimit = 
   return { value: text, unit: `${selected.name}${symbol}${perHour ? '/h' : ''}` };
 }
 
+function rateChartData() {
+  clampRateChartViewport();
+  if (offlinePreview) {
+    const end = Math.max(2, RATE_CHART_BUFFER_SECONDS - rateChartScrollSeconds);
+    const start = Math.max(0, end - rateChartZoomSeconds);
+    return {values: Array.from({length: end - start}, (_, index) => start + index), pulses: [], levels: [],
+      startAge: RATE_CHART_BUFFER_SECONDS - start, endAge: RATE_CHART_BUFFER_SECONDS - end};
+  }
+  const total = rateHistory.length;
+  const end = Math.max(0, total - rateChartScrollSeconds);
+  const start = Math.max(0, end - rateChartZoomSeconds);
+  return {values: rateHistory.slice(start, end), pulses: rateHistoryPulses.slice(start, end),
+    levels: rateHistoryLevels.slice(start, end), times: rateHistoryTimes.slice(start, end),
+    startAge: total - start, endAge: total - end};
+}
+
+function clampRateChartViewport() {
+  rateChartZoomSeconds = Math.max(10, Math.min(RATE_CHART_BUFFER_SECONDS, rateChartZoomSeconds));
+  const available = Math.max(0, (offlinePreview ? RATE_CHART_BUFFER_SECONDS : rateHistory.length) - rateChartZoomSeconds);
+  rateChartScrollSeconds = Math.max(0, Math.min(available, rateChartScrollSeconds));
+}
+
+function resetRateChartViewport() {
+  rateChartZoomSeconds = RATE_CHART_BUFFER_SECONDS;
+  rateChartScrollSeconds = 0;
+  hideRateChartTooltip();
+  drawRateChart();
+}
+
+function rateChartThresholds() {
+  const unit = deviceSettings?.[9] ?? 0;
+  const convert = (usvh) => unit === 1 ? usvh / 0.00666 :
+    unit === 2 ? usvh * 100 : usvh;
+  const customUsvh = [0.3, 0.4, 0.5, 0.7, 0.9, 1, 2, 5, 10][deviceSettings?.[16] ?? 0] ?? 0.3;
+  const thresholds = [
+    {key: 'yellow', label: 'Y', value: convert(0.4), color: '#f0d35e'},
+    {key: 'red', label: 'R', value: convert(0.9), color: '#ff6666'},
+  ];
+  if (Math.abs(customUsvh - 0.9) > 0.0001) {
+    thresholds.push({key: 'custom', label: 'C', value: convert(customUsvh), color: '#b58cff'});
+  }
+  return thresholds;
+}
+
+function formatRateChartValue(value) {
+  if ((deviceSettings?.[9] ?? 0) === 1) return formatGroupedNumber(Math.round(value));
+  if (Math.abs(value) >= 10) return value.toFixed(0);
+  if (Math.abs(value) >= 1) return value.toFixed(1).replace(/\.0$/, '');
+  return value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function formatRateChartTime(seconds) {
+  const date = new Date(Date.UTC(2000, 0, 1) + Math.floor(seconds) * 1000);
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+}
+
 function drawRateChart() {
   const canvas = elements.rateChart;
   const rect = canvas.getBoundingClientRect();
@@ -1161,60 +1228,82 @@ function drawRateChart() {
   context.setTransform(scale, 0, 0, scale, 0, 0);
   const w = rect.width;
   const h = rect.height;
+  const left = 48, right = 10, top = 20, bottom = 24;
+  const plotWidth = Math.max(1, w - left - right);
+  const plotHeight = Math.max(1, h - top - bottom);
+  const {values, pulses, levels, startAge, endAge} = rateChartData();
+  const thresholds = rateChartThresholds();
+  const valuePeak = Math.max(...values, 0.01);
+  const peak = valuePeak * 1.12;
+  const xFor = (index) => left + (values.length > 1 ? index / (values.length - 1) : 0) * plotWidth;
+  const yFor = (value) => top + plotHeight - (value / peak) * plotHeight;
   context.clearRect(0, 0, w, h);
-  context.fillStyle = '#819096';
   context.font = '10px "DM Mono", Consolas, monospace';
-  context.fillText(rateHistoryUnit, 4, 12);
-  const values = offlinePreview ? Array.from({ length: 24 }, (_, index) => index) : rateHistory;
+  context.fillStyle = '#819096';
+  context.fillText(rateHistoryUnit, 4, 11);
   if (offlinePreview) {
     context.textAlign = 'right';
     context.fillStyle = '#9b83da';
-    context.fillText('DEMO · ILLUSTRATIVE', w - 4, 12);
+    context.fillText('DEMO · ILLUSTRATIVE', w - 4, 11);
     context.textAlign = 'left';
+  }
+
+  context.strokeStyle = 'rgba(160,186,194,.14)';
+  context.fillStyle = '#819096';
+  context.lineWidth = 1;
+  context.textAlign = 'right';
+  for (let tick = 0; tick <= 4; ++tick) {
+    const value = peak * tick / 4;
+    const y = yFor(value);
+    context.beginPath(); context.moveTo(left, y); context.lineTo(w - right, y); context.stroke();
+    context.fillText(formatRateChartValue(value), left - 6, y + 3);
+  }
+  context.textAlign = 'left';
+  context.strokeStyle = 'rgba(160,186,194,.30)';
+  context.beginPath(); context.moveTo(left, top); context.lineTo(left, top + plotHeight);
+  context.lineTo(w - right, top + plotHeight); context.stroke();
+  context.fillText(`-${Math.round(values.length ? startAge : RATE_CHART_BUFFER_SECONDS)}s`, left, h - 5);
+  context.textAlign = 'right';
+  context.fillText(endAge ? `-${Math.round(endAge)}s` : 'now', w - right, h - 5);
+  context.textAlign = 'left';
+
+  for (const threshold of thresholds) {
+    if (threshold.value > peak) continue;
+    const y = yFor(threshold.value);
+    context.save();
+    context.setLineDash([5, 4]);
+    context.strokeStyle = `${threshold.color}99`;
+    context.beginPath(); context.moveTo(left, y); context.lineTo(w - right, y); context.stroke();
+    context.restore();
+    context.fillStyle = threshold.color;
+    context.fillText(`${threshold.label} ${formatRateChartValue(threshold.value)}`, left + 5, y - 3);
   }
   if (values.length < 2) return;
 
-  const levelColors = {
-    blue: '#287bff', green: '#00e58b', yellow: '#f0d35e', red: '#ff6666',
-  };
-  const levelColor = levelColors[rateLevel];
-
-  const peak = offlinePreview ? values.length - 1 : Math.max(...values, 0.01) * 1.12;
-  const points = values.map((value, index) => ({
-    x: (index / (values.length - 1)) * w,
-    y: offlinePreview ? h - (index / (values.length - 1)) * h : h - (value / peak) * h,
-  }));
-  context.strokeStyle = 'rgba(160,186,194,.10)';
-  context.lineWidth = 1;
-  for (const fraction of [0.25, 0.5, 0.75]) {
+  const levelColor = '#aebbc0';
+  const points = values.map((value, index) => ({x: xFor(index), y: yFor(value)}));
+  context.beginPath();
+  points.forEach((point, index) => index ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y));
+  context.lineTo(points.at(-1).x, top + plotHeight); context.lineTo(points[0].x, top + plotHeight);
+  context.closePath(); context.fillStyle = `${levelColor}18`; context.fill();
+  context.beginPath();
+  points.forEach((point, index) => index ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y));
+  context.strokeStyle = levelColor; context.lineWidth = 1.8; context.lineJoin = 'round'; context.lineCap = 'round'; context.stroke();
+  points.forEach((point, index) => {
+    const pulseCount = pulses[index] || 0;
+    if (!pulseCount) return;
     context.beginPath();
-    context.moveTo(0, h * fraction);
-    context.lineTo(w, h * fraction);
-    context.stroke();
-  }
-  context.beginPath();
-  points.forEach((point, index) => index ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y));
-  context.lineTo(w, h);
-  context.lineTo(0, h);
-  context.closePath();
-  context.fillStyle = `${levelColor}18`;
-  context.fill();
-  context.beginPath();
-  points.forEach((point, index) => index ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y));
-  context.strokeStyle = levelColor;
-  context.lineWidth = 1.8;
-  context.lineJoin = 'round';
-  context.lineCap = 'round';
-  context.stroke();
+    context.arc(point.x, point.y, Math.min(6, 3 + Math.log2(pulseCount + 1)), 0, Math.PI * 2);
+    const pulseColors = {blue: '#287bff', green: '#00e58b', yellow: '#f0d35e', red: '#ff6666'};
+    context.fillStyle = pulseColors[levels[index]] || '#e6edf0';
+    context.fill();
+    context.lineWidth = 1; context.strokeStyle = '#0b1115'; context.stroke();
+  });
   if (!offlinePreview && rateHoverIndex !== null && points[rateHoverIndex]) {
     const point = points[rateHoverIndex];
-    context.beginPath();
-    context.arc(point.x, point.y, 4, 0, Math.PI * 2);
-    context.fillStyle = levelColor;
-    context.fill();
-    context.lineWidth = 2;
-    context.strokeStyle = '#e6edf0';
-    context.stroke();
+    context.beginPath(); context.arc(point.x, point.y, 5, 0, Math.PI * 2);
+    context.fillStyle = levelColor; context.fill(); context.lineWidth = 2;
+    context.strokeStyle = '#e6edf0'; context.stroke();
   }
 }
 
@@ -1224,32 +1313,40 @@ function hideRateChartTooltip() {
 }
 
 function showRateChartTooltip(event) {
-  if (offlinePreview || !serial || rateHistory.length === 0) {
+  if (rateChartDragging) return;
+  const chart = rateChartData();
+  if (offlinePreview || !serial || chart.values.length === 0) {
     hideRateChartTooltip();
     return;
   }
   const canvasRect = elements.rateChart.getBoundingClientRect();
   const panel = elements.rateChart.parentElement;
   const panelRect = panel.getBoundingClientRect();
+  const plotLeft = 48;
+  const plotRight = 10;
+  const plotTop = 20;
+  const plotBottom = 24;
+  const plotWidth = Math.max(1, canvasRect.width - plotLeft - plotRight);
   let pointerRatio = Math.max(0, Math.min(1,
-    (event.clientX - canvasRect.left) / canvasRect.width));
-  rateHoverIndex = Math.round(pointerRatio * (rateHistory.length - 1));
-  pointerRatio = rateHistory.length > 1 ?
-    rateHoverIndex / (rateHistory.length - 1) : 0;
-  const value = rateHistory[rateHoverIndex];
+    (event.clientX - canvasRect.left - plotLeft) / plotWidth));
+  rateHoverIndex = Math.round(pointerRatio * (chart.values.length - 1));
+  pointerRatio = chart.values.length > 1 ?
+    rateHoverIndex / (chart.values.length - 1) : 0;
+  const value = chart.values[rateHoverIndex];
   const unit = deviceSettings?.[9] ?? 0;
   const display = unit === 1 ?
     { value: formatGroupedNumber(Math.round(value)), unit: 'CPM' } :
     formatRadiation(value, deviceSettings?.[10] ?? 1,
       unit === 2 ? 'R' : 'Sv', true);
-  elements.rateTooltip.textContent = `${display.value} ${display.unit}`;
+  elements.rateTooltip.textContent = `${display.value} ${display.unit}\n${formatGroupedNumber(chart.pulses[rateHoverIndex] || 0)} CNT\n${formatRateChartTime(chart.times[rateHoverIndex])}`;
   elements.rateTooltip.hidden = false;
   drawRateChart();
 
-  const pointX = pointerRatio * canvasRect.width;
-  const peak = Math.max(...rateHistory, 0.01) * 1.12;
-  const pointY = canvasRect.height - (value / peak) * canvasRect.height;
-  const left = canvasRect.left - panelRect.left + pointX + 10;
+  const thresholds = rateChartThresholds();
+  const peak = Math.max(...chart.values, 0.01) * 1.12;
+  const plotHeight = Math.max(1, canvasRect.height - plotTop - plotBottom);
+  const pointY = plotTop + plotHeight - (value / peak) * plotHeight;
+  const left = canvasRect.left - panelRect.left + plotLeft + pointerRatio * plotWidth + 10;
   const top = canvasRect.top - panelRect.top + pointY -
     elements.rateTooltip.offsetHeight - 8;
   elements.rateTooltip.style.left = `${Math.max(8, Math.min(
@@ -3397,6 +3494,10 @@ async function writeSetting(settingId, value, control) {
     }
     if (settingId === 9) {
       rateHistory.length = 0;
+      rateHistoryLevels.length = 0;
+      rateHistoryPulses.length = 0;
+      rateHistoryTimes.length = 0;
+      previousRateCount = null;
       drawRateChart();
     }
     deviceSettings = null;
@@ -3582,6 +3683,11 @@ function handleStatus(payload) {
   const dosePrefix = deviceSettings?.[11] ?? 1;
   const rateUsvh = cpm * 0.00666 * (unit === 2 ? 100 : 1);
   const doseUsv = doseNsv / 1000 * (unit === 2 ? 100 : 1);
+  // When the user is looking at an interior slice of the history, keep that
+  // slice fixed as new samples arrive. Only the Y scale may change. A view at
+  // the live edge (scroll = 0) continues following "now"; the old edge is
+  // clamped normally when the buffer advances.
+  const rateChartIsHistorical = rateChartScrollSeconds > 0;
   const dosePeriodLabels = ['DOSE UPTIME', 'DOSE TODAY', 'DOSE TOTAL'];
   elements.doseLabel.textContent = dosePeriodLabels[dosePeriod] || 'DOSE TODAY';
 
@@ -3616,11 +3722,25 @@ function handleStatus(payload) {
   elements.debugCount.textContent = formatGroupedNumber(countTotal);
   elements.uptime.textContent = `${uptime.days}D ${uptime.clock}`;
   updateDeviceDateTime(`${uptime.days}D ${uptime.clock}`);
+  // count_total is the detector counter used by the device while HV is on.
+  // It follows the actual LED flashes and does not depend on the selected
+  // dose period or on the calendar day boundary.
+  const pulseDelta = previousRateCount === null || countTotal < previousRateCount ?
+    0 : countTotal - previousRateCount;
+  previousRateCount = countTotal;
   rateHistory.push(unit === 1 ? cpm : rateUsvh);
+  rateHistoryLevels.push(rateLevel);
+  rateHistoryPulses.push(pulseDelta);
+  rateHistoryTimes.push(logInfo?.calendarValid ? logInfo.calendarSeconds :
+    Math.floor((Date.now() - Date.UTC(2000, 0, 1)) / 1000));
+  if (rateChartIsHistorical) rateChartScrollSeconds += 1;
   rateHistoryUnit = unit === 1 ? 'CPM' :
     formatRadiation(rateUsvh, ratePrefix, unit === 2 ? 'R' : 'Sv', true).unit;
-  elements.rateChart.setAttribute('aria-label', `Recent rate history (${rateHistoryUnit})`);
-  if (rateHistory.length > 180) rateHistory.shift();
+  elements.rateChart.setAttribute('aria-label', `Recent rate history (${RATE_CHART_BUFFER_SECONDS} seconds; zoom and scroll available)`);
+  if (rateHistory.length > RATE_CHART_BUFFER_SECONDS) rateHistory.shift();
+  if (rateHistoryLevels.length > RATE_CHART_BUFFER_SECONDS) rateHistoryLevels.shift();
+  if (rateHistoryPulses.length > RATE_CHART_BUFFER_SECONDS) rateHistoryPulses.shift();
+  if (rateHistoryTimes.length > RATE_CHART_BUFFER_SECONDS) rateHistoryTimes.shift();
   drawRateChart();
   const solarPercent = Math.min(100, Math.floor(solarRaw / 31));
   elements.solarPercent.textContent = `${solarPercent}%`;
@@ -5651,6 +5771,10 @@ async function connectDevice(portOverride = null, transport = null) {
   deviceSettings = null;
   deviceHiddenSettings = null;
   rateHistory.length = 0;
+  rateHistoryLevels.length = 0;
+  rateHistoryPulses.length = 0;
+  rateHistoryTimes.length = 0;
+  previousRateCount = null;
   logInfo = null;
   logRecords = [];
   logRefreshRetryAt = 0;
@@ -6045,9 +6169,47 @@ document.querySelectorAll('.debug-section-toggle').forEach((button) => {
 });
 elements.rateChart.addEventListener('pointermove', showRateChartTooltip);
 elements.rateChart.addEventListener('pointerleave', () => {
+  if (rateChartDragging) return;
   hideRateChartTooltip();
   drawRateChart();
 });
+elements.rateChart.addEventListener('pointerdown', (event) => {
+  rateChartDragging = true;
+  rateChartDragStartX = event.clientX;
+  rateChartDragStartScroll = rateChartScrollSeconds;
+  elements.rateChart.setPointerCapture?.(event.pointerId);
+  hideRateChartTooltip();
+});
+elements.rateChart.addEventListener('pointermove', (event) => {
+  if (!rateChartDragging) return;
+  const rect = elements.rateChart.getBoundingClientRect();
+  // The plotted content follows the pointer: dragging right reveals older
+  // samples and moves the graph itself to the right.
+  rateChartScrollSeconds = rateChartDragStartScroll +
+    (event.clientX - rateChartDragStartX) * rateChartZoomSeconds / Math.max(1, rect.width);
+  clampRateChartViewport();
+  drawRateChart();
+});
+elements.rateChart.addEventListener('pointerup', (event) => {
+  rateChartDragging = false;
+  elements.rateChart.releasePointerCapture?.(event.pointerId);
+});
+elements.rateChart.addEventListener('pointercancel', () => { rateChartDragging = false; });
+elements.rateChart.addEventListener('wheel', (event) => {
+  event.preventDefault();
+  const rect = elements.rateChart.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  const ageAtPointer = rateChartScrollSeconds + (1 - ratio) * rateChartZoomSeconds;
+  // Keep the usual wheel convention: wheel up zooms in, wheel down zooms out.
+  // The sample below the pointer stays fixed while the viewport has room;
+  // clamping only takes effect at either edge.
+  rateChartZoomSeconds *= event.deltaY < 0 ? 0.8 : 1.25;
+  rateChartScrollSeconds = ageAtPointer - (1 - ratio) * rateChartZoomSeconds;
+  clampRateChartViewport();
+  hideRateChartTooltip();
+  drawRateChart();
+}, {passive: false});
+elements.rateChart.addEventListener('dblclick', resetRateChartViewport);
 const installButton = document.querySelector('#install-app');
 const isIosBrowser = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
