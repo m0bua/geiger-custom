@@ -254,6 +254,9 @@ jobs:
 
           ## Changes
           **Changes since APP-202610291321:**
+          - Added app device controls for screen wake, NORMAL/INVISIBLE/SEARCH, flashlight, and screen always-on with automatic return to AUTO after normal or lost app connection.
+          - Added LED COLOR (STOCK/THEME) before LED TIME; THEME uses the saved display palette for pulse indication colors and old settings migrate to STOCK.
+          - Shortened PlatformIO serial upload output to live 10% checkpoints while retaining write verification and errors.
           - Reworked the device settings menu and persistence: reordered menu items, separated LED TIME from LED BRIGHT, added configurable startup-screen behavior, fixed two-row unit handling, improved battery-life behavior, and added smooth screen-timeout dimming.
           - Added BATT FORMAT (% / V / RAW) for the device's main screens and app settings. Debug shows complementary battery readings: voltage for %, percentage for V, and voltage plus percentage for RAW; app Debug includes battery RAW and Li-ion voltage.
           - Added editable LCD palettes and presets (Dark, Light, Ocean, Amber, Violet, Monokai, Dracula, Nord, and Solarized Dark), theme-aware rate levels, configurable dimming for incomplete graph columns, and palette-code export/import.

@@ -413,6 +413,7 @@
           <li><strong>RESET — SETTINGS / LOGS / OLD LOGS / EEPROM / SPI / ALL:</strong> selects a reset action; see the effects below. The device executes the selected action on long Right without another on-device confirmation. The app asks for confirmation.</li>
           <li><strong>POWER OFF:</strong> shuts down the device.</li>
           <li><strong>REBOOT:</strong> restarts the device.</li>
+          <li><strong>LED COLOR — STOCK / THEME:</strong> selects the pulse LED palette. STOCK uses the stock indication colors; THEME uses the matching BLUE, GREEN, YELLOW, and RED colors from the saved display theme. LED TIME and LED BRIGHT still apply to both modes.</li>
         </ul>
 
         <h3>Log storage and reset actions</h3>
@@ -526,6 +527,14 @@
           <input class="release-history-toggle-input" id="release-history-toggle" type="checkbox">
           <div class="release-history-content">
         <ul class="release-list">
+          <li>
+            <time datetime="2026-11-05">2026-11-05</time> — Device controls, theme LED colors, and shorter firmware upload logs:
+            <ul>
+              <li><strong>Device controls:</strong> added app controls for waking the screen, switching NORMAL/INVISIBLE/SEARCH, toggling the flashlight, and keeping the screen on. NORMAL and INVISIBLE do not wake the screen; SEARCH keeps it awake. Screen always-on returns to AUTO on normal or lost app connection.</li>
+              <li><strong>LED COLOR:</strong> added the STOCK/THEME setting before LED TIME. THEME maps pulse indication colors to the saved display palette, with old settings migrated to STOCK.</li>
+              <li><strong>PlatformIO:</strong> shortened serial upload output to live 10% progress checkpoints while retaining write verification, errors, and the final result.</li>
+            </ul>
+          </li>
           <li>
             <time datetime="2026-11-04">2026-11-04</time> — Battery formats, display themes, diagnostics, and log performance:
             <ul>
