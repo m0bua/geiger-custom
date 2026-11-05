@@ -453,6 +453,10 @@ static bool flashlight_enabled;
 static bool flashlight_manual_enabled;
 static bool flashlight_alarm_override;
 static bool flashlight_alarm_output;
+static volatile bool lcd_screen_wake_requested;
+static bool lcd_screen_always_on;
+static uint32_t lcd_screen_control_last_contact_ms;
+static bool lcd_screen_control_contact_seen;
 static uint32_t lcd_displayed_minute_key = UINT32_MAX;
 static uint32_t lcd_rate_value_100000ths;
 static uint32_t lcd_alarm_rate_value_thousandths;
@@ -4956,6 +4960,10 @@ bool board_display_remote_action_valid(uint8_t action, uint8_t value)
         action == PROTOCOL_V1_ACTION_REBOOT) {
         return value == 0u;
     }
+    if (action == PROTOCOL_V1_ACTION_WAKE_SCREEN) return value == 0u;
+    if (action == PROTOCOL_V1_ACTION_SET_INDICATION_MODE) return value < 3u;
+    if (action == PROTOCOL_V1_ACTION_SET_FLASHLIGHT) return value < 2u;
+    if (action == PROTOCOL_V1_ACTION_SET_SCREEN_ALWAYS_ON) return value < 2u;
     return false;
 }
 
@@ -4968,7 +4976,61 @@ void board_display_remote_action_execute(uint8_t action, uint8_t value)
         board_power_off();
     } else if (action == PROTOCOL_V1_ACTION_REBOOT) {
         board_reboot();
+    } else if (action == PROTOCOL_V1_ACTION_WAKE_SCREEN) {
+        lcd_screen_wake_requested = true;
+        board_lcd_backlight_set(true);
+    } else if (action == PROTOCOL_V1_ACTION_SET_INDICATION_MODE) {
+        lcd_indication_mode = value;
+        if (value == 2u) lcd_search_mode_started = board_millis;
+        if (value == 2u) {
+            lcd_screen_wake_requested = true;
+            board_lcd_backlight_set(true);
+        }
+        board_rgb_apply();
+        lcd_text_active = false;
+        lcd_text_row_commands_queued = false;
+        lcd_background_pending = true;
+        lcd_cpm_redraw_pending = true;
+    } else if (action == PROTOCOL_V1_ACTION_SET_FLASHLIGHT) {
+        flashlight_manual_enabled = value != 0u;
+        flashlight_enabled = flashlight_alarm_override ? flashlight_alarm_output :
+            flashlight_manual_enabled;
+        REG32(GPIOB_BASE + GPIO_BSRR) = flashlight_enabled ?
+            (1u << FLASHLIGHT_PIN) : (1u << (16u + FLASHLIGHT_PIN));
+        lcd_cpm_redraw_pending = true;
+    } else if (action == PROTOCOL_V1_ACTION_SET_SCREEN_ALWAYS_ON) {
+        lcd_screen_always_on = value != 0u;
+        lcd_screen_wake_requested = true;
+        board_lcd_backlight_set(true);
     }
+}
+
+bool board_display_take_screen_wake_request(void)
+{
+    const bool requested = lcd_screen_wake_requested;
+    lcd_screen_wake_requested = false;
+    return requested;
+}
+
+bool board_display_screen_always_on(void)
+{
+    return lcd_screen_always_on;
+}
+
+void board_display_remote_control_contact(void)
+{
+    lcd_screen_control_last_contact_ms = board_millis;
+    lcd_screen_control_contact_seen = true;
+}
+
+bool board_display_screen_connection_service(void)
+{
+    if (!lcd_screen_always_on || !lcd_screen_control_contact_seen ||
+        (uint32_t)(board_millis - lcd_screen_control_last_contact_ms) <= 3000u) {
+        return false;
+    }
+    lcd_screen_always_on = false;
+    return true;
 }
 
 uint32_t board_display_screen_timeout_ms(void)

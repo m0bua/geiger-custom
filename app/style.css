@@ -295,6 +295,16 @@ body.logs-page-active .log-content { height: auto; min-height: 0; max-height: no
 .setting-power-controls { gap: 8px; flex-wrap: wrap; }
 .setting-power-controls .setting-visible { margin-left: 2px; }
 .settings-note { margin: 13px 0 0; color: #77868c; font-size: 10px; }
+.device-controls { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
+.device-controls-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 13px; }
+.device-controls-heading h3 { margin: 0; color: #d8e2e4; font-size: 13px; }
+.device-controls-heading p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+#device-controls-status { color: var(--muted); font: 10px "DM Mono", Consolas, monospace; }
+.device-controls-grid { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.device-mode-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.device-mode-controls > span { margin-right: 2px; color: var(--muted); font-size: 11px; }
+.device-controls-grid .button:disabled { opacity: .5; cursor: not-allowed; }
+.device-controls-grid .button[data-active="true"] { border-color: var(--green); color: var(--green); }
 .theme-config { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
 .theme-config-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 13px; }
 .theme-config-heading h3 { margin: 0; color: #d8e2e4; font-size: 13px; }

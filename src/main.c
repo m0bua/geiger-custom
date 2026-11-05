@@ -212,6 +212,23 @@ int main(void)
     for (;;) {
         protocol_v1_service();
         uint32_t now = board_millis;
+        if (board_display_screen_connection_service()) {
+            inactivity_deadline = now + screen_timeout_ms;
+        }
+        if (board_display_take_screen_wake_request()) {
+            if (idle_clock_active) {
+                (void)board_set_idle_clock(false);
+                idle_clock_active = false;
+            }
+            if (idle_tick_active) {
+                board_set_idle_tick(false);
+                idle_tick_active = false;
+            }
+            screen_backlight_wake();
+            backlight_on = true;
+            inactivity_deadline = board_display_screen_always_on() ?
+                UINT32_MAX : now + screen_timeout_ms;
+        }
         {
             uint8_t memory = board_display_log_memory();
             uint32_t reconciled_day;
@@ -701,7 +718,8 @@ int main(void)
                 next_cpm_history_tick += 150u;
             }
 
-            if (backlight_on && !screen_alarm_active &&
+            if (backlight_on && !board_display_screen_always_on() &&
+                !screen_alarm_active &&
                 !board_display_search_mode() &&
                 !board_display_cleanup_feedback_active() &&
                 (int32_t)(now - inactivity_deadline) >= 0) {

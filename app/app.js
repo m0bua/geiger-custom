@@ -15,6 +15,10 @@ const OP_SET_THEME = 13;
 const CAP_GET_STATUS = 1 << 0;
 const OP_SET_RTC = 8;
 const OP_DEVICE_ACTION = 9;
+const ACTION_WAKE_SCREEN = 3;
+const ACTION_SET_INDICATION_MODE = 4;
+const ACTION_SET_FLASHLIGHT = 5;
+const ACTION_SET_SCREEN_ALWAYS_ON = 6;
 const CAP_GET_SETTINGS = 1 << 1;
 const CAP_SET_SETTING = 1 << 2;
 const CAP_GET_SPI_DUMP = 1 << 5;
@@ -362,6 +366,11 @@ const elements = {
   aboutPage: document.querySelector('#about-page'),
   settingsStatus: document.querySelector('#settings-status'),
   settingsList: document.querySelector('#settings-list'),
+  deviceControlsStatus: document.querySelector('#device-controls-status'),
+  deviceWakeScreen: document.querySelector('#device-wake-screen'),
+  deviceModeButtons: document.querySelectorAll('.device-mode-button'),
+  deviceFlashlight: document.querySelector('#device-flashlight'),
+  deviceScreenAlwaysOn: document.querySelector('#device-screen-always-on'),
   themeStatus: document.querySelector('#theme-status'),
   themePreset: document.querySelector('#theme-preset'),
   themeColors: document.querySelector('#theme-colors'),
@@ -2243,6 +2252,7 @@ function setConnection(state, label) {
   elements.debugModeBadge.dataset.mode = liveData ? 'device' : 'demo';
   if (state !== 'connected') hideRateChartTooltip();
   updateRtcControls();
+  updateDeviceControls();
 }
 
 function formatUptime(seconds) {
@@ -2382,7 +2392,11 @@ function handleHello(payload) {
   }
   protocolCapabilities = capabilities;
   protocolMaxPayload = Math.min(MAX_PAYLOAD, maxPayload);
+  /* The current status frame does not carry indication-mode state. Do not
+   * leave the offline demo's Normal marker visible after connecting. */
+  setDeviceModeActive(null);
   updateRtcControls();
+  updateDeviceControls();
   updateSpiDumpAvailability();
 }
 
@@ -2918,6 +2932,15 @@ function importThemeConfigCode() {
 }
 
 function renderOfflinePreview() {
+  setDeviceModeActive(1);
+  if (elements.deviceScreenAlwaysOn) {
+    elements.deviceScreenAlwaysOn.dataset.enabled = 'false';
+    elements.deviceScreenAlwaysOn.textContent = 'Screen: Auto';
+  }
+  if (elements.deviceFlashlight) {
+    elements.deviceFlashlight.dataset.enabled = 'false';
+    elements.deviceFlashlight.textContent = 'Flashlight: Off';
+  }
   deviceTheme = null;
   deviceThemeDimming = null;
   themeDraft = demoTheme.slice();
@@ -3062,6 +3085,46 @@ function makeDeviceActionButton(label, action, valueProvider = () => 0) {
   button.addEventListener('click', () =>
     runDeviceAction(action, valueProvider(), button));
   return button;
+}
+
+function updateDeviceControls() {
+  const supported = !!serial && (protocolCapabilities & CAP_DEVICE_ACTION) !== 0;
+  const controls = [elements.deviceWakeScreen, elements.deviceFlashlight,
+    elements.deviceScreenAlwaysOn,
+    ...elements.deviceModeButtons].filter(Boolean);
+  controls.forEach((control) => { control.disabled = !supported; });
+  if (elements.deviceControlsStatus) {
+    if (!supported) elements.deviceControlsStatus.textContent = 'Connect to control the device.';
+    else if (!elements.deviceControlsStatus.textContent ||
+             elements.deviceControlsStatus.textContent === 'Connect to control the device.')
+      elements.deviceControlsStatus.textContent = 'Ready';
+  }
+}
+
+async function runDeviceControlAction(action, value, button, successText) {
+  if (!serial || (protocolCapabilities & CAP_DEVICE_ACTION) === 0) return;
+  button.disabled = true;
+  elements.deviceControlsStatus.textContent = 'Sending…';
+  try {
+    const result = await serial.request(OP_DEVICE_ACTION,
+      Uint8Array.of(action, value));
+    if (result.length !== 1 || result[0] !== 0)
+      throw new ProtocolError('Device rejected this action.');
+    elements.deviceControlsStatus.textContent = successText;
+    return true;
+  } catch (error) {
+    elements.deviceControlsStatus.textContent = error.message;
+    return false;
+  } finally {
+    updateDeviceControls();
+  }
+}
+
+function setDeviceModeActive(mode) {
+  elements.deviceModeButtons.forEach((control) => {
+    control.dataset.active = mode !== null &&
+      control.dataset.mode === String(mode) ? 'true' : 'false';
+  });
 }
 
 async function loadSettings() {
@@ -5480,6 +5543,12 @@ async function disconnectPortAfterAction(port = selectedSerialPort || selectedUs
   clearInterval(pollTimer);
   pollTimer = 0;
   const activeSerial = serial;
+  if (activeSerial && elements.deviceScreenAlwaysOn?.dataset.enabled === 'true') {
+    try {
+      await activeSerial.request(OP_DEVICE_ACTION,
+        Uint8Array.of(ACTION_SET_SCREEN_ALWAYS_ON, 0), 700);
+    } catch { /* Firmware watchdog also returns the screen to Auto. */ }
+  }
   serial = null;
   if (activeSerial) await activeSerial.disconnect();
   if (port && portMayBeOpen) {
@@ -5718,6 +5787,38 @@ elements.connectUsb?.addEventListener('click', () => {
   if (!serial && !portMayBeOpen) connectDevice(null, 'webusb');
 });
 
+elements.deviceWakeScreen?.addEventListener('click', () =>
+  runDeviceControlAction(ACTION_WAKE_SCREEN, 0, elements.deviceWakeScreen,
+    'Screen wake requested'));
+elements.deviceModeButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    const mode = Number(button.dataset.mode);
+    runDeviceControlAction(ACTION_SET_INDICATION_MODE, mode, button,
+      `${button.textContent} mode selected`).then((ok) => {
+        if (ok) setDeviceModeActive(mode);
+      });
+  });
+});
+elements.deviceFlashlight?.addEventListener('click', () => {
+  const enabled = elements.deviceFlashlight.dataset.enabled !== 'true';
+  runDeviceControlAction(ACTION_SET_FLASHLIGHT, enabled ? 1 : 0,
+    elements.deviceFlashlight, `Flashlight ${enabled ? 'on' : 'off'}`).then((ok) => {
+      if (!ok) return;
+      elements.deviceFlashlight.dataset.enabled = String(enabled);
+      elements.deviceFlashlight.textContent = `Flashlight: ${enabled ? 'On' : 'Off'}`;
+    });
+});
+elements.deviceScreenAlwaysOn?.addEventListener('click', () => {
+  const enabled = elements.deviceScreenAlwaysOn.dataset.enabled !== 'true';
+  runDeviceControlAction(ACTION_SET_SCREEN_ALWAYS_ON, enabled ? 1 : 0,
+    elements.deviceScreenAlwaysOn,
+    `Screen always on ${enabled ? 'enabled' : 'disabled'}`).then((ok) => {
+      if (!ok) return;
+      elements.deviceScreenAlwaysOn.dataset.enabled = String(enabled);
+      elements.deviceScreenAlwaysOn.textContent = `Screen: ${enabled ? 'On' : 'Auto'}`;
+    });
+});
+
 document.querySelectorAll('.debug-section-toggle').forEach((button) => {
   button.addEventListener('click', () => {
     const expanded = button.getAttribute('aria-expanded') === 'true';
@@ -5765,6 +5866,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   }, { once: true });
 }
 renderOfflinePreview();
+updateDeviceControls();
 renderSettingsClock();
 window.setInterval(renderSettingsClock, 1000);
 async function refreshNativeBridgePorts() {

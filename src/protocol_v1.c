@@ -181,6 +181,8 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         return;
     }
 
+    board_display_remote_control_contact();
+
     response[0] = PROTOCOL_STATUS_OK;
     if (opcode == PROTOCOL_V1_OP_HELLO && payload_length == 0u) {
         /* model_id, protocol version, max payload, capability mask */

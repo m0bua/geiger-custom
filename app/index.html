@@ -123,6 +123,23 @@
       </section>
       <div id="settings-list" class="settings-list"></div>
       <p class="settings-note">Use Show to control which settings appear in the device menu. Visibility requires firmware protocol support.</p>
+      <section class="device-controls" aria-labelledby="device-controls-title">
+        <div class="device-controls-heading">
+          <div><h3 id="device-controls-title">Device controls</h3><p>Control the screen, indication mode, and flashlight without using the device buttons.</p></div>
+          <span id="device-controls-status" role="status" aria-live="polite">Connect to control the device.</span>
+        </div>
+        <div class="device-controls-grid">
+          <button id="device-wake-screen" class="button button-quiet" type="button" disabled>Wake screen</button>
+          <button id="device-screen-always-on" class="button button-quiet" type="button" data-enabled="false" disabled>Screen: Auto</button>
+          <div class="device-mode-controls" role="group" aria-label="Indication mode">
+            <span>Mode</span>
+            <button class="button button-quiet device-mode-button" data-mode="1" type="button" disabled>Normal</button>
+            <button class="button button-quiet device-mode-button" data-mode="0" type="button" disabled>Invisible</button>
+            <button class="button button-quiet device-mode-button" data-mode="2" type="button" disabled>Search</button>
+          </div>
+          <button id="device-flashlight" class="button button-quiet" type="button" data-enabled="false" disabled>Flashlight: Off</button>
+        </div>
+      </section>
       <section class="theme-config" aria-labelledby="theme-config-title">
         <div class="theme-config-heading">
           <div><h3 id="theme-config-title">Display theme</h3><p>Set the LCD palette and partial graph-column dimming. Changes are stored on the device.</p></div>

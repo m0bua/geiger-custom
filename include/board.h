@@ -79,6 +79,10 @@ bool board_display_theme_write(const uint16_t *colors, uint8_t count,
                                uint8_t graph_dimming_percent);
 bool board_display_remote_action_valid(uint8_t action, uint8_t value);
 void board_display_remote_action_execute(uint8_t action, uint8_t value);
+bool board_display_take_screen_wake_request(void);
+bool board_display_screen_always_on(void);
+void board_display_remote_control_contact(void);
+bool board_display_screen_connection_service(void);
 void board_display_settings_list_activate(void);
 void board_display_settings_move(bool forward);
 void board_display_settings_change(void);
