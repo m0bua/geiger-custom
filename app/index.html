@@ -494,13 +494,13 @@
 
         <section class="manual-chapter">
         <h3>2.1 · Graphs</h3>
-        <p>Long Right from Dose opens Graphs. Short Left/Right cycles SEC, MIN, HOUR, DAY, and ALRT. SEC shows live rate history; long Right cycles its 10/30/60/90-second window. For a log graph, long Right enters column selection; short Left/Right moves cyclically through columns. The selected column is green and its date/time, dose, MAX, AVG, and covered duration are shown. Long Left leaves column selection; another long Left returns to Dose. Holding Left for 3 seconds forces a return to the Rate screen.</p>
+        <p>Long Right from Dose opens Graphs. Short Left/Right cycles SEC, MIN, HOUR, DAY, and ALRT. SEC shows live rate history; long Right cycles its 10/30/60/90-second window. For a log graph, long Right enters column selection; short Left/Right moves cyclically through columns. MIN/HOUR/DAY bars use the period average for their theme color; ALERT bars use their maximum, and incomplete bars are dimmed. The selected column is green and its date/time, dose, MAX, AVG, and covered duration are shown. Long Left leaves column selection; another long Left returns to Dose. Holding Left for 3 seconds forces a return to the Rate screen.</p>
         <p><strong>Cursor:</strong> moving through a graph redraws the graph area so the previous selection and cursor pixels are cleared.</p>
         <p>Log graphs show the current in-progress interval first, followed by older records from that log. The current hour is assembled from minute records, and the current day from hour records; older columns come from their own stored log. The history limits are 60 minute records, 24 hourly records, 50 daily records, and 50 alerts; at most 13 columns are visible on screen at once. With no column selected, MIN and HOUR summarize the visible window; DAY summarizes retained daily records. Partial records contribute only their measured time. EEPROM and SPI both store all four log types, with much greater history available in SPI mode. The app's Logs tab lists records and coverage details.</p>
         <div class="manual-screen-grid">
-          <figure><figcaption>2.1 · 90-second live rate graph</figcaption><img src="../docs/renders/screens/2.1-graph-90s.svg" alt="Live rate graph with a 90-second window" loading="lazy"></figure>
-          <figure><figcaption>2.2 · DAY dose graph with the newest record selected</figcaption><img src="../docs/renders/screens/2.2-graph-days.svg" alt="Day dose graph with the current record selected in green and lower statistics on the left" loading="lazy"></figure>
-          <figure><figcaption>2.3 · ALRT graph with a selected alert</figcaption><img src="../docs/renders/screens/2.3-graph-alerts.svg" alt="Alert log graph with selected alert time, green selected bar, and red maximum" loading="lazy"></figure>
+          <figure><figcaption>2.1 · 1000-second live rate graph</figcaption><img src="../docs/renders/screens/2.1-graph-90s.svg" alt="Live rate graph with pulse markers" loading="lazy"></figure>
+          <figure><figcaption>2.2 · DAY dose graph with rate colors</figcaption><img src="../docs/renders/screens/2.2-graph-days.svg" alt="Day dose graph with green, yellow, red, and dimmed bars" loading="lazy"></figure>
+          <figure><figcaption>2.3 · ALRT graph with maximum-rate colors</figcaption><img src="../docs/renders/screens/2.3-graph-alerts.svg" alt="Alert log graph with bars colored by maximum rate" loading="lazy"></figure>
         </div>
         <p class="information-note">Screen colors, values, times, battery and solar percentages in these SVG renders are illustrative. They are not live readings or calibration references.</p>
         </section>
@@ -536,6 +536,8 @@
               <li><strong>Device controls:</strong> added app controls for waking the screen, switching NORMAL/INVISIBLE/SEARCH, toggling the flashlight, and keeping the screen on. NORMAL and INVISIBLE do not wake the screen; SEARCH keeps it awake. Screen always-on returns to AUTO on normal or lost app connection.</li>
               <li><strong>LED COLOR:</strong> added the STOCK/THEME setting before LED TIME. THEME maps pulse indication colors to the saved display palette, with old settings migrated to STOCK.</li>
               <li><strong>PlatformIO:</strong> shortened serial upload output to live 10% progress checkpoints while retaining write verification, errors, and the final result.</li>
+              <li><strong>Overview graph:</strong> extended the live history to 1000 seconds, added wheel zoom and horizontal drag scrolling, kept historical views fixed while new samples arrive, and aligned the cursor, selected point, and tooltip coordinates.</li>
+              <li><strong>Graph details:</strong> pulse markers now use actual detector CNT deltas; the tooltip shows the value, CNT, and full time. The device's MIN/HOUR/DAY/ALRT graphs now use theme colors for rate levels and dim incomplete bars.</li>
             </ul>
           </li>
           <li>

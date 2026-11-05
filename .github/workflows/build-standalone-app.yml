@@ -254,6 +254,9 @@ jobs:
 
           ## Changes
           **Changes since APP-202610291321:**
+          - Extended the Overview live graph to 1000 seconds with wheel zoom, horizontal drag scrolling, fixed historical views, and corrected cursor/tooltip coordinates.
+          - Added actual detector pulse markers; the tooltip shows the value, CNT, and full time.
+          - Colored device MIN/HOUR/DAY/ALRT graph bars by their rate level using the display theme, with incomplete bars dimmed.
           - Added app device controls for screen wake, NORMAL/INVISIBLE/SEARCH, flashlight, and screen always-on with automatic return to AUTO after normal or lost app connection.
           - Added LED COLOR (STOCK/THEME) before LED TIME; THEME uses the saved display palette for pulse indication colors and old settings migrate to STOCK.
           - Shortened PlatformIO serial upload output to live 10% checkpoints while retaining write verification and errors.
