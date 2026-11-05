@@ -4097,8 +4097,29 @@ bool board_display_graph_long_press(void)
         lcd_graph_previous_selected = lcd_graph_selected;
         lcd_graph_cursor_mode = !lcd_graph_cursor_mode;
         if (lcd_graph_cursor_mode) {
-            lcd_graph_selected_record = 0u;
-            lcd_graph_selected = 0u;
+            /* Keep the absolute record selected before leaving cursor mode.
+             * The visible window may already be scrolled, so resetting only
+             * the screen-relative index makes navigation wrap from record 0
+             * while the cursor is drawn on window_start. */
+            if (lcd_graph_log_available == 0u) {
+                lcd_graph_selected_record = 0u;
+                lcd_graph_selected = 0u;
+            } else {
+                if (lcd_graph_selected_record >= lcd_graph_log_available)
+                    lcd_graph_selected_record =
+                        (uint8_t)(lcd_graph_log_available - 1u);
+                const uint8_t max_start = lcd_graph_log_available >
+                    LCD_GRAPH_VISIBLE_BARS ? (uint8_t)(
+                        lcd_graph_log_available - LCD_GRAPH_VISIBLE_BARS) : 0u;
+                uint8_t window = lcd_graph_selected_record >
+                    LCD_GRAPH_CURSOR_CENTER ? (uint8_t)(
+                        lcd_graph_selected_record - LCD_GRAPH_CURSOR_CENTER) : 0u;
+                if (window > max_start) window = max_start;
+                if (window != lcd_graph_log_window_start)
+                    (void)lcd_graph_load_log_window(window);
+                lcd_graph_selected = (uint8_t)(lcd_graph_selected_record -
+                    lcd_graph_log_window_start);
+            }
         }
         lcd_graph_partial_kind = 0u;
         lcd_graph_partial_pending = true;
