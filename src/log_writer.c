@@ -207,6 +207,54 @@ static void close_period(log_record_kind_t kind,
     }
 }
 
+/* A power loss can leave minute records behind without the hour/day record
+ * that normally closes them. Repair only the immediately preceding calendar
+ * period on boot; older gaps are deliberately left untouched. */
+static bool recover_previous_period(log_record_kind_t kind)
+{
+    uint32_t uptime;
+    uint32_t calendar;
+    uint32_t period;
+    uint32_t current_start;
+    uint32_t previous_start;
+    uint32_t period_index;
+    uint8_t year_descriptor;
+    log_record_t existing;
+    log_record_t record;
+    log_point_t aggregate;
+    log_query_time_context_t context;
+    log_query_read_fn reader;
+    bool calendar_valid;
+    bool live = false;
+
+    if (kind != LOG_RECORD_HOUR && kind != LOG_RECORD_DAY) return true;
+    if (!board_rtc_log_time(&uptime, &calendar, &calendar_valid) ||
+        !calendar_valid) return true;
+    period = log_record_period_seconds(kind);
+    current_start = calendar - calendar % period;
+    if (current_start < period) return true;
+    previous_start = current_start - period;
+    if (!log_record_location(kind, previous_start, true, &period_index,
+            &year_descriptor)) return true;
+
+    context.calendar_valid = true;
+    reader = active_log_memory == BOARD_LOG_MEMORY_SPI ?
+        spi_log_query_read : log_eeprom_query_read;
+    if (reader(&context, kind, current_epoch, previous_start, &existing,
+            &live)) return true;
+    if (!log_query_aggregate(reader, &context, current_epoch, previous_start,
+            period, &aggregate) || !aggregate.available ||
+        aggregate.covered_seconds == 0u) return true;
+
+    record.period_index = period_index;
+    record.count = aggregate.count;
+    record.maximum_cpm = aggregate.maximum_cpm;
+    record.duration_seconds = 0u;
+    record.segment_id = (uint8_t)(current_epoch % LOG_SEGMENT_ID_COUNT);
+    record.covered_seconds = aggregate.covered_seconds;
+    return append_record(kind, current_epoch, year_descriptor, &record);
+}
+
 static void update_period_tracker(log_record_kind_t kind,
                                   period_accumulator_t *tracker,
                                   uint32_t source_time, bool calendar_valid)
@@ -370,6 +418,8 @@ bool log_writer_init(void)
         current_epoch = log_eeprom_active_epoch(&latest_epoch) ?
             latest_epoch : 0u;
         writer_ready = true;
+        if (!recover_previous_period(LOG_RECORD_HOUR) ||
+            !recover_previous_period(LOG_RECORD_DAY)) goto failed;
         return true;
     }
     if (log_memory != BOARD_LOG_MEMORY_SPI) goto failed;
@@ -377,6 +427,8 @@ bool log_writer_init(void)
     have_epoch = spi_log_latest_epoch(&latest_epoch);
     current_epoch = have_epoch ? latest_epoch : 0u;
     writer_ready = true;
+    if (!recover_previous_period(LOG_RECORD_HOUR) ||
+        !recover_previous_period(LOG_RECORD_DAY)) goto failed;
     return true;
 failed:
     writer_fault = true;
