@@ -10,6 +10,10 @@ The LCD has two main pages: dose rate in µSv/h with CPM, and accumulated dose. 
 
 The repository also contains a working browser console in [`app/`](app/README.md): live Overview, log browsing, supported settings, Debug, firmware flashing, reboot, and memory dumps over Web Serial. It has no build step or external dependencies.
 
+## License
+
+The original source code in this repository is licensed under the [MIT License](LICENSE). Bundled third-party materials, including the fonts documented in `docs/reference/`, and stock firmware images remain under their respective licenses.
+
 To run the browser console locally, start a static server from the repository root:
 
 ```powershell
