@@ -75,6 +75,8 @@ def main() -> int:
              if isinstance(name, str) and name.lower().endswith(".html")),
             None,
         )
+        windows_asset = assets.get("Dosimeter.exe")
+        legacy_windows_asset = assets.get("Dosimetr.exe")
         slug = quote(tag, safe="-_.")
         version_dir = output / "versions" / slug
         if html_asset:
@@ -104,6 +106,14 @@ def main() -> int:
                 encoding="utf-8")
             worker = f'''const C="device-monitor-{slug}";self.addEventListener("install",e=>{{e.waitUntil(caches.open(C).then(c=>c.addAll(["./index.html","./manifest.webmanifest","./app-icon.svg"])));self.skipWaiting()}});self.addEventListener("activate",e=>e.waitUntil(self.clients.claim()));self.addEventListener("fetch",e=>{{if(e.request.method==="GET"&&new URL(e.request.url).origin===self.location.origin)e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)))}});'''
             (version_dir / "service-worker.js").write_text(worker, encoding="utf-8")
+            if windows_asset is None and legacy_windows_asset:
+                request = Request(legacy_windows_asset["url"], headers={
+                    "Accept": "application/octet-stream",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    **({"Authorization": f"Bearer {token}"} if token else {}),
+                })
+                with urlopen(request, timeout=120) as response:
+                    (version_dir / "Dosimeter.exe").write_bytes(response.read())
             archived_apps += 1
         title = html.escape(str(release.get("name") or tag))
         timestamp = re.match(r"^(\d{12})(?:-|$)", tag)
@@ -125,8 +135,11 @@ def main() -> int:
         for asset_name, label in (("Dosimeter.exe", "Windows"),
                                   ("firmware.bin", "BIN"),
                                   ("spi-service-firmware.bin", "SPI service")):
-            release_asset = assets.get(asset_name)
+            release_asset = windows_asset if asset_name == "Dosimeter.exe" else assets.get(asset_name)
             download_url = release_asset.get("browser_download_url") if release_asset else None
+            if asset_name == "Dosimeter.exe" and not windows_asset and legacy_windows_asset:
+                download_url = (f"{url}Dosimeter.exe" if html_asset else
+                                legacy_windows_asset.get("browser_download_url"))
             if download_url:
                 safe_download = html.escape(str(download_url), quote=True)
                 downloads.append(f'<a href="{safe_download}">{label}</a>')
