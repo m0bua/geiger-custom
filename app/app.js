@@ -1051,6 +1051,9 @@ let logRangeEnd = 0;
 let logCsvBusy = false;
 const logRangeDefaults = new Set();
 let logFillMetric = 'dose';
+let logSortKey = 'date';
+let logSortDirection = 'desc';
+let logRefreshRetryAt = 0;
 const diagnosticsLog = [];
 let demoLogRenderer = null;
 let clockSyncBusy = false;
@@ -1447,7 +1450,14 @@ function clearLogView() {
 function isLatestLogView() {
   return elements.logRangeMode.value === 'latest';
 }
-function hasCurrentLogDate() { return isLatestLogView() || (!logRangeActive && !logCountLimit); }
+function isRelativeLogView() {
+  return ['hour', 'day', 'month'].includes(elements.logRangeMode.value);
+}
+function hasCurrentLogDate() {
+  const now = logInfo?.calendarValid ? logInfo.calendarSeconds : 0;
+  return isLatestLogView() || Boolean(logInfo?.calendarValid && logRangeActive &&
+    logRangeStart <= now && logRangeEnd >= now && logRangeEnd >= logRangeStart);
+}
 function logDateLimit() {
   return logRangeActive && !logRangeAll && !isLatestLogView() ? logRangeEnd : 0;
 }
@@ -1463,11 +1473,54 @@ function calendarSecondsFromInputs(date, time = '00:00') {
     Date.UTC(2000, 0, 1) / 1000;
 }
 
+function initializeCalendarRangeInputs(mode) {
+  const dateInput = document.querySelector('#log-calendar-date');
+  if (!dateInput || dateInput.value) return;
+  const fromDevice = Boolean(logInfo?.calendarValid);
+  const now = fromDevice ?
+    new Date(Date.UTC(2000, 0, 1) + Math.floor(logInfo.calendarSeconds) * 1000) :
+    new Date();
+  const year = fromDevice ? now.getUTCFullYear() : now.getFullYear();
+  const month = fromDevice ? now.getUTCMonth() : now.getMonth();
+  const day = fromDevice ? now.getUTCDate() : now.getDate();
+  const hour = fromDevice ? now.getUTCHours() : now.getHours();
+  if (mode === 'month') {
+    dateInput.value = `${year}-${String(month + 1).padStart(2, '0')}`;
+  } else {
+    dateInput.value = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  if (mode === 'hour') {
+    const hourInput = document.querySelector('#log-calendar-hour');
+    if (hourInput) hourInput.value = String(hour).padStart(2, '0');
+  }
+}
+
+function shiftCalendarRangeInput(mode, delta) {
+  const dateInput = document.querySelector('#log-calendar-date');
+  if (!dateInput?.value) return;
+  if (mode === 'month') {
+    const [year, month] = dateInput.value.split('-').map(Number);
+    const date = new Date(Date.UTC(year, month - 1 + delta, 1));
+    dateInput.value = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+    return;
+  }
+  const hour = mode === 'hour' ? Number(document.querySelector('#log-calendar-hour')?.value || 0) : 0;
+  const [year, month, day] = dateInput.value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day, hour));
+  if (mode === 'hour') date.setUTCHours(date.getUTCHours() + delta);
+  else date.setUTCDate(date.getUTCDate() + delta);
+  dateInput.value = formatDeviceDate(date);
+  if (mode === 'hour') {
+    document.querySelector('#log-calendar-hour').value = String(date.getUTCHours()).padStart(2, '0');
+  }
+}
+
 function updateLogRangeControls() {
   const type = logTypes.find((item) => item.id === selectedLogType);
   if (!type) return;
   const mode = elements.logRangeMode.value;
   const datesMode = mode === 'dates';
+  const relativeMode = isRelativeLogView();
   const key = `${type.id}:${mode}`;
   const controlsRebuilt = elements.logRangeExtra.dataset.key !== key;
   if (controlsRebuilt) {
@@ -1480,7 +1533,51 @@ function updateLogRangeControls() {
       logRangeInputCache.set(oldKey, saved);
     }
     elements.logRangeExtra.replaceChildren();
-    if (mode === 'count') {
+    if (relativeMode) {
+      const previous = document.createElement('button');
+      previous.type = 'button';
+      previous.className = 'button button-quiet log-range-step';
+      previous.textContent = '←';
+      previous.setAttribute('aria-label', `Previous ${mode}`);
+      previous.addEventListener('click', () => {
+        shiftCalendarRangeInput(mode, -1);
+        updateLogRangeControls();
+      });
+      elements.logRangeExtra.append(previous);
+      const dateLabel = document.createElement('label');
+      const dateInput = document.createElement('input');
+      dateInput.id = 'log-calendar-date';
+      dateInput.type = mode === 'month' ? 'month' : 'date';
+      dateLabel.htmlFor = dateInput.id;
+      dateLabel.textContent = mode === 'month' ? 'Month' : 'Date';
+      dateLabel.append(dateInput);
+      elements.logRangeExtra.append(dateLabel);
+      if (mode === 'hour') {
+        const hourLabel = document.createElement('label');
+        const hourInput = document.createElement('select');
+        hourInput.id = 'log-calendar-hour';
+        hourLabel.htmlFor = hourInput.id;
+        hourLabel.textContent = 'Hour';
+        for (let hour = 0; hour < 24; ++hour) {
+          const option = document.createElement('option');
+          option.value = String(hour).padStart(2, '0');
+          option.textContent = option.value;
+          hourInput.append(option);
+        }
+        hourLabel.append(hourInput);
+        elements.logRangeExtra.append(hourLabel);
+      }
+      const next = document.createElement('button');
+      next.type = 'button';
+      next.className = 'button button-quiet log-range-step';
+      next.textContent = '→';
+      next.setAttribute('aria-label', `Next ${mode}`);
+      next.addEventListener('click', () => {
+        shiftCalendarRangeInput(mode, 1);
+        updateLogRangeControls();
+      });
+      elements.logRangeExtra.append(next);
+    } else if (mode === 'count') {
       const label = document.createElement('label');
       label.htmlFor = 'log-custom-count';
       label.textContent = 'Records';
@@ -1535,6 +1632,7 @@ function updateLogRangeControls() {
       if (saved[control.id] !== undefined) control.value = saved[control.id];
     });
     if (mode === 'dates') initializeCustomRangeInputs(type);
+    if (relativeMode) initializeCalendarRangeInputs(mode);
     elements.logRangeExtra.querySelector('#log-custom-count')?.addEventListener('input', updateLogRangeControls);
     elements.logRangeExtra.querySelectorAll('input,select').forEach((control) => {
       if (control.id !== 'log-custom-count') {
@@ -1548,9 +1646,9 @@ function updateLogRangeControls() {
     logRangeDefaults.add(type.id);
   }
   const countMode = mode === 'count';
-  elements.logRangeExtra.hidden = !datesMode && !countMode;
+  elements.logRangeExtra.hidden = !datesMode && !countMode && !relativeMode;
   if (controlsRebuilt && logRangeActive && !logRangeAll && datesMode) populateRangeInputs(type);
-  const enabled = datesMode || countMode;
+  const enabled = datesMode || countMode || relativeMode;
   const countInput = elements.logRangeExtra.querySelector('#log-custom-count');
   const customCount = countInput ? Number(countInput.value) : NaN;
   const validCount = Number.isInteger(customCount) && customCount >= 1 && customCount <= 65535;
@@ -1563,6 +1661,7 @@ function updateLogRangeControls() {
   elements.loadLogSelection.classList.toggle('button-stop', logPageLoading);
   elements.loadLogSelection.disabled = logPageLoading ? logStopRequested :
     (!serial || !logInfo || logCsvBusy ||
+      (relativeMode && (!logInfo.calendarValid || !relativeLogRange())) ||
       (datesMode && (!logInfo.calendarValid || !readCustomLogRange(type))) ||
       (countMode && !validCount));
   elements.exportLogsCsv.disabled = !serial || !logRecords.length || logCsvBusy || logPageLoading;
@@ -1659,8 +1758,99 @@ function readCustomLogRange(type) {
   };
 }
 
+function relativeLogRange() {
+  if (!logInfo?.calendarValid || !isRelativeLogView()) return null;
+  const epoch = Date.UTC(2000, 0, 1) / 1000;
+  const mode = elements.logRangeMode.value;
+  const dateValue = document.querySelector('#log-calendar-date')?.value;
+  if (!dateValue) return null;
+  let start;
+  let end;
+  if (mode === 'hour') {
+    const hour = document.querySelector('#log-calendar-hour')?.value;
+    if (!hour) return null;
+    const startSeconds = calendarSecondsFromInputs(dateValue, `${hour}:00`);
+    return {start: startSeconds, end: startSeconds + 3599};
+  }
+  if (mode === 'day') {
+    start = new Date(`${dateValue}T00:00:00Z`);
+    end = new Date(start.getTime());
+    end.setUTCDate(end.getUTCDate() + 1);
+  } else {
+    const [year, month] = dateValue.split('-').map(Number);
+    start = new Date(Date.UTC(year, month - 1, 1));
+    end = new Date(Date.UTC(year, month, 1));
+  }
+  return {
+    start: Math.max(0, Math.floor(start.getTime() / 1000) - epoch),
+    end: Math.max(0, Math.floor(end.getTime() / 1000) - epoch) - 1,
+  };
+}
+
+function updateRelativeLogRange() {
+  const range = relativeLogRange();
+  if (!range) return false;
+  const changed = !logRangeActive || logRangeStart !== range.start || logRangeEnd !== range.end;
+  logRangeActive = true;
+  logRangeAll = false;
+  logCountLimit = 0;
+  logRangeStart = range.start;
+  logRangeEnd = range.end;
+  logSelectedDate = elements.logRangeMode.value;
+  if (changed) {
+    logRecords = logRecords.filter(logRecordInRange);
+    saveLogView();
+  }
+  return changed;
+}
+
 function logRecordKey(record) {
   return `${record.epoch}:${record.timestamp}:${selectedLogType === 'alerts' ? record.id : 0}`;
+}
+
+function logSortValue(record, key, type) {
+  if (key === 'date') return record.timestamp;
+  if (key === 'duration' || (key === 'coverage' && type.id === 'alerts')) return record.covered;
+  if (key === 'dose') return record.dose;
+  if (key === 'average') return record.average;
+  if (key === 'maximum') return record.maximum;
+  if (key === 'coverage') return logCoveragePercent(record, type);
+  return 0;
+}
+
+function sortedLogRecords(type) {
+  const direction = logSortDirection === 'asc' ? 1 : -1;
+  return [...logRecords].sort((left, right) => {
+    const difference = logSortValue(left, logSortKey, type) - logSortValue(right, logSortKey, type);
+    return difference ? difference * direction : right.timestamp - left.timestamp;
+  });
+}
+
+function makeLogHeaderButton(label, key) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'log-sort-button';
+  button.dataset.sortKey = key;
+  button.textContent = label;
+  const active = logSortKey === key;
+  button.setAttribute('aria-sort', active ? (logSortDirection === 'asc' ? 'ascending' : 'descending') : 'none');
+  button.textContent += active ? (logSortDirection === 'asc' ? ' ↑' : ' ↓') : '';
+  button.addEventListener('click', () => {
+    if (logSortKey === key) logSortDirection = logSortDirection === 'asc' ? 'desc' : 'asc';
+    else { logSortKey = key; logSortDirection = 'desc'; }
+    renderLogSummary();
+  });
+  return button;
+}
+
+function buildLogHeader(type) {
+  const header = document.createElement('div');
+  header.className = 'log-grid log-grid-header';
+  const columns = type.id === 'alerts' ?
+    [['Date', 'date'], ['Duration', 'duration'], ['Dose', 'dose'], ['Average', 'average'], ['Maximum', 'maximum']] :
+    [['Date', 'date'], ['Dose', 'dose'], ['Average', 'average'], ['Maximum', 'maximum'], ['Coverage', 'coverage']];
+  columns.forEach(([label, key]) => header.append(makeLogHeaderButton(label, key)));
+  return header;
 }
 
 function renderLogTabs() {
@@ -1832,6 +2022,7 @@ function renderLogTotal(type) {
   if (!row.isConnected) elements.logContent.append(row);
 }
 function renderLogSummary(preserveRows = false, prependNewRows = true) {
+  if (preserveRows && (logSortKey !== 'date' || logSortDirection !== 'desc')) preserveRows = false;
   if (preserveRows && !elements.logContent.querySelector('.log-grid-header')) {
     preserveRows = false;
   }
@@ -1847,10 +2038,7 @@ function renderLogSummary(preserveRows = false, prependNewRows = true) {
   if (!logRecords.length) { elements.logContent.textContent = logPageLoading ? 'Loading records…' : 'No records available.'; return; }
   let header = preserveRows ? elements.logContent.querySelector('.log-grid-header') : null;
   if (!header) {
-    header = document.createElement('div'); header.className = 'log-grid log-grid-header';
-    header.innerHTML = selectedLogType === 'alerts' ?
-      '<span>Date</span><span>Duration</span><span>Dose</span><span>Average</span><span>Maximum</span>' :
-      '<span>Date</span><span>Dose</span><span>Average</span><span>Maximum</span><span>Coverage</span>';
+    header = buildLogHeader(type);
     elements.logContent.append(header);
   }
   renderLogTotal(type);
@@ -1859,7 +2047,7 @@ function renderLogSummary(preserveRows = false, prependNewRows = true) {
   const existingRows = preserveRows ? new Map(
     [...elements.logContent.querySelectorAll('.log-record:not(.log-total)')]
       .map((row) => [row.dataset.logKey, row])) : null;
-  for (const record of logRecords) {
+  for (const record of sortedLogRecords(type)) {
     const key = logRecordKey(record);
     let row = null;
     if (preserveRows) {
@@ -1957,7 +2145,19 @@ async function applyCalendarRange(range, mode) {
 
 async function loadLogSelection() {
   if (!serial || !logInfo) return;
+  logRefreshRetryAt = 0;
   const mode = elements.logRangeMode.value;
+  if (isRelativeLogView()) {
+    if (!logInfo.calendarValid) {
+      elements.logsStatus.textContent = 'Set the device clock to use a calendar range.';
+      return;
+    }
+    updateRelativeLogRange();
+    saveLogView(); ++logPageGeneration;
+    clearLogView();
+    renderLogSummary();
+    return loadLogPage(false);
+  }
   if (mode === 'all') return selectAllLogs();
   const type = logTypes.find((item) => item.id === selectedLogType);
   if (mode === 'count') {
@@ -2120,6 +2320,10 @@ async function loadLogPage(reset = false) {
     loadFailed = true;
     logDiagnostic('loadLogPage failed', error);
     if (generation === logPageGeneration) elements.logsStatus.textContent = error.message;
+    if (generation === logPageGeneration && hasCurrentLogDate()) {
+      logRefreshRetryAt = Date.now() + 30000;
+      elements.logsStatus.textContent = `${error.message} Retrying in 30 s.`;
+    }
   } finally {
     const stoppedByUser = logStopRequested;
     logPageLoading = false;
@@ -2140,6 +2344,7 @@ async function loadLogPage(reset = false) {
 async function refreshLatestLogRecord() { return loadNewerLogRecords(false); }
 async function loadNewerLogRecords(catchUp = true) {
   if (!serial || !logInfo || logPageLoading || logRefreshBusy || elements.logsPage.hidden || !hasCurrentLogDate()) return;
+  if (Date.now() < logRefreshRetryAt) return;
   if (!logRecords.length) return loadLogPage(false);
   logRefreshBusy = true;
   const generation = logPageGeneration, type = logTypes.find((item) => item.id === selectedLogType);
@@ -2159,13 +2364,19 @@ async function loadNewerLogRecords(catchUp = true) {
       const replacements = new Map(fresh.map((record) => [logRecordKey(record), record]));
       const older = logRecords.filter((record) => !(type.id === 'alerts' && record.live) && !replacements.has(logRecordKey(record)))
         .map((record) => ({...record, live: false}));
-      logRecords = [...replacements.values(), ...older];
+      logRecords = [...replacements.values(), ...older].filter(logRecordInRange);
       renderLogSummary(!catchUp); saveLogView();
     }
   } catch (error) {
     logDiagnostic('loadNewerLogRecords failed', error);
-    if (generation === logPageGeneration) elements.logsStatus.textContent = error.message;
-  } finally { logRefreshBusy = false; }
+    if (generation === logPageGeneration) {
+      logRefreshRetryAt = Date.now() + 30000;
+      elements.logsStatus.textContent = `${error.message} Retrying in 30 s.`;
+    }
+  } finally {
+    if (logRefreshRetryAt && Date.now() >= logRefreshRetryAt) logRefreshRetryAt = 0;
+    logRefreshBusy = false;
+  }
 }
 
 async function loadLogInfo() {
@@ -5442,6 +5653,7 @@ async function connectDevice(portOverride = null, transport = null) {
   rateHistory.length = 0;
   logInfo = null;
   logRecords = [];
+  logRefreshRetryAt = 0;
   logViewCache.clear(); logTypeActiveView.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
   logStartOffset = 0;
   logPageTotal = 0;
@@ -5460,6 +5672,7 @@ async function connectDevice(portOverride = null, transport = null) {
       deviceHiddenSettings = null;
       logInfo = null;
       logRecords = [];
+      logRefreshRetryAt = 0;
       logViewCache.clear(); logTypeActiveView.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
       logStartOffset = 0;
       logPageTotal = 0;
@@ -5503,6 +5716,7 @@ async function connectDevice(portOverride = null, transport = null) {
     deviceHiddenSettings = null;
     logInfo = null;
     logRecords = [];
+    logRefreshRetryAt = 0;
     logViewCache.clear(); logTypeActiveView.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
     logPageTotal = 0;
     elements.settingsList.replaceChildren();
@@ -5528,6 +5742,7 @@ async function disconnectDevice() {
   deviceHiddenSettings = null;
   logInfo = null;
   logRecords = [];
+  logRefreshRetryAt = 0;
   logViewCache.clear(); logTypeActiveView.clear(); logSelectedDate = ""; logRangeActive = false; logRangeAll = false; logCountLimit = 0; logRangeStart = 0; logRangeEnd = 0; logRangeDefaults.clear(); logHasMore = true; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
   logPageTotal = 0;
   elements.settingsList.replaceChildren();

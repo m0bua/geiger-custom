@@ -248,7 +248,9 @@ body.logs-page-active .log-content { height: auto; min-height: 0; max-height: no
 .log-date-tools > button { flex: 0 0 auto; }
 .log-grid { min-width: 620px; display: grid; grid-template-columns: 1.1fr repeat(4, minmax(90px, 1fr)); gap: 8px; align-items: center; }
 .log-grid-header { position: sticky; z-index: 3; top: 0; box-sizing: border-box; min-height: 32px; padding: 8px 10px; color: var(--muted); background: #111a1f; font-size: 10px; text-transform: uppercase; }
-.log-grid-header span:not(:first-child) { text-align: right; }
+.log-grid-header .log-sort-button { width: 100%; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; text-align: right; text-transform: inherit; cursor: pointer; }
+.log-grid-header .log-sort-button:first-child { text-align: left; }
+.log-grid-header .log-sort-button:hover, .log-grid-header .log-sort-button:focus-visible { color: #e3ecee; }
 .log-record { position: relative; isolation: isolate; min-height: 38px; padding: 7px 10px; border-bottom: 1px solid rgba(160,186,194,.08); color: #d8e2e4; font: 500 11px/1.4 "DM Mono", Consolas, monospace; }
 .log-record::before { position: absolute; z-index: -1; inset: 0 auto 0 0; width: var(--bar-width); content: ""; background: rgba(194,207,211,.12); }
 .log-record::after { position: absolute; z-index: 0; inset: 0; content: ""; background: transparent; pointer-events: none; transition: background-color .12s ease; }
