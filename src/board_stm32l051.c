@@ -327,8 +327,6 @@ static log_cursor_t lcd_graph_log_summary_cursor;
 static uint32_t lcd_graph_log_summary_count;
 static uint8_t lcd_graph_log_summary_memory;
 static uint8_t lcd_graph_column_y[LCD_GRAPH_PLOT_WIDTH];
-static uint8_t lcd_graph_point_y[LCD_GRAPH_PLOT_WIDTH];
-static uint8_t lcd_graph_point_levels[(LCD_GRAPH_PLOT_WIDTH + 3u) / 4u];
 static char lcd_graph_stat_values[4][5];
 static bool lcd_graph_input_locked;
 static int8_t lcd_graph_pending_action;
@@ -2753,30 +2751,6 @@ static uint32_t lcd_graph_interpolate(uint32_t a, uint32_t b,
     return rising ? a + part : a - part;
 }
 
-static uint8_t lcd_graph_point_rate_level(uint32_t cpm)
-{
-    if (!lcd_rate_window_ready) return 3u;
-    const uint64_t scaled = (uint64_t)cpm * 666u;
-    if (scaled > 90000u) return 2u;
-    if (scaled >= 40000u) return 1u;
-    return 0u;
-}
-
-static void lcd_graph_set_point_level(uint16_t x, uint8_t level)
-{
-    const uint8_t shift = (uint8_t)((x & 3u) * 2u);
-    const uint8_t mask = (uint8_t)(3u << shift);
-    lcd_graph_point_levels[x >> 2u] =
-        (uint8_t)((lcd_graph_point_levels[x >> 2u] & (uint8_t)~mask) |
-            ((level & 3u) << shift));
-}
-
-static uint8_t lcd_graph_get_point_level(uint16_t x)
-{
-    return (uint8_t)((lcd_graph_point_levels[x >> 2u] >>
-        ((x & 3u) * 2u)) & 3u);
-}
-
 static void lcd_graph_build_series(uint8_t tier, uint8_t requested)
 {
     const uint8_t available = cpm_history_count(tier);
@@ -2790,10 +2764,8 @@ static void lcd_graph_build_series(uint8_t tier, uint8_t requested)
     uint64_t sum = 0u;
     uint8_t stat_unit;
 
-    memset(lcd_graph_point_levels, 0, sizeof(lcd_graph_point_levels));
     for (uint16_t x = 0u; x < LCD_GRAPH_PLOT_WIDTH; ++x) {
         lcd_graph_column_y[x] = UINT8_MAX;
-        lcd_graph_point_y[x] = UINT8_MAX;
     }
     for (uint8_t age = 0u; age < visible; ++age) {
         const bool got_value = cpm_history_get(tier, age, &candidate);
@@ -2867,21 +2839,6 @@ static void lcd_graph_build_series(uint8_t tier, uint8_t requested)
             lcd_graph_column_y[plot_x] =
                 (uint8_t)(plot_bottom -
                 ((uint64_t)value * (plot_height - 1u)) / maximum);
-        }
-
-        /* Mark the actual samples on top of the interpolated line. */
-        for (uint8_t age = 0u; age < visible; ++age) {
-            uint32_t value = 0u;
-            if (!cpm_history_get(tier, age, &value)) continue;
-            if (!cpm_history_get_pulses(tier, age)) continue;
-            const uint16_t point_x = visible == 1u ?
-                (uint16_t)(LCD_GRAPH_PLOT_WIDTH - 1u) :
-                (uint16_t)(LCD_GRAPH_PLOT_WIDTH - 1u -
-                    ((uint32_t)age * span) / (visible - 1u));
-            lcd_graph_point_y[point_x] =
-                (uint8_t)(plot_bottom -
-                    ((uint64_t)value * (plot_height - 1u)) / maximum);
-            lcd_graph_set_point_level(point_x, lcd_graph_point_rate_level(value));
         }
     }
 }
@@ -3123,10 +3080,8 @@ static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
 static void lcd_graph_build_logs(void)
 {
     uint32_t maximum = 1u;
-    memset(lcd_graph_point_levels, 0, sizeof(lcd_graph_point_levels));
     for (uint16_t x = 0u; x < LCD_GRAPH_PLOT_WIDTH; ++x) {
         lcd_graph_column_y[x] = UINT8_MAX;
-        lcd_graph_point_y[x] = UINT8_MAX;
     }
     if (lcd_graph_loading || !lcd_graph_log_summary_valid) {
         memset(lcd_graph_stat_values, '-', sizeof(lcd_graph_stat_values));
@@ -3247,21 +3202,11 @@ static uint16_t lcd_graph_pixel(uint16_t x, uint16_t y)
         return LCD_TEXT_BACKGROUND;
     }
     if (x == LCD_GRAPH_STATS_WIDTH - 1u) return LCD_GRAPH_DIM_COLOR;
-    const uint16_t plot_x = x - LCD_GRAPH_STATS_WIDTH;
-    const uint8_t column = lcd_graph_column_y[plot_x];
-    const bool point = lcd_graph_point_y[plot_x] != UINT8_MAX &&
-        y >= lcd_graph_point_y[plot_x] &&
-        y < lcd_graph_point_y[plot_x] + LCD_GRAPH_HEIGHT / 3u;
+    const uint8_t column = lcd_graph_column_y[x - LCD_GRAPH_STATS_WIDTH];
     if (y == lcd_graph_red_threshold_y) return LCD_COUNTER_RED;
     if (y == lcd_graph_yellow_threshold_y) return LCD_COUNTER_YELLOW;
-    if (point) {
-        const uint8_t level = lcd_graph_get_point_level(plot_x);
-        return level == 3u ? LCD_COLOR_BLUE :
-            (level == 2u ? LCD_COLOR_RED :
-            (level == 1u ? LCD_COLOR_YELLOW : LCD_COLOR_GREEN));
-    }
     return column != UINT8_MAX && y >= column ?
-        LCD_GRAPH_DIM_COLOR : LCD_TEXT_BACKGROUND;
+        LCD_GRAPH_COLOR : LCD_TEXT_BACKGROUND;
 }
 
 static __attribute__((noinline)) void lcd_write_two_digits(char *text, uint8_t value)
