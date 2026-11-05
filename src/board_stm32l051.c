@@ -4167,6 +4167,11 @@ bool board_display_extra_active(void)
     return lcd_screen_page >= 2u && lcd_screen_page < LCD_GRAPH_PAGE;
 }
 
+bool board_display_graph_active(void)
+{
+    return lcd_screen_page == LCD_GRAPH_PAGE;
+}
+
 void board_display_extra_step(bool forward)
 {
     if (lcd_screen_page < 2u) {

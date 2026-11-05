@@ -133,6 +133,7 @@ int main(void)
     bool left_long_repeat_pending = false;
     bool right_long_repeat_pending = false;
     bool left_force_home_done = false;
+    uint32_t left_long_next_action_at = 0u;
 
     (void)firmware_identity_marker[0];
     board_init();
@@ -335,6 +336,7 @@ int main(void)
                 left_long_repeat_navigation = false;
                 left_long_seen = false;
                 left_long_repeat_pending = false;
+                left_long_next_action_at = 0u;
             }
             if ((events & BOARD_BUTTON_RIGHT_DOWN) != 0u) {
                 right_long_repeat_navigation = false;
@@ -365,9 +367,17 @@ int main(void)
                     }
                     left_long_repeat_navigation =
                         board_display_settings_list_active() ||
+                        board_display_graph_active() ||
                         board_display_extra_active();
-                } else if (!left_force_home_done && left_long_repeat_navigation) {
-                    /* Wait until the intermediate screen is fully drawn. */
+                    if (left_long_repeat_navigation)
+                        left_long_next_action_at = now + 100u;
+                } else if (!left_force_home_done &&
+                           (left_long_repeat_navigation ||
+                            board_display_settings_list_active() ||
+                            board_display_graph_active() ||
+                            board_display_extra_active())) {
+                    /* Queue the next back level. The service below enforces
+                     * a short gap so one hold cannot collapse two levels. */
                     left_long_repeat_pending = true;
                 }
             }
@@ -397,6 +407,7 @@ int main(void)
                 left_long_repeat_pending = false;
                 left_long_seen = false;
                 left_force_home_done = false;
+                left_long_next_action_at = 0u;
             }
             if ((events & BOARD_BUTTON_RIGHT_UP) != 0u) {
                 right_long_repeat_navigation = false;
@@ -711,16 +722,23 @@ int main(void)
             idle_clock_active = false;
         }
         board_display_service();
-        if (left_long_repeat_pending && !board_display_busy()) {
+        if (left_long_repeat_pending &&
+            (int32_t)(now - left_long_next_action_at) >= 0) {
             left_long_repeat_pending = false;
             if (board_display_settings_list_active()) {
                 board_display_settings_list_exit();
+            } else if (board_display_graph_active()) {
+                if (!board_display_graph_back())
+                    board_display_extra_exit();
             } else if (board_display_extra_active()) {
                 board_display_extra_exit();
             }
             left_long_repeat_navigation =
                 board_display_settings_list_active() ||
+                board_display_graph_active() ||
                 board_display_extra_active();
+            if (left_long_repeat_navigation)
+                left_long_next_action_at = now + 100u;
         }
         if (right_long_repeat_pending && !board_display_busy()) {
             right_long_repeat_pending = false;

@@ -28,11 +28,12 @@ int test_entry(void)
     CHECK(UPDATE(true, 799u) == 0u);
     CHECK(UPDATE(true, 800u) == BUTTON_INPUT_LONG);
 
-    /* 3. A long click has one first event, timed repeats and no short release. */
+    /* 3. A long click has one first event, timeout-based repeats and no short release. */
     CHECK(UPDATE(true, 899u) == 0u);
-    CHECK(UPDATE(true, 900u) == BUTTON_INPUT_LONG);
-    CHECK(UPDATE(false, 950u) == 0u);
-    CHECK(UPDATE(false, 970u) == BUTTON_INPUT_UP);
+    CHECK(UPDATE(true, 1799u) == 0u);
+    CHECK(UPDATE(true, 1800u) == BUTTON_INPUT_LONG);
+    CHECK(UPDATE(false, 1850u) == 0u);
+    CHECK(UPDATE(false, 1870u) == BUTTON_INPUT_UP);
 
     /* 4. Release debounce must not stretch a 790 ms click into a long click. */
     button_input_init(&button, false, 0u);

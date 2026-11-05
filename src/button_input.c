@@ -77,10 +77,10 @@ uint8_t button_input_update(button_input_t *button, bool pressed, uint32_t now)
             button->repeated_at = now;
             events |= BUTTON_INPUT_LONG;
         } else if (button->long_reported) {
-            const uint32_t interval_ms = held_ms >= long_press_ms + 4000u ? 20u :
-                (held_ms >= long_press_ms + 3000u ? 30u :
-                (held_ms >= long_press_ms + 2000u ? 50u :
-                (held_ms >= long_press_ms + 1000u ? 70u : 100u)));
+            /* A held button repeats the same timeout action: leave a short
+             * gap after the action, then wait one full configured timeout
+             * before the next action. */
+            const uint32_t interval_ms = long_press_ms + 100u;
             if ((uint32_t)(now - button->repeated_at) >= interval_ms) {
                 button->repeated_at = now;
                 events |= BUTTON_INPUT_LONG;

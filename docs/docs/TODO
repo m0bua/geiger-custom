@@ -2,5 +2,3 @@ BUG: battery % grows on discharge sometimes.
 FEAT: Modes change from app, turn screen on
 FEAT: flollow theme colors LED option.
 FEAT: custom yellow option
-FEAT: dual back on graph
-FEAT: 3s back every where

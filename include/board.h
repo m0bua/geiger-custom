@@ -63,6 +63,7 @@ bool board_display_sound_alarm_stop_on_clear(void);
 void board_flashlight_alarm_set(bool active, bool on);
 void board_display_extra_enter(void);
 bool board_display_extra_active(void);
+bool board_display_graph_active(void);
 void board_display_extra_step(bool forward);
 void board_display_extra_exit(void);
 void board_display_force_home(void);
