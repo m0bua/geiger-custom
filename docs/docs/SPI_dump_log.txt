@@ -1,0 +1,100 @@
+[16:39:41] No saved FLASH backup found. Capturing one before the operation.
+[16:39:41] FLASH dump requested (65 536 bytes).
+[16:39:42] No ROM sync during the initial probe (Timed out waiting for STM32 ROM bootloader.); proceeding with bootloader entry.
+[16:39:42] Bootloader entry attempt 1/3 (RTS low, DTR high).
+[16:39:44] ROM bootloader synchronized (version 0x31).
+[16:39:44] FLASH read 10%.
+[16:39:45] FLASH read 20%.
+[16:39:46] FLASH read 30%.
+[16:39:47] FLASH read 40%.
+[16:39:47] FLASH read 50%.
+[16:39:48] FLASH read 60%.
+[16:39:49] FLASH read 70%.
+[16:39:50] FLASH read 80%.
+[16:39:50] FLASH read 90%.
+[16:39:51] FLASH read 100%.
+[16:39:51] FLASH dump read complete.
+[16:39:51] Application-start signal: DTR low, RTS high for 1 s, then close.
+[16:39:52] Firmware-start signal sent after dump.
+[16:39:55] First FLASH backup captured and saved. Continuing with the requested operation.
+[16:39:55] SPI dump requested at offsets 696320–1048575.
+[16:40:02] SPI read 10%.
+[16:40:09] SPI read 20%.
+[16:40:15] SPI read 30%.
+[16:40:22] SPI read 40%.
+[16:40:29] SPI read 50%.
+[16:40:35] SPI read 60%.
+[16:40:42] SPI read 70%.
+[16:40:49] SPI read 80%.
+[16:41:03] Direct SPI read unavailable (Device did not respond. Check the USB connection and try again.); trying the recovery-backed service firmware.
+[16:41:21] No ROM sync during the initial probe (Timed out waiting for STM32 ROM bootloader.); proceeding with bootloader entry.
+[16:41:21] Bootloader entry attempt 1/3 (RTS low, DTR high).
+[16:41:22] ROM bootloader synchronized (version 0x31).
+[16:41:23] Recovery FLASH backup read 4096/65536 bytes.
+[16:41:23] Recovery FLASH backup read 8192/65536 bytes.
+[16:41:24] Recovery FLASH backup read 12288/65536 bytes.
+[16:41:24] Recovery FLASH backup read 16384/65536 bytes.
+[16:41:25] Recovery FLASH backup read 20480/65536 bytes.
+[16:41:25] Recovery FLASH backup read 24576/65536 bytes.
+[16:41:26] Recovery FLASH backup read 28672/65536 bytes.
+[16:41:26] Recovery FLASH backup read 32768/65536 bytes.
+[16:41:27] Recovery FLASH backup read 36864/65536 bytes.
+[16:41:27] Recovery FLASH backup read 40960/65536 bytes.
+[16:41:28] Recovery FLASH backup read 45056/65536 bytes.
+[16:41:28] Recovery FLASH backup read 49152/65536 bytes.
+[16:41:28] Recovery FLASH backup read 53248/65536 bytes.
+[16:41:29] Recovery FLASH backup read 57344/65536 bytes.
+[16:41:29] Recovery FLASH backup read 61440/65536 bytes.
+[16:41:30] Recovery FLASH backup read 65536/65536 bytes.
+[16:41:30] Verified full FLASH recovery backup captured (65 536 bytes).
+[16:41:30] Application-start signal: DTR low, RTS high for 1 s, then close.
+[16:41:32] No ROM sync during the initial probe (Timed out waiting for STM32 ROM bootloader.); proceeding with bootloader entry.
+[16:41:32] Bootloader entry attempt 1/3 (RTS low, DTR high).
+[16:41:34] ROM bootloader synchronized (version 0x31).
+[16:41:34] Trying BIN signal mode (RTS low, DTR low) after ROM synchronization…
+[16:41:34] BIN signal mode kept the ROM bootloader link active.
+[16:41:34] SPI service firmware: erased 34 FLASH page(s).
+[16:41:34] SPI service firmware: programmed and verified 3/34 page(s).
+[16:41:34] SPI service firmware: programmed and verified 6/34 page(s).
+[16:41:34] SPI service firmware: programmed and verified 9/34 page(s).
+[16:41:35] SPI service firmware: programmed and verified 12/34 page(s).
+[16:41:35] SPI service firmware: programmed and verified 15/34 page(s).
+[16:41:35] SPI service firmware: programmed and verified 18/34 page(s).
+[16:41:35] SPI service firmware: programmed and verified 21/34 page(s).
+[16:41:35] SPI service firmware: programmed and verified 24/34 page(s).
+[16:41:35] SPI service firmware: programmed and verified 27/34 page(s).
+[16:41:35] SPI service firmware: programmed and verified 30/34 page(s).
+[16:41:35] SPI service firmware: programmed and verified 33/34 page(s).
+[16:41:36] SPI service firmware: programmed and verified 34/34 page(s).
+[16:41:36] SPI service firmware: ROM GO accepted.
+[16:41:43] SPI read 10%.
+[16:41:50] SPI read 20%.
+[16:41:57] SPI read 30%.
+[16:42:03] SPI read 40%.
+[16:42:10] SPI read 50%.
+[16:42:17] SPI read 60%.
+[16:42:24] SPI read 70%.
+[16:42:31] SPI read 80%.
+[16:42:37] SPI read 90%.
+[16:42:44] SPI read 100%.
+[16:42:44] Restoring the saved FLASH image.
+[16:42:46] No ROM sync during the initial probe (Timed out waiting for STM32 ROM bootloader.); proceeding with bootloader entry.
+[16:42:46] Bootloader entry attempt 1/3 (RTS low, DTR high).
+[16:42:47] ROM bootloader synchronized (version 0x31).
+[16:42:47] Trying BIN signal mode (RTS low, DTR low) after ROM synchronization…
+[16:42:47] BIN signal mode kept the ROM bootloader link active.
+[16:42:49] FLASH restore: erased 512 FLASH page(s).
+[16:42:51] FLASH restore: programmed and verified 51/512 page(s).
+[16:42:53] FLASH restore: programmed and verified 102/512 page(s).
+[16:42:55] FLASH restore: programmed and verified 153/512 page(s).
+[16:42:58] FLASH restore: programmed and verified 204/512 page(s).
+[16:43:00] FLASH restore: programmed and verified 255/512 page(s).
+[16:43:02] FLASH restore: programmed and verified 306/512 page(s).
+[16:43:04] FLASH restore: programmed and verified 357/512 page(s).
+[16:43:06] FLASH restore: programmed and verified 408/512 page(s).
+[16:43:08] FLASH restore: programmed and verified 459/512 page(s).
+[16:43:10] FLASH restore: programmed and verified 510/512 page(s).
+[16:43:10] FLASH restore: programmed and verified 512/512 page(s).
+[16:43:10] FLASH restore: ROM GO accepted.
+[16:43:13] the saved FLASH image restored, read-back verified, and HELLO confirmed.
+[16:43:13] SPI dump saved as spi-696320-1048575-2026-11-06_16-43-13.bin; original firmware restored.

@@ -31,6 +31,7 @@ typedef struct {
 bool spi_log_init(void);
 bool spi_log_open_readonly(void);
 bool spi_log_read_fault(void);
+void spi_log_read_fault_info(uint8_t *reason, uint32_t *address);
 bool spi_log_latest_epoch(uint16_t *epoch);
 bool spi_log_clear(void);
 bool spi_log_expire_alerts(uint8_t year);
