@@ -216,14 +216,13 @@
       <details id="embedded-quick-flash" class="firmware-section quick-flash" name="firmware-sections" hidden>
         <summary>Quick Firmware</summary>
         <p>Program the firmware embedded in this app. The image is verified after writing.</p>
-        <p class="backup-reminder">Before the first firmware flash or SPI operation, the app automatically reads, downloads, and saves a full FLASH backup. The same saved backup is available to restore from Quick, Firmware, or SPI.</p>
+        <p class="backup-reminder">Before programming device firmware, the app asks to continue and saves a full FLASH backup if none exists. SPI dumps do not create this backup or restart the device unless you choose the recovery method.</p>
         <div class="actions">
-          <button id="quick-restore-flash" class="button button-danger" type="button" hidden>Restore FLASH</button>
           <button id="quick-flash-firmware" class="button button-primary" type="button">Quick flash</button>
         </div>
         <details id="stock-firmware-section" class="stock-firmware" hidden>
           <summary>Stock</summary>
-          <p>Select a stock firmware version to flash. The app saves the permanent FLASH backup first if one is not already available.</p>
+          <p>Select a stock firmware version to flash. The app asks before capturing a permanent FLASH backup and programming the image.</p>
           <div id="stock-firmware-list" class="stock-firmware-list"></div>
           <div id="stock-firmware-sources" class="stock-firmware-sources" hidden></div>
         </details>
@@ -232,12 +231,10 @@
         <summary>Firmware</summary>
         <div class="actions firmware-dump-actions">
           <button id="dump-flash" class="button" type="button">Dump FLASH</button>
-          <button id="restore-manual-flash" class="button button-danger" type="button" hidden>Restore manual dump</button>
-          <button id="firmware-restore-flash" class="button button-danger" type="button" hidden>Restore FLASH</button>
-          <button id="download-spi-backup" class="button button-danger" type="button" hidden>Download recovery backup</button>
+          <button id="restore-manual-flash" class="button button-danger" type="button" hidden>Restore original</button>
         </div>
-        <p class="backup-reminder">Dump FLASH downloads a file and stores a separate manual copy in the browser. Restore manual dump appears here; this copy does not replace the permanent backup.</p>
-        <p id="spi-recovery-controls" class="dump-status" hidden>SPI recovery is pending. Use Restore FLASH here before starting another SPI operation.</p>
+        <p class="backup-reminder">Dump FLASH downloads a file and stores a separate manual copy in the browser. Restore original appears here; this copy does not replace the permanent backup.</p>
+        <p id="spi-recovery-controls" class="dump-status" hidden>SPI recovery is pending. Restore the recovery copy from Downloads before starting another device operation.</p>
         <div id="local-build-flash" class="local-build-flash" hidden>
           <div class="local-build-copy">
             <p>Flash the latest locally compiled firmware. This uses the existing image checks and does not run PlatformIO.</p>
@@ -245,7 +242,7 @@
           </div>
           <button id="flash-local-build" class="button button-primary" type="button">Flash current build</button>
         </div>
-        <p class="backup-reminder">Before a firmware write or SPI operation, the app reuses a saved FLASH backup or captures one automatically if none exists. Use Dump FLASH below to make an additional copy.</p>
+        <p class="backup-reminder">Flash asks before it captures a permanent FLASH backup and programs the selected firmware. SPI dumps do not make a FLASH backup unless you approve the temporary SPI service recovery method.</p>
         <div class="firmware-controls">
           <div class="firmware-file-control">
             <label for="firmware-file">Firmware image (.hex or .bin)</label>
@@ -266,7 +263,7 @@
         </div>
         <p id="reboot-status" class="reboot-status" role="status" aria-live="polite">Select a device port to begin.</p>
       </details>
-      <details class="firmware-section eeprom-write-section" name="firmware-sections">
+      <details id="eeprom-write-section" class="firmware-section eeprom-write-section" name="firmware-sections">
         <summary>EEPROM</summary>
         <p>Dump uses the inclusive From-to range. Writing uses From plus the image length; To is ignored, and bytes outside the image are preserved. EEPROM settings, checkpoints, and log areas are shown by the presets.</p>
         <div class="memory-range-controls">
@@ -307,7 +304,7 @@
       </details>
       <details id="spi-nor-section" class="firmware-section" name="firmware-sections">
         <summary>SPI NOR</summary>
-        <p>Dump uses the inclusive From-to range. Flashing uses From plus the image length; To is ignored. Data outside the image is preserved by saving and restoring affected sectors. Before the first SPI operation, the app saves a full FLASH backup if none exists; use Restore FLASH here to restore it. If needed, the app temporarily runs the SPI service firmware and restores the device firmware afterward.</p>
+        <p>Dump uses the inclusive From-to range. Flashing uses From plus the image length; To is ignored. Data outside the image is preserved by saving and restoring affected sectors. SPI dumps do not create a permanent FLASH backup. SPI writes use a temporary recovery copy, then restore the device firmware.</p>
         <div class="memory-range-controls">
           <label for="spi-range-preset">Preset
             <select id="spi-range-preset">
@@ -329,10 +326,16 @@
         </div>
         <div class="dump-controls">
           <button id="dump-spi" class="button" type="button">Dump SPI</button>
-          <button id="spi-restore-flash" class="button button-danger" type="button" hidden>Restore FLASH</button>
+          <label for="spi-dump-method">Dump method
+            <select id="spi-dump-method">
+              <option value="auto" selected>Try without restart first</option>
+              <option value="direct">No restart only</option>
+              <option value="service">Use SPI service firmware</option>
+            </select>
+          </label>
           <button id="erase-spi" class="button button-danger" type="button">Erase range</button>
         </div>
-        <p>Dump SPI reads through the running firmware only. If direct reads are unavailable or fail, the dump stops without restarting the device. SPI write and erase operations can start the temporary SPI service and restart the device.</p>
+        <p>“Try without restart first” offers the SPI service firmware only if direct reading fails. The service method temporarily restarts the device and asks before saving a recovery copy and restoring the original firmware. SPI write and erase also ask before restarting.</p>
         <div class="firmware-controls spi-write-controls">
           <div class="firmware-file-control">
             <label for="spi-image-file">SPI image (.bin; write begins at From)</label>
@@ -343,6 +346,11 @@
           <output id="spi-image-status" class="firmware-image-status" aria-live="polite">No image selected.</output>
         </div>
         <p id="spi-write-status" class="dump-status" role="status" aria-live="polite">Select an SPI image that fits from the From address. Read-back verification is always enabled.</p>
+      </details>
+      <details id="spi-downloads-section" class="firmware-section spi-downloads" name="firmware-sections" hidden>
+        <summary>Downloads</summary>
+        <p>Stored original FLASH backups and FLASH, EEPROM, and SPI dumps. Use Flash or Write to load an image into its section before starting the operation.</p>
+        <div id="spi-downloads-list" class="spi-downloads-list"></div>
       </details>
       <p id="dump-status" class="dump-status" role="status" aria-live="polite">Operation status appears here.</p>
       <section class="firmware-activity">
@@ -570,7 +578,7 @@
               <li><strong>Search and display:</strong> SEARCH refreshes the rate every 100 ms, reacts immediately to pulses, eases down between pulses, shows up to five decimal places for Sv/R, and uses a brighter LED. NORMAL refreshes every 500 ms; with the display off, rate updates follow pulses. Fixed rate/dose secondary-row rendering and kept warm-up CNT aligned with the dose row.</li>
               <li><strong>Graphs and logs:</strong> added dedicated live histories for 3, 5, and 10 minutes and fixed cursor cleanup at graph edges. Minute coverage now follows elapsed time, avoiding false partial records when sampling is delayed. Persistent logs exclude the 30-pulse blue warm-up while RAM graph history, the app's live minute row, and live dose continue to include it. Automatic hourly dose resynchronization is disabled, with DAY/TOTAL correction available after loading the DAY graph.</li>
               <li><strong>Log viewer:</strong> expands to full screen; displays coverage as compact elapsed time and alert duration without unit suffixes, omitting zero leading fields. Requests up to ten records per device exchange and updates rows and totals as each response arrives. Stop finishes the current request before halting. More extends Latest by one period, Count by 100 records, or resumes All/Dates; it remains visible but disables when unavailable. Live refresh no longer rebuilds rows under the pointer.</li>
-              <li><strong>Firmware and backups:</strong> Quick, Firmware, and SPI operations save a permanent full FLASH backup in browser storage before the first write and offer restore actions. Manual FLASH dumps have a separate browser-stored restore copy. SPI service operations use a temporary recovery backup. Actions are grouped in the persistent activity log; older actions collapse when a new one starts.</li>
+              <li><strong>Firmware and backups:</strong> The first firmware write saves a permanent full FLASH backup in browser storage. FLASH, EEPROM, and SPI dumps appear in Downloads and can be loaded into their matching write form. Restore original applies to the separately saved FLASH copy; a pending SPI recovery can be restored from Downloads. Actions are grouped in the persistent activity log; older actions collapse when a new one starts.</li>
               <li><strong>Windows and interface:</strong> added F5 page refresh to the desktop app, refined overview metrics and setting controls, and removed an unavailable demo clock status message.</li>
               <li><strong>Diagnostics:</strong> moved the communication log to Debug and expanded it to cover protocol requests/responses, failures, timeouts, and firmware operations. Copy and Clear are available.</li>
             </ul>

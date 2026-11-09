@@ -125,7 +125,7 @@ button { font: inherit; }
 .release-history-toggle-input:focus-visible ~ .release-history-toggle { outline: 1px solid var(--green); outline-offset: 4px; }
 .information-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .information-note a { color: var(--green); }
-.firmware-section { max-width: 900px; margin-top: 10px; padding: 0 14px; border: 1px solid var(--line); border-radius: 9px; background: rgba(17,26,31,.65); }
+.firmware-section { width: 100%; max-width: none; margin-top: 10px; padding: 0 14px; border: 1px solid var(--line); border-radius: 9px; background: rgba(17,26,31,.65); }
 .firmware-section > summary { padding: 13px 0; color: #d8e2e4; font-size: 14px; font-weight: 600; cursor: pointer; list-style: none; }
 .firmware-section > summary::-webkit-details-marker { display: none; }
 .firmware-section > summary::after { float: right; color: var(--muted); content: "+"; font: 18px/1 "DM Mono", Consolas, monospace; }
@@ -134,7 +134,7 @@ button { font: inherit; }
 .firmware-section > :not(summary) { margin-top: 12px; }
 .firmware-section > :last-child { margin-bottom: 14px; }
 .local-build-flash { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.quick-flash { max-width: 900px; margin-top: 10px; padding: 14px; border: 1px solid rgba(0,229,139,.25); border-radius: 9px; background: rgba(0,229,139,.045); }
+.quick-flash { width: 100%; max-width: none; margin-top: 10px; padding: 14px; border: 1px solid rgba(0,229,139,.25); border-radius: 9px; background: rgba(0,229,139,.045); }
 .quick-flash strong { color: var(--green); font-size: 13px; }
 .stock-firmware { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(74,92,101,.45); }
 .stock-firmware > summary { color: #aebbc0; cursor: pointer; font-size: 12px; }
@@ -173,7 +173,7 @@ button { font: inherit; }
 .firmware-controls > .button { min-height: 36px; }
 .firmware-tools .verify-option { display: flex; align-items: center; gap: 8px; min-height: 36px; white-space: nowrap; color: #aebbc0; font-size: 12px; }
 .firmware-tools input[type="checkbox"] { accent-color: var(--green); }
-.firmware-activity { display: grid; gap: 10px; max-width: 900px; margin-top: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: rgba(17,26,31,.65); }
+.firmware-activity { display: grid; gap: 10px; width: 100%; max-width: none; margin-top: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: rgba(17,26,31,.65); }
 .firmware-activity h2 { margin: 0; font-size: 14px; }
 .firmware-log-window { position: relative; overflow: visible; margin-top: 4px; border: 1px solid var(--line); border-radius: 8px; background: #080e11; }
 .firmware-log-toolbar { position: absolute; z-index: 1; top: 6px; right: 6px; }
@@ -193,11 +193,20 @@ button { font: inherit; }
 .firmware-log .log-partial { color: #b8d94c; }
 .firmware-log .log-warning { color: #f2c94c; }
 .firmware-log .log-error { color: #ff7474; }
-.dump-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.dump-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; }
+.dump-controls > label[for="spi-dump-method"] { display: grid; gap: 5px; color: #aebbc0; font-size: 12px; }
+.dump-controls > label[for="spi-dump-method"] select { min-width: 190px; min-height: 36px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; color: #d8e2e4; background: #111a1f; font: 12px "DM Mono", Consolas, monospace; }
 .memory-range-controls { display: grid; grid-template-columns: minmax(150px, 1fr) repeat(2, minmax(130px, 1fr)); gap: 8px; margin: 12px 0; }
 .memory-range-controls label { display: grid; gap: 5px; color: #aebbc0; font-size: 12px; }
 .memory-range-controls input, .memory-range-controls select { width: 100%; min-width: 0; min-height: 36px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; color: #d8e2e4; background: #111a1f; font: 12px "DM Mono", Consolas, monospace; }
 .firmware-dump-actions { margin-bottom: 2px; }
+.spi-downloads > p { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.spi-downloads-list { display: grid; }
+.spi-download-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.spi-download-info { display: grid; min-width: 0; gap: 4px; }
+.spi-download-info strong { color: #c8d3d6; font-size: 11px; font-weight: 600; }
+.spi-download-info span { overflow: hidden; color: var(--muted); font: 10px/1.4 "DM Mono", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.spi-download-actions { display: flex; gap: 6px; }
 .dump-status[data-level="success"] { color: var(--green); }
 .dump-status[data-level="warning"] { color: #f2c94c; }
 .dump-status[data-level="error"] { color: #ff7474; }
@@ -420,6 +429,10 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .memory-range-controls { grid-template-columns: 1fr 1fr; }
   .memory-range-controls label:first-child { grid-column: 1 / -1; }
   .stock-firmware-list { grid-template-columns: 1fr; }
+  .spi-download-item { grid-template-columns: minmax(0, 1fr); }
+  .spi-download-actions { justify-content: flex-end; }
+  .dump-controls > label[for="spi-dump-method"] { flex: 1 1 100%; }
+  .dump-controls > label[for="spi-dump-method"] select { width: 100%; }
   .firmware-tools .verify-option { grid-column: 1 / -1; }
   .local-build-flash { align-items: flex-start; flex-direction: column; }
   .detail:nth-last-child(-n+3) { border-bottom: 1px solid rgba(160,186,194,.08); }
