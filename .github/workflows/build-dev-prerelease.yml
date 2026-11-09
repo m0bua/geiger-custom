@@ -290,9 +290,10 @@ jobs:
 
           ## Changes
           **Changes since the previous pre-release:**
-          - Extended the Overview live graph to 1000 seconds with wheel zoom, horizontal drag scrolling, fixed historical views, and corrected cursor/tooltip coordinates.
-          - Added actual detector pulse markers; the tooltip shows the value, CNT, and full time.
-          - Colored device MIN/HOUR/DAY/ALRT graph bars by their rate level using the display theme, with incomplete bars dimmed.
+          - Fixed SPI log writing and reading, including recovery from damaged records so one bad entry does not prevent later log data from loading.
+          - Improved log loading and persistent dump downloads; saved FLASH, EEPROM, and SPI images can be downloaded again or loaded into their matching operation.
+          - Updated dump names to identify automatic/manual FLASH copies, firmware identity, and EEPROM/SPI address ranges.
+          - Kept device graph traces white and colored only the numeric values beside them: rate values green/yellow/red, dose values white/yellow/red. ALERT values use no white baseline.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded): ${canonical_sha256}

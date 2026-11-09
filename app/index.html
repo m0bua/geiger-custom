@@ -448,8 +448,9 @@
         <ul>
           <li><strong>Quick flash:</strong> programs the firmware embedded in the release app. In a local project build this action is available only when the app was built with the project firmware.</li>
           <li><strong>Stock images:</strong> Quick → Stock contains validated stock HEX images. The list is ordered newest version first; English is preferred when versions match. Source links are listed below the buttons.</li>
-          <li><strong>Backups:</strong> before the first firmware write or SPI operation, the app captures a full FLASH backup, downloads it, and stores it in browser storage. Later operations reuse it. Restore is available in Quick, Firmware, and SPI. Manual Dump FLASH also stores a separate restore copy; it does not replace the permanent backup.</li>
-          <li><strong>SPI operations:</strong> operations that need the temporary SPI service firmware take a temporary recovery backup, restore and verify the device firmware at the end, then discard that temporary copy. Keep the device connected until the operation finishes.</li>
+          <li><strong>Firmware backup:</strong> a firmware write first asks for confirmation. Only after confirmation does the app reuse an existing original FLASH backup or capture one before programming. If capture fails, programming stops before erase. Manual Dump FLASH creates a separate copy; use <strong>Restore original</strong> for that copy.</li>
+          <li><strong>SPI operations:</strong> direct SPI reads are attempted first. If a read needs the temporary SPI service firmware, the app asks before restarting, saves a temporary recovery copy, and restores and verifies the original firmware afterward. Keep the device connected until the operation finishes.</li>
+          <li><strong>Downloads:</strong> saved FLASH backups, manual FLASH dumps, EEPROM dumps, and SPI dumps appear in Downloads when available. Download an image again or use its action to load it into the matching FLASH, EEPROM, or SPI operation. EEPROM and SPI filenames include the byte range; FLASH filenames identify automatic copies and firmware type.</li>
           <li><strong>Activity:</strong> the shared Firmware log stays visible. Entries are grouped by action; starting a new action collapses older groups. Use Clear to remove entries.</li>
           <li><strong>Windows app:</strong> press F5 to reload the app page.</li>
         </ul>
@@ -503,7 +504,7 @@
 
         <section class="manual-chapter">
         <h3>2.1 · Graphs</h3>
-        <p>Long Right from Dose opens Graphs. Short Left/Right cycles SEC, MIN, HOUR, DAY, and ALRT. SEC shows live rate history; long Right cycles its 10/30/60/90-second window. For a log graph, long Right enters column selection; short Left/Right moves cyclically through columns. MIN/HOUR/DAY bars use the period average for their theme color; ALERT bars use their maximum, and incomplete bars are dimmed. The selected column is green and its date/time, dose, MAX, AVG, and covered duration are shown. Long Left leaves column selection; another long Left returns to Dose. Holding Left for 3 seconds forces a return to the Rate screen.</p>
+        <p>Long Right from Dose opens Graphs. Short Left/Right cycles SEC, MIN, HOUR, DAY, and ALRT. SEC shows live rate history; long Right cycles its 10/30/60/90-second window. For a log graph, long Right enters column selection; short Left/Right moves cyclically through columns. The plotted graph remains white. Numeric rate values beside it use green/yellow/red thresholds; dose values use white/yellow/red, while ALERT values have no white baseline. The selected column is highlighted and its date/time, dose, MAX, AVG, and covered duration are shown. Long Left leaves column selection; another long Left returns to Dose. Holding Left for 3 seconds forces a return to the Rate screen.</p>
         <p><strong>Cursor:</strong> moving through a graph redraws the graph area so the previous selection and cursor pixels are cleared.</p>
         <p>Log graphs show the current in-progress interval first, followed by older records from that log. The current hour is assembled from minute records, and the current day from hour records; older columns come from their own stored log. The history limits are 60 minute records, 24 hourly records, 50 daily records, and 50 alerts; at most 13 columns are visible on screen at once. With no column selected, MIN and HOUR summarize the visible window; DAY summarizes retained daily records. Partial records contribute only their measured time. EEPROM and SPI both store all four log types, with much greater history available in SPI mode. The app's Logs tab lists records and coverage details.</p>
         <div class="manual-screen-grid">
@@ -539,6 +540,15 @@
           <input class="release-history-toggle-input" id="release-history-toggle" type="checkbox">
           <div class="release-history-content">
         <ul class="release-list">
+          <li>
+            <time datetime="2026-11-09">2026-11-09</time> — SPI log reliability, downloads, and graph value colors:
+            <ul>
+              <li><strong>SPI logs:</strong> fixed log storage and retrieval problems; malformed records can be skipped so a single damaged entry does not stop the whole read.</li>
+              <li><strong>Downloads:</strong> saved FLASH, EEPROM, and SPI images can be downloaded again or loaded into their matching operation. Filenames identify automatic/manual FLASH dumps and include memory ranges for EEPROM/SPI.</li>
+              <li><strong>Firmware safety:</strong> ask before starting a firmware write, capture the automatic FLASH backup only for that write, and offer the temporary SPI service as a fallback when direct reads fail.</li>
+              <li><strong>Device graphs:</strong> keep plotted traces white and color numeric values by rate or dose thresholds; ALERT values have no white baseline.</li>
+            </ul>
+          </li>
           <li>
             <time datetime="2026-11-05">2026-11-05</time> — Device controls, theme LED colors, and shorter firmware upload logs:
             <ul>
