@@ -257,7 +257,7 @@ jobs:
           - Fixed SPI log reliability: retry transient NOR read failures, continue scanning past invalid sectors/records, and report the first fault reason and address in diagnostics.
           - Improved Downloads for saved FLASH, EEPROM, and SPI images: each can be downloaded again or loaded into its matching operation; filenames identify automatic/manual FLASH copies, FLASH firmware identity, and EEPROM/SPI byte ranges.
           - Made firmware operations predictable: ask before firmware writes and before SPI service restarts, and create the automatic original FLASH backup only for an approved firmware write.
-          - Kept device MIN/HOUR/DAY/ALRT graph traces white; color only the numeric values beside them by rate and dose thresholds. ALERT values have no white baseline.
+          - Kept the current log graph column white, colored historical columns by dose level, and dimmed every incomplete column, including the current one. Numeric values use rate/dose thresholds; ALERT values have no white baseline.
           - Extended the Overview live graph to 1000 seconds with wheel zoom, horizontal drag scrolling, fixed historical views, and corrected cursor/tooltip coordinates.
           - Added actual detector pulse markers; the tooltip shows the value, CNT, and full time.
           - Added app device controls for screen wake, NORMAL/INVISIBLE/SEARCH, flashlight, and screen always-on with automatic return to AUTO after normal or lost app connection.

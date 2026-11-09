@@ -316,6 +316,8 @@ typedef struct __attribute__((packed)) {
     uint8_t skip;
 } lcd_graph_log_cursor_t;
 static uint32_t lcd_graph_log_bar_counts[LCD_GRAPH_VISIBLE_BARS];
+static uint32_t lcd_graph_log_bar_rates[LCD_GRAPH_VISIBLE_BARS];
+static bool lcd_graph_log_bar_live[LCD_GRAPH_VISIBLE_BARS];
 static log_point_t lcd_graph_selected_point;
 static bool lcd_graph_selected_point_valid;
 static uint32_t lcd_graph_first_day_start;
@@ -2889,6 +2891,17 @@ static uint16_t lcd_graph_rate_value_color(uint32_t cpm, bool dose)
     return dose ? LCD_GRAPH_COLOR : LCD_COLOR_GREEN;
 }
 
+static uint16_t lcd_graph_log_bar_color(uint8_t bar, uint32_t packed)
+{
+    /* Keep the live/current column white and color historical columns like
+     * their dose value. Dim every incomplete column, including the live one. */
+    const uint16_t color = lcd_graph_log_bar_live[bar] ? LCD_GRAPH_COLOR :
+        lcd_graph_rate_value_color(lcd_graph_log_bar_rates[bar],
+            lcd_graph_log_type != 4u);
+    return (packed & 0x80000000u) != 0u ?
+        lcd_theme_dim(color, lcd_theme_graph_dimming_percent) : color;
+}
+
 static bool lcd_graph_load_log_window(uint8_t start)
 {
     if (start >= lcd_graph_log_available) return false;
@@ -2901,6 +2914,9 @@ static bool lcd_graph_load_log_window(uint8_t start)
                 (uint8_t)(start + lcd_graph_log_visible), &point)) break;
         lcd_graph_log_bar_counts[lcd_graph_log_visible] =
             (point.count & 0x7FFFFFFFu) | (point.partial ? 0x80000000u : 0u);
+        lcd_graph_log_bar_rates[lcd_graph_log_visible] =
+            lcd_graph_log_type == 4u ? point.maximum_cpm : point.average_cpm;
+        lcd_graph_log_bar_live[lcd_graph_log_visible] = point.live;
         ++lcd_graph_log_visible;
     }
     lcd_graph_log_window_valid = lcd_graph_log_visible != 0u;
@@ -2936,6 +2952,8 @@ static bool lcd_graph_move_bar(bool older)
         if (new_window == (uint8_t)(old_window + 1u)) {
             for (uint8_t i = 0u; i + 1u < lcd_graph_log_visible; ++i) {
                 lcd_graph_log_bar_counts[i] = lcd_graph_log_bar_counts[i + 1u];
+                lcd_graph_log_bar_rates[i] = lcd_graph_log_bar_rates[i + 1u];
+                lcd_graph_log_bar_live[i] = lcd_graph_log_bar_live[i + 1u];
             }
             lcd_graph_log_window_start = new_window;
             const uint8_t next_index = (uint8_t)(new_window +
@@ -2949,9 +2967,14 @@ static bool lcd_graph_move_bar(bool older)
             lcd_graph_log_bar_counts[lcd_graph_log_visible - 1u] =
                 (point.count & 0x7FFFFFFFu) |
                 (point.partial ? 0x80000000u : 0u);
+            lcd_graph_log_bar_rates[lcd_graph_log_visible - 1u] =
+                lcd_graph_log_type == 4u ? point.maximum_cpm : point.average_cpm;
+            lcd_graph_log_bar_live[lcd_graph_log_visible - 1u] = point.live;
         } else if (old_window == (uint8_t)(new_window + 1u)) {
             for (uint8_t i = lcd_graph_log_visible - 1u; i != 0u; --i) {
                 lcd_graph_log_bar_counts[i] = lcd_graph_log_bar_counts[i - 1u];
+                lcd_graph_log_bar_rates[i] = lcd_graph_log_bar_rates[i - 1u];
+                lcd_graph_log_bar_live[i] = lcd_graph_log_bar_live[i - 1u];
             }
             lcd_graph_log_window_start = new_window;
             log_point_t point;
@@ -2962,6 +2985,9 @@ static bool lcd_graph_move_bar(bool older)
             }
             lcd_graph_log_bar_counts[0] = (point.count & 0x7FFFFFFFu) |
                 (point.partial ? 0x80000000u : 0u);
+            lcd_graph_log_bar_rates[0] = lcd_graph_log_type == 4u ?
+                point.maximum_cpm : point.average_cpm;
+            lcd_graph_log_bar_live[0] = point.live;
         } else if (!lcd_graph_load_log_window(new_window)) {
             lcd_graph_selected_record = old_record;
             (void)lcd_graph_load_log_window(old_window);
@@ -3048,6 +3074,9 @@ static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
         if (index < LCD_GRAPH_VISIBLE_BARS) {
             lcd_graph_log_bar_counts[index] =
                 (point.count & 0x7FFFFFFFu) | (point.partial ? 0x80000000u : 0u);
+            lcd_graph_log_bar_rates[index] = lcd_graph_log_type == 4u ?
+                point.maximum_cpm : point.average_cpm;
+            lcd_graph_log_bar_live[index] = point.live;
         }
         if (all_days && index == 0u) {
             lcd_graph_first_day_start = point.period_start;
@@ -3193,7 +3222,9 @@ static uint16_t lcd_graph_log_pixel(uint16_t x, uint16_t y)
     if (gy == lcd_graph_yellow_threshold_y) return LCD_COUNTER_YELLOW;
     if (!fill) return LCD_TEXT_BACKGROUND;
     if (selected) return LCD_SETTINGS_SELECTED_COLOR;
-    return LCD_GRAPH_COLOR;
+    const uint8_t bar = (uint8_t)((x - LCD_GRAPH_STATS_WIDTH) /
+        LCD_GRAPH_BAR_STEP);
+    return lcd_graph_log_bar_color(bar, lcd_graph_log_bar_counts[bar]);
 }
 
 static uint16_t lcd_graph_pixel(uint16_t x, uint16_t y)
