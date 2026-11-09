@@ -15,6 +15,7 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
                        bool calendar_valid, bool persistent_allowed);
 
 bool log_writer_fault(void);
+uint8_t log_writer_fault_reason(void);
 bool log_writer_live(log_record_kind_t kind, log_stored_t *item);
 bool log_writer_change_memory(uint8_t target);
 void log_writer_memory_committed(uint8_t target);

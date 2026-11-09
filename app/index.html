@@ -97,7 +97,7 @@
             <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">STORE</th><td></td><td id="debug-log-store">&#8212;</td></tr>
           </tbody>
         </table>
-        <details class="diagnostics-panel">
+        <details class="diagnostics-panel" open>
           <summary>Diagnostics</summary>
           <div class="diagnostics-actions">
             <button id="copy-diagnostics" class="button button-quiet" type="button">Copy</button>
@@ -332,6 +332,7 @@
           <button id="spi-restore-flash" class="button button-danger" type="button" hidden>Restore FLASH</button>
           <button id="erase-spi" class="button button-danger" type="button">Erase range</button>
         </div>
+        <p>Dump SPI reads through the running firmware only. If direct reads are unavailable or fail, the dump stops without restarting the device. SPI write and erase operations can start the temporary SPI service and restart the device.</p>
         <div class="firmware-controls spi-write-controls">
           <div class="firmware-file-control">
             <label for="spi-image-file">SPI image (.bin; write begins at From)</label>

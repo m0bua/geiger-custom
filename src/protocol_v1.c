@@ -47,6 +47,8 @@ static volatile uint8_t rx_ring[RX_RING_SIZE];
 static volatile uint8_t rx_head;
 static volatile uint8_t rx_tail;
 static uint8_t encoded_frame[MAX_RX_ENCODED_SIZE];
+/* Keep the large response payload out of the deeply nested request stack. */
+static uint8_t response_frame[MAX_TX_RAW_SIZE];
 static uint8_t encoded_length;
 static bool discard_until_delimiter;
 static bool log_info_spi_probe_attempted;
@@ -162,7 +164,6 @@ static void handle_frame(uint8_t *frame, uint8_t length)
     uint16_t request_id;
     uint16_t opcode;
     uint16_t payload_length;
-    uint8_t response_frame[MAX_TX_RAW_SIZE];
     uint8_t *response = &response_frame[8];
     uint16_t response_length = 1u;
     bool deferred_action = false;
@@ -310,11 +311,29 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         response[27] = board_display_log_source();
         response[28] = log_writer_fault() ? 1u : 0u;
         response[29] = second_log_count();
+        response[30] = 0u;
+        response[31] = 0u;
+        response[32] = 0u;
+        response[33] = 0u;
+        response[34] = 0u;
+        uint8_t read_fault_reason = 0u;
+        uint32_t read_fault_address = 0u;
+        if (spi_log_read_fault()) {
+            spi_log_read_fault_info(&read_fault_reason, &read_fault_address);
+            response[30] = 2u; /* READ */
+            response[31] = read_fault_reason;
+            response[32] = (uint8_t)read_fault_address;
+            response[33] = (uint8_t)(read_fault_address >> 8u);
+            response[34] = (uint8_t)(read_fault_address >> 16u);
+        } else if (log_writer_fault_reason() != 0u) {
+            response[30] = 5u; /* WRITE / log writer */
+            response[31] = log_writer_fault_reason();
+        }
         if (probe_spi &&
             board_display_log_memory() != BOARD_LOG_MEMORY_SPI) {
             spi_nor_deinit();
         }
-        response_length = 30u;
+        response_length = 35u;
     } else if (opcode == PROTOCOL_V1_OP_GET_LOG_PAGE && payload_length == 18u) {
         const uint8_t *request = &frame[8];
         uint8_t type = request[0], requested = request[1], count = 0u;

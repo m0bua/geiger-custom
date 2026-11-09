@@ -58,6 +58,22 @@ static period_accumulator_t hour_accumulator;
 static period_accumulator_t day_accumulator;
 static bool writer_ready;
 static bool writer_fault;
+static uint8_t writer_fault_reason;
+
+enum {
+    WRITER_FAULT_RECOVERY = 1u,
+    WRITER_FAULT_MINUTE_APPEND = 2u,
+    WRITER_FAULT_ALERT_APPEND = 3u,
+    WRITER_FAULT_LAYOUT_OR_RECOVERY = 4u,
+    WRITER_FAULT_ALERT_EXPIRY = 5u,
+    WRITER_FAULT_ROLLUP_APPEND = 6u
+};
+
+static void note_writer_fault(uint8_t reason)
+{
+    writer_fault = true;
+    if (writer_fault_reason == 0u) writer_fault_reason = reason;
+}
 static uint8_t pruned_year = UINT8_MAX;
 static uint16_t current_epoch;
 static bool have_clock_sample;
@@ -202,7 +218,7 @@ static void close_period(log_record_kind_t kind,
     record.covered_seconds = aggregate.covered_seconds;
     if (!append_record(kind, accumulator->epoch,
         accumulator->year_descriptor, &record)) {
-        writer_fault = true;
+        note_writer_fault(WRITER_FAULT_ROLLUP_APPEND);
     } else if (kind == LOG_RECORD_HOUR) {
     }
 }
@@ -307,7 +323,8 @@ static void close_minute(void)
     record.segment_id = minute_accumulator.segment_id;
     record.covered_seconds = minute_accumulator.persistent_samples;
     if (!append_record(LOG_RECORD_MINUTE, minute_accumulator.epoch,
-        minute_accumulator.year_descriptor, &record)) writer_fault = true;
+        minute_accumulator.year_descriptor, &record))
+        note_writer_fault(WRITER_FAULT_MINUTE_APPEND);
 }
 
 static void minute_cover_through_boundary(void)
@@ -345,7 +362,8 @@ static void close_alert(void)
     record.segment_id = alert_accumulator.segment_id;
     record.covered_seconds = 0u;
     if (!append_record(LOG_RECORD_ALERT, alert_accumulator.epoch,
-        alert_accumulator.year_descriptor, &record)) writer_fault = true;
+        alert_accumulator.year_descriptor, &record))
+        note_writer_fault(WRITER_FAULT_ALERT_APPEND);
     alert_accumulator.active = false;
 }
 
@@ -398,6 +416,7 @@ bool log_writer_init(void)
     const uint8_t log_memory = board_display_log_memory();
     writer_ready = false;
     writer_fault = false;
+    writer_fault_reason = 0u;
     pruned_year = UINT8_MAX;
     minute_accumulator.active = false;
     alert_accumulator.active = false;
@@ -431,7 +450,7 @@ bool log_writer_init(void)
         !recover_previous_period(LOG_RECORD_DAY)) goto failed;
     return true;
 failed:
-    writer_fault = true;
+    note_writer_fault(WRITER_FAULT_LAYOUT_OR_RECOVERY);
     return false;
 }
 
@@ -504,7 +523,7 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
     if (calendar_valid && pruned_year != year_descriptor) {
         bool ok = active_log_memory == BOARD_LOG_MEMORY_SPI ?
             spi_log_expire_alerts(year_descriptor) : log_eeprom_expire_alerts(year_descriptor);
-        if (!ok) writer_fault = true;
+        if (!ok) note_writer_fault(WRITER_FAULT_ALERT_EXPIRY);
         pruned_year = year_descriptor;
     }
     if (!minute_accumulator.active) {
@@ -709,4 +728,9 @@ bool log_writer_fault(void)
 {
     return writer_fault || (board_display_log_source() == BOARD_LOG_MEMORY_SPI &&
         spi_log_read_fault());
+}
+
+uint8_t log_writer_fault_reason(void)
+{
+    return writer_fault_reason;
 }

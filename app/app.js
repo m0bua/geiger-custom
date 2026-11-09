@@ -1456,7 +1456,13 @@ function applyLogInfo(payload) {
     if (cell) cell.textContent = formatGroupedNumber(logInfo[type.countKey]);
   }
   const store = document.querySelector('#debug-log-store');
-  if (store) store.textContent = logInfo.error ? 'ERR' : ['EEPROM', 'SPI', 'OFF'][logInfo.memory];
+  if (store) {
+    const description = spiFaultDescription(logInfo);
+    store.textContent = logInfo.error ? (description === 'none recorded' ? 'ERR' : `ERR · ${description}`) :
+      (logInfo.memory === 2 ? 'OFF' : 'OK');
+    store.title = logInfo.error ? `Storage error: ${description === 'none recorded' ? 'writer fault (no detail reported)' : description}` :
+      `Storage: ${['EEPROM', 'SPI', 'OFF'][logInfo.memory] || 'unknown'}`;
+  }
   elements.logTabs.querySelectorAll('[data-log-type]').forEach((button) => {
     const type = logTypes.find((item) => item.id === button.dataset.logType);
     if (type) button.textContent = `${type.label} (${formatGroupedNumber(logInfo[type.countKey])})`;
@@ -1481,7 +1487,7 @@ async function refreshLogCounts() {
         logDiagnostic(`SPI NOR fault captured: ${spiFaultDescription(logInfo)}`);
       }
       if (before && !before.error && logInfo.error) {
-        logDiagnostic(`STORE ERR became active; memory=${logMemoryName(logInfo.memory)}, source=${logMemoryName(logInfo.source)}, SPI-ready=${logInfo.spiReady}, JEDEC=${logInfo.jedec || '—'}`);
+        logDiagnostic(`STORE ERR became active; memory=${logMemoryName(logInfo.memory)}, source=${logMemoryName(logInfo.source)}, SPI-ready=${logInfo.spiReady}, JEDEC=${logInfo.jedec || '—'}, detail=${spiFaultDescription(logInfo)}`);
       } else if (before?.error && !logInfo.error) {
         logDiagnostic('STORE ERR cleared by firmware.');
       } else if (before && ['minutes', 'hours', 'days', 'alerts'].some((key) => before[key] !== logInfo[key])) {
@@ -1509,11 +1515,17 @@ function logMemoryName(value) {
 
 function spiFaultDescription(info) {
   if (!info?.spiFaultOperation) return 'none recorded';
-  const operations = ['', 'INIT', 'READ', 'PROGRAM', 'ERASE'];
-  const stages = ['', 'TXE timeout', 'RXNE timeout', 'BSY timeout',
+  const operations = ['', 'INIT', 'READ', 'PROGRAM', 'ERASE', 'WRITE'];
+  const writerReasons = ['', 'unspecified writer fault', 'minute append failed',
+    'alert append failed', 'storage layout/recovery failed',
+    'alert expiry failed', 'hour/day rollup append failed'];
+  const stages = ['', 'transfer failed', 'corrupt committed header', 'invalid header fields', 'corrupt committed record',
     'WIP timeout', 'WEL not set', 'command transfer failed',
     'verify read failed', 'verify mismatch', 'JEDEC mismatch', 'invalid request/state'];
-  return `${operations[info.spiFaultOperation] || `OP${info.spiFaultOperation}`} / ${stages[info.spiFaultStage] || `stage ${info.spiFaultStage}`} @ 0x${info.spiFaultAddress.toString(16).toUpperCase().padStart(6, '0')}`;
+  const operation = operations[info.spiFaultOperation] || `OP${info.spiFaultOperation}`;
+  const reason = info.spiFaultOperation === 5 ? writerReasons[info.spiFaultStage] : stages[info.spiFaultStage];
+  const detail = reason || `reason ${info.spiFaultStage}`;
+  return info.spiFaultOperation === 2 ? `${operation} / ${detail} @ 0x${info.spiFaultAddress.toString(16).toUpperCase().padStart(6, '0')}` : `${operation} / ${detail}`;
 }
 
 function logViewKey() {
@@ -5240,32 +5252,20 @@ async function dumpSpiMemory(range) {
     setDumpStatus('A pending FLASH recovery backup must be restored before starting another SPI operation.', 'error');
     return;
   }
-  try { await ensureFlashBackup(); }
-  catch (error) {
-    appendFirmwareLog(`SPI operation cancelled before access: ${error.message}`, 'error');
-    setDumpStatus(`SPI operation cancelled: ${error.message}`, 'error');
-    return;
-  }
-  if (dumpBusy || firmwareFlashBusy) return;
   setDumpBusy(true);
   appendFirmwareLog(`SPI dump requested at offsets ${range.start}–${range.end}.`);
   try {
-    if (serial && (protocolCapabilities & CAP_GET_SPI_DUMP) !== 0 &&
-        logInfo?.spiReady && logInfo.spiSizeMb) {
-      try {
-        if (range.end >= logInfo.spiSizeMb * 1024 * 1024) throw new Error('Selected range exceeds the detected SPI size.');
-        const bytes = await readSpiThroughProtocol(serial, range.length, range.start);
-        const filename = makeDumpFilename(`spi-${range.start}-${range.end}`);
-        downloadDump(bytes, filename);
-        appendFirmwareLog(`Direct SPI dump saved as ${filename}.`, 'success');
-        setDumpStatus(`SPI dump saved as ${filename} (${bytes.length.toLocaleString()} bytes).`, 'success');
-        return;
-      } catch (error) {
-        appendFirmwareLog(`Direct SPI read unavailable (${error.message}); trying the recovery-backed service firmware.`, 'warning');
-      }
+    if (!serial || (protocolCapabilities & CAP_GET_SPI_DUMP) === 0 ||
+        !logInfo?.spiReady || !logInfo.spiSizeMb) {
+      throw new Error('A no-restart SPI dump requires the connected firmware to support direct SPI reads and report a ready chip.');
     }
-    const {port, transport} = await selectFirmwarePort();
-    await runMiniSpiDump(port, transport, range.start, range.length);
+    if (range.end >= logInfo.spiSizeMb * 1024 * 1024)
+      throw new Error('Selected range exceeds the detected SPI size.');
+    const bytes = await readSpiThroughProtocol(serial, range.length, range.start);
+    const filename = makeDumpFilename(`spi-${range.start}-${range.end}`);
+    downloadDump(bytes, filename);
+    appendFirmwareLog(`Direct SPI dump saved as ${filename}.`, 'success');
+    setDumpStatus(`SPI dump saved as ${filename} (${bytes.length.toLocaleString()} bytes). The running firmware was not restarted.`, 'success');
   } catch (error) {
     appendFirmwareLog(`SPI dump failed: ${error.message}`, 'error');
     setDumpStatus(`SPI dump failed: ${error.message}`, 'error');

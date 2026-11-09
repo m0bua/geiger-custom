@@ -126,6 +126,36 @@ bool log_history_next_from(uint8_t memory, uint8_t type, uint32_t period,
         };
         cursor->skip = 0u;
         best.time = start;
+    } else if (period == 3600u || period == 86400u) {
+        uint32_t coverage = best.record.covered_seconds;
+        uint32_t count = best.record.count;
+        uint32_t maximum = best.record.maximum_cpm;
+        if (live_point && coverage == 0u &&
+            best.record.duration_seconds == 0u) {
+            count = 0u;
+            maximum = 0u;
+        } else if (coverage == 0u) {
+            coverage = best.record.duration_seconds != 0u ?
+                best.record.duration_seconds : period;
+        }
+        if (coverage > period) coverage = period;
+        *point = (log_point_t){
+            .period_start = best.time - best.time % period,
+            .period_seconds = period,
+            .count = count,
+            .average_cpm = log_record_average_cpm(count,
+                coverage != 0u ? coverage : period),
+            .maximum_cpm = maximum,
+            .covered_seconds = coverage,
+            .epoch = best.epoch,
+            .id = best.id,
+            .calendar_valid = (best.year & LOG_YEAR_VALID) != 0u,
+            .available = true,
+            .partial = coverage != period,
+            .live = live_point
+        };
+        cursor->skip = 0u;
+        best.time -= best.time % period;
     } else {
         uint32_t start = best.time - best.time % period;
         history_reader_t reader = {{(best.year & LOG_YEAR_VALID) != 0u}, memory, include_live, date_limit};
