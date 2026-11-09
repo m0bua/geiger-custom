@@ -2883,9 +2883,10 @@ static bool lcd_graph_read_log_point(uint8_t index,
 
 static uint16_t lcd_graph_log_bar_color(uint32_t cpm, bool partial)
 {
-    const uint64_t scaled = (uint64_t)cpm * 666u;
-    const uint16_t color = scaled > 90000u ? LCD_COLOR_RED :
-        (scaled >= 40000u ? LCD_COLOR_YELLOW : LCD_COLOR_GREEN);
+    const bool alerts = lcd_graph_log_type == 4u;
+    const uint16_t color = cpm >= LCD_GRAPH_RED_THRESHOLD_CPM ? LCD_COLOR_RED :
+        (cpm >= LCD_GRAPH_YELLOW_THRESHOLD_CPM ? LCD_COLOR_YELLOW :
+            (alerts ? LCD_COLOR_GREEN : LCD_GRAPH_COLOR));
     return partial ? lcd_theme_dim(color, lcd_theme_graph_dimming_percent) :
         color;
 }
