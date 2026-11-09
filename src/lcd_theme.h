@@ -27,7 +27,7 @@ extern uint8_t lcd_theme_graph_dimming_percent;
 #define LCD_COLOR_RED (lcd_theme_palette[LCD_THEME_RED])
 #define LCD_COLOR_PROGRESS_FRAME LCD_COLOR_BLUE
 #define LCD_COLOR_PROGRESS_FILL LCD_COLOR_BLUE
-#define LCD_COLOR_GRAPH LCD_COLOR_TEXT
+#define LCD_COLOR_GRAPH 0xFFFFu
 static inline uint16_t lcd_theme_dim(uint16_t color, uint8_t percent)
 {
     const uint16_t brightness = percent >= 100u ? 0u : (uint16_t)(100u - percent);

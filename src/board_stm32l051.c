@@ -316,7 +316,6 @@ typedef struct __attribute__((packed)) {
     uint8_t skip;
 } lcd_graph_log_cursor_t;
 static uint32_t lcd_graph_log_bar_counts[LCD_GRAPH_VISIBLE_BARS];
-static uint32_t lcd_graph_log_bar_rates[LCD_GRAPH_VISIBLE_BARS];
 static log_point_t lcd_graph_selected_point;
 static bool lcd_graph_selected_point_valid;
 static uint32_t lcd_graph_first_day_start;
@@ -335,6 +334,7 @@ static bool lcd_graph_partial_pending;
 static uint8_t lcd_graph_partial_kind;
 static uint8_t lcd_graph_previous_selected;
 static uint32_t lcd_graph_stat_min;
+static uint32_t lcd_graph_stat_average;
 static uint32_t lcd_graph_stat_max;
 static uint64_t lcd_graph_log_summary_dose;
 static uint32_t lcd_graph_log_summary_max;
@@ -2782,6 +2782,7 @@ static void lcd_graph_build_series(uint8_t tier, uint8_t requested)
     lcd_graph_stat_min = minimum;
     const uint32_t average = visible == 0u ? 0u :
         (uint32_t)((sum + visible / 2u) / visible);
+    lcd_graph_stat_average = average;
     stat_unit = lcd_graph_stat_unit(lcd_graph_stat_max);
     lcd_graph_format_stat(lcd_current_cpm, stat_unit,
         lcd_graph_stat_values[0]);
@@ -2881,14 +2882,11 @@ static bool lcd_graph_read_log_point(uint8_t index,
     return log_history_next(type, period, &cursor, 0u, point);
 }
 
-static uint16_t lcd_graph_log_bar_color(uint32_t cpm, bool partial)
+static uint16_t lcd_graph_rate_value_color(uint32_t cpm, bool dose)
 {
-    const bool alerts = lcd_graph_log_type == 4u;
-    const uint16_t color = cpm >= LCD_GRAPH_RED_THRESHOLD_CPM ? LCD_COLOR_RED :
-        (cpm >= LCD_GRAPH_YELLOW_THRESHOLD_CPM ? LCD_COLOR_YELLOW :
-            (alerts ? LCD_COLOR_GREEN : LCD_GRAPH_COLOR));
-    return partial ? lcd_theme_dim(color, lcd_theme_graph_dimming_percent) :
-        color;
+    if (cpm >= LCD_GRAPH_RED_THRESHOLD_CPM) return LCD_COLOR_RED;
+    if (cpm >= LCD_GRAPH_YELLOW_THRESHOLD_CPM) return LCD_COLOR_YELLOW;
+    return dose ? LCD_GRAPH_COLOR : LCD_COLOR_GREEN;
 }
 
 static bool lcd_graph_load_log_window(uint8_t start)
@@ -2903,8 +2901,6 @@ static bool lcd_graph_load_log_window(uint8_t start)
                 (uint8_t)(start + lcd_graph_log_visible), &point)) break;
         lcd_graph_log_bar_counts[lcd_graph_log_visible] =
             (point.count & 0x7FFFFFFFu) | (point.partial ? 0x80000000u : 0u);
-        lcd_graph_log_bar_rates[lcd_graph_log_visible] =
-            lcd_graph_log_type == 4u ? point.maximum_cpm : point.average_cpm;
         ++lcd_graph_log_visible;
     }
     lcd_graph_log_window_valid = lcd_graph_log_visible != 0u;
@@ -2940,7 +2936,6 @@ static bool lcd_graph_move_bar(bool older)
         if (new_window == (uint8_t)(old_window + 1u)) {
             for (uint8_t i = 0u; i + 1u < lcd_graph_log_visible; ++i) {
                 lcd_graph_log_bar_counts[i] = lcd_graph_log_bar_counts[i + 1u];
-                lcd_graph_log_bar_rates[i] = lcd_graph_log_bar_rates[i + 1u];
             }
             lcd_graph_log_window_start = new_window;
             const uint8_t next_index = (uint8_t)(new_window +
@@ -2954,12 +2949,9 @@ static bool lcd_graph_move_bar(bool older)
             lcd_graph_log_bar_counts[lcd_graph_log_visible - 1u] =
                 (point.count & 0x7FFFFFFFu) |
                 (point.partial ? 0x80000000u : 0u);
-            lcd_graph_log_bar_rates[lcd_graph_log_visible - 1u] =
-                lcd_graph_log_type == 4u ? point.maximum_cpm : point.average_cpm;
         } else if (old_window == (uint8_t)(new_window + 1u)) {
             for (uint8_t i = lcd_graph_log_visible - 1u; i != 0u; --i) {
                 lcd_graph_log_bar_counts[i] = lcd_graph_log_bar_counts[i - 1u];
-                lcd_graph_log_bar_rates[i] = lcd_graph_log_bar_rates[i - 1u];
             }
             lcd_graph_log_window_start = new_window;
             log_point_t point;
@@ -2970,8 +2962,6 @@ static bool lcd_graph_move_bar(bool older)
             }
             lcd_graph_log_bar_counts[0] = (point.count & 0x7FFFFFFFu) |
                 (point.partial ? 0x80000000u : 0u);
-            lcd_graph_log_bar_rates[0] =
-                lcd_graph_log_type == 4u ? point.maximum_cpm : point.average_cpm;
         } else if (!lcd_graph_load_log_window(new_window)) {
             lcd_graph_selected_record = old_record;
             (void)lcd_graph_load_log_window(old_window);
@@ -3058,8 +3048,6 @@ static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
         if (index < LCD_GRAPH_VISIBLE_BARS) {
             lcd_graph_log_bar_counts[index] =
                 (point.count & 0x7FFFFFFFu) | (point.partial ? 0x80000000u : 0u);
-            lcd_graph_log_bar_rates[index] =
-                lcd_graph_log_type == 4u ? point.maximum_cpm : point.average_cpm;
         }
         if (all_days && index == 0u) {
             lcd_graph_first_day_start = point.period_start;
@@ -3140,6 +3128,7 @@ static void lcd_graph_build_logs(void)
         lcd_graph_log_summary_coverage;
     const uint32_t average = lcd_graph_cursor_mode && selected ?
         selected->average_cpm : lcd_graph_log_summary_average;
+    lcd_graph_stat_average = average;
     lcd_graph_format_dose(lcd_graph_cursor_mode && selected ? selected->count :
         lcd_graph_log_summary_dose, lcd_graph_stat_values[0],
         lcd_settings_value_index[SETTING_UNIT]);
@@ -3168,11 +3157,15 @@ static uint16_t lcd_graph_log_pixel(uint16_t x, uint16_t y)
                 continue;
             const uint8_t yy = (uint8_t)(gy - sy[stat]);
             uint16_t color = LCD_TEXT_FOREGROUND;
-            if (lcd_graph_log_type == 4u && stat == 1u) {
-                if (lcd_graph_stat_max >= LCD_GRAPH_RED_THRESHOLD_CPM)
-                    color = LCD_TEXT_RED;
-                else if (lcd_graph_stat_max >= LCD_GRAPH_YELLOW_THRESHOLD_CPM)
-                    color = LCD_TEXT_YELLOW;
+            if (stat == 0u) {
+                color = lcd_graph_rate_value_color(
+                    lcd_graph_log_type == 4u ? lcd_graph_stat_max :
+                        lcd_graph_stat_average,
+                    lcd_graph_log_type != 4u);
+            } else if (stat == 1u) {
+                color = lcd_graph_rate_value_color(lcd_graph_stat_max, false);
+            } else if (stat == 2u) {
+                color = lcd_graph_rate_value_color(lcd_graph_stat_average, false);
             }
             return x < 48u && lcd_graph_stat_value_pixel(stat, (uint8_t)x, yy) ?
                 color : LCD_TEXT_BACKGROUND;
@@ -3200,10 +3193,7 @@ static uint16_t lcd_graph_log_pixel(uint16_t x, uint16_t y)
     if (gy == lcd_graph_yellow_threshold_y) return LCD_COUNTER_YELLOW;
     if (!fill) return LCD_TEXT_BACKGROUND;
     if (selected) return LCD_SETTINGS_SELECTED_COLOR;
-    const uint8_t bar = (uint8_t)((x - LCD_GRAPH_STATS_WIDTH) /
-        LCD_GRAPH_BAR_STEP);
-    return lcd_graph_log_bar_color(lcd_graph_log_bar_rates[bar],
-        (column & 0x80u) != 0u);
+    return LCD_GRAPH_COLOR;
 }
 
 static uint16_t lcd_graph_pixel(uint16_t x, uint16_t y)
@@ -3218,8 +3208,10 @@ static uint16_t lcd_graph_pixel(uint16_t x, uint16_t y)
             if (y < sy[stat] || y >= sy[stat] + FONT_SMALL_CELL_HEIGHT)
                 continue;
             const uint8_t yy = (uint8_t)(y - sy[stat]);
-            const uint16_t color = stat == 0u ? lcd_rate_color :
-                LCD_TEXT_FOREGROUND;
+            const uint32_t cpm = stat == 0u ? lcd_current_cpm :
+                stat == 1u ? lcd_graph_stat_max :
+                stat == 2u ? lcd_graph_stat_average : lcd_graph_stat_min;
+            const uint16_t color = lcd_graph_rate_value_color(cpm, false);
             return x < 48u && lcd_graph_stat_value_pixel(stat, (uint8_t)x, yy) ?
                 color : LCD_TEXT_BACKGROUND;
         }

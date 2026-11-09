@@ -1,4 +1,1 @@
 BUG: battery % grows on discharge sometimes.
-BUG: SPI read error (ERR · READ / transfer failed @ 0x001778).
-STYLE: APP FW tab full width
-STYLE: not green but yellow/red graphs
