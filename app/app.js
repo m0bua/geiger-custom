@@ -275,6 +275,10 @@ const elements = {
   notice: document.querySelector('#notice'),
   rateChart: document.querySelector('#rate-chart'),
   rateTooltip: document.querySelector('#rate-chart-tooltip'),
+  chartRangeMin: document.querySelector('#chart-range-min'),
+  chartRangeAvg: document.querySelector('#chart-range-avg'),
+  chartRangeMax: document.querySelector('#chart-range-max'),
+  chartRangeDose: document.querySelector('#chart-range-dose'),
   deviceDate: document.querySelector('#device-date'),
   deviceTime: document.querySelector('#device-time'),
   settingsDeviceDate: document.querySelector('#settings-device-date'),
@@ -1167,7 +1171,10 @@ function rateChartData() {
   if (offlinePreview) {
     const end = Math.max(2, RATE_CHART_BUFFER_SECONDS - rateChartScrollSeconds);
     const start = Math.max(0, end - rateChartZoomSeconds);
-    return {values: Array.from({length: end - start}, (_, index) => start + index), pulses: [], levels: [],
+    const unit = demoSettings[9] ?? 0;
+    return {values: Array.from({length: end - start}, (_, index) =>
+      (start + index) / (RATE_CHART_BUFFER_SECONDS - 1) *
+        (unit === 1 ? 1 / 0.00666 : unit === 2 ? 100 : 1)), pulses: [], levels: [],
       startAge: RATE_CHART_BUFFER_SECONDS - start, endAge: RATE_CHART_BUFFER_SECONDS - end};
   }
   const total = rateHistory.length;
@@ -1191,26 +1198,79 @@ function resetRateChartViewport() {
   drawRateChart();
 }
 
+function updateRateChartSummary(values, pulses, levels) {
+  const setRateSummary = (element, value, isWarmup) => {
+    const settings = offlinePreview ? demoSettings : deviceSettings;
+    const unit = settings?.[9] ?? 0;
+    const rateUsvh = unit === 1 ? value * 0.00666 : unit === 2 ? value / 100 : value;
+    const level = isWarmup ? 'blue' :
+      (rateUsvh > 0.9 ? 'red' : (rateUsvh >= 0.4 ? 'yellow' : 'green'));
+    element.classList.remove('level-blue', 'level-green', 'level-yellow', 'level-red');
+    element.classList.add(`level-${level}`);
+  };
+  if (!values.length) {
+    elements.chartRangeMin.textContent = '—';
+    elements.chartRangeAvg.textContent = '—';
+    elements.chartRangeMax.textContent = '—';
+    for (const element of [elements.chartRangeMin, elements.chartRangeAvg, elements.chartRangeMax]) {
+      element.classList.remove('level-blue', 'level-green', 'level-yellow', 'level-red');
+    }
+  } else {
+    const minimum = Math.min(...values);
+    const maximum = Math.max(...values);
+    const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const minIndex = values.indexOf(minimum);
+    const maxIndex = values.indexOf(maximum);
+    elements.chartRangeMin.textContent = `${formatRateChartValue(minimum)} ${rateHistoryUnit}`;
+    elements.chartRangeAvg.textContent = `${formatRateChartValue(average)} ${rateHistoryUnit}`;
+    elements.chartRangeMax.textContent = `${formatRateChartValue(maximum)} ${rateHistoryUnit}`;
+    setRateSummary(elements.chartRangeMin, minimum, levels[minIndex] === 'blue');
+    setRateSummary(elements.chartRangeAvg, average,
+      levels.length > 0 && levels.every((level) => level === 'blue'));
+    setRateSummary(elements.chartRangeMax, maximum, levels[maxIndex] === 'blue');
+  }
+  const pulseTotal = pulses.reduce((sum, count) => sum + count, 0);
+  const settings = offlinePreview ? demoSettings : deviceSettings;
+  const unit = settings?.[9] ?? 0;
+  const dose = unit === 1 ? `${formatGroupedNumber(pulseTotal)} CNT` :
+    doseValueText(unit, pulseTotal, settings?.[11] ?? 1);
+  elements.chartRangeDose.textContent = dose;
+  elements.chartRangeDose.classList.remove('level-white', 'level-yellow', 'level-red');
+  elements.chartRangeDose.classList.add(logDoseClass({dose: pulseTotal, covered: values.length}));
+}
+
 function rateChartThresholds() {
-  const unit = deviceSettings?.[9] ?? 0;
+  const unit = (offlinePreview ? demoSettings : deviceSettings)?.[9] ?? 0;
   const convert = (usvh) => unit === 1 ? usvh / 0.00666 :
     unit === 2 ? usvh * 100 : usvh;
-  const customUsvh = [0.3, 0.4, 0.5, 0.7, 0.9, 1, 2, 5, 10][deviceSettings?.[16] ?? 0] ?? 0.3;
+  const settings = offlinePreview ? demoSettings : deviceSettings;
+  const customUsvh = [0.3, 0.4, 0.5, 0.7, 0.9, 1, 2, 5, 10][settings?.[16] ?? 0] ?? 0.3;
   const thresholds = [
     {key: 'yellow', label: 'Y', value: convert(0.4), color: '#f0d35e'},
     {key: 'red', label: 'R', value: convert(0.9), color: '#ff6666'},
   ];
-  if (Math.abs(customUsvh - 0.9) > 0.0001) {
+  const yellow = thresholds[0];
+  const red = thresholds[1];
+  if (Math.abs(customUsvh - 0.4) <= 0.0001) {
+    yellow.label = 'CY';
+    yellow.labelColors = ['#b58cff', yellow.color];
+  } else if (Math.abs(customUsvh - 0.9) <= 0.0001) {
+    red.label = 'CR';
+    red.labelColors = ['#b58cff', red.color];
+  } else {
     thresholds.push({key: 'custom', label: 'C', value: convert(customUsvh), color: '#b58cff'});
   }
   return thresholds;
 }
 
 function formatRateChartValue(value) {
-  if ((deviceSettings?.[9] ?? 0) === 1) return formatGroupedNumber(Math.round(value));
+  const settings = offlinePreview ? demoSettings : deviceSettings;
+  if ((settings?.[9] ?? 0) === 1) return formatGroupedNumber(Math.round(value));
+  const prefix = settings?.[10] ?? 1;
+  if (prefix !== 3) value *= [0.001, 1, 1000][prefix];
   if (Math.abs(value) >= 10) return value.toFixed(0);
   if (Math.abs(value) >= 1) return value.toFixed(1).replace(/\.0$/, '');
-  return value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+  return value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
 }
 
 function formatRateChartTime(seconds) {
@@ -1238,9 +1298,20 @@ function drawRateChart() {
   const plotWidth = Math.max(1, w - left - right);
   const plotHeight = Math.max(1, h - top - bottom);
   const {values, pulses, levels, startAge, endAge} = rateChartData();
+  if (offlinePreview) {
+    const unit = demoSettings[9] ?? 0;
+    rateHistoryUnit = unit === 1 ? 'CPM' :
+      formatRadiation(0.14 * (unit === 2 ? 100 : 1), demoSettings[10] ?? 1,
+        unit === 2 ? 'R' : 'Sv', true).unit;
+  }
+  updateRateChartSummary(values, pulses, levels);
   const thresholds = rateChartThresholds();
   const valuePeak = Math.max(...values, 0.01);
-  const peak = valuePeak * 1.12;
+  const demoScaleMax = offlinePreview ? (() => {
+    const unit = demoSettings[9] ?? 0;
+    return unit === 1 ? 1 / 0.00666 : unit === 2 ? 100 : 1;
+  })() : null;
+  const peak = demoScaleMax ?? valuePeak * 1.12;
   const xFor = (index) => left + (values.length > 1 ? index / (values.length - 1) : 0) * plotWidth;
   const yFor = (value) => top + plotHeight - (value / peak) * plotHeight;
   context.clearRect(0, 0, w, h);
@@ -1281,8 +1352,18 @@ function drawRateChart() {
     context.strokeStyle = `${threshold.color}99`;
     context.beginPath(); context.moveTo(left, y); context.lineTo(w - right, y); context.stroke();
     context.restore();
+    const labelX = left + 5;
+    const labelY = y - 3;
+    let textX = labelX;
+    for (let index = 0; index < threshold.label.length; ++index) {
+      context.fillStyle = threshold.labelColors?.[index] ?? threshold.color;
+      const letter = threshold.label[index];
+      context.fillText(letter, textX, labelY);
+      textX += context.measureText(letter).width;
+    }
     context.fillStyle = threshold.color;
-    context.fillText(`${threshold.label} ${formatRateChartValue(threshold.value)}`, left + 5, y - 3);
+    const valueLabel = ` ${formatRateChartValue(threshold.value)}`;
+    context.fillText(valueLabel, textX, labelY);
   }
   if (values.length < 2) return;
 
@@ -1330,14 +1411,10 @@ function showRateChartTooltip(event) {
   const panelRect = panel.getBoundingClientRect();
   const plotLeft = 48;
   const plotRight = 10;
-  const plotTop = 20;
-  const plotBottom = 24;
   const plotWidth = Math.max(1, canvasRect.width - plotLeft - plotRight);
-  let pointerRatio = Math.max(0, Math.min(1,
+  const pointerRatio = Math.max(0, Math.min(1,
     (event.clientX - canvasRect.left - plotLeft) / plotWidth));
   rateHoverIndex = Math.round(pointerRatio * (chart.values.length - 1));
-  pointerRatio = chart.values.length > 1 ?
-    rateHoverIndex / (chart.values.length - 1) : 0;
   const value = chart.values[rateHoverIndex];
   const unit = deviceSettings?.[9] ?? 0;
   const display = unit === 1 ?
@@ -1348,17 +1425,18 @@ function showRateChartTooltip(event) {
   elements.rateTooltip.hidden = false;
   drawRateChart();
 
-  const thresholds = rateChartThresholds();
-  const peak = Math.max(...chart.values, 0.01) * 1.12;
-  const plotHeight = Math.max(1, canvasRect.height - plotTop - plotBottom);
-  const pointY = plotTop + plotHeight - (value / peak) * plotHeight;
-  const left = canvasRect.left - panelRect.left + plotLeft + pointerRatio * plotWidth + 10;
-  const top = canvasRect.top - panelRect.top + pointY -
-    elements.rateTooltip.offsetHeight - 8;
+  const cursorX = event.clientX - panelRect.left;
+  const cursorY = event.clientY - panelRect.top;
+  const tooltipWidth = elements.rateTooltip.offsetWidth;
+  const tooltipHeight = elements.rateTooltip.offsetHeight;
+  const left = cursorX + 14 + tooltipWidth <= panel.clientWidth - 8 ?
+    cursorX + 14 : cursorX - tooltipWidth - 14;
+  const top = cursorY + 14 + tooltipHeight <= panel.clientHeight - 8 ?
+    cursorY + 14 : cursorY - tooltipHeight - 14;
   elements.rateTooltip.style.left = `${Math.max(8, Math.min(
-    panel.clientWidth - elements.rateTooltip.offsetWidth - 8, left))}px`;
+    panel.clientWidth - tooltipWidth - 8, left))}px`;
   elements.rateTooltip.style.top = `${Math.max(8, Math.min(
-    panel.clientHeight - elements.rateTooltip.offsetHeight - 8, top))}px`;
+    panel.clientHeight - tooltipHeight - 8, top))}px`;
 }
 
 function showNotice(message, kind = '') {
@@ -2970,6 +3048,7 @@ function renderSettings() {
             renderSettings();
             document.querySelector(`#setting-${setting.id}`)?.focus();
           }
+          if (setting.id === 9 || setting.id === 10) drawRateChart();
           return;
         }
         if (supported && !inactiveSetting) {

@@ -81,6 +81,12 @@
       <section class="chart-panel" aria-label="Recent rate history">
         <canvas id="rate-chart" aria-label="Rate over the latest 1000 seconds; use the wheel to zoom and drag to scroll"></canvas>
         <output id="rate-chart-tooltip" class="chart-tooltip" role="tooltip" hidden></output>
+        <div class="chart-summary" aria-label="Statistics for the visible chart range">
+          <div><span>DOSE</span><strong id="chart-range-dose">—</strong></div>
+          <div><span>MIN</span><strong id="chart-range-min">—</strong></div>
+          <div><span>AVG</span><strong id="chart-range-avg">—</strong></div>
+          <div><span>MAX</span><strong id="chart-range-max">—</strong></div>
+        </div>
       </section>
     </section>
 
