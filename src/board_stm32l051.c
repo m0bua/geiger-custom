@@ -3272,7 +3272,9 @@ static void lcd_graph_prepare_header(void)
         CPM_HISTORY_SLOW, CPM_HISTORY_SLOW, CPM_HISTORY_SLOW
     };
     static const uint8_t sample_count[7] = {68u, 201u, 81u, 121u, 68u, 113u, 224u};
-    static const char *const titles[] = {"SEC", "MIN", "HOUR", "DAY", "ALRT"};
+    static const char *const titles[] = {
+        "DIRECT", "MINUTE", "HOUR", "DAY", "ALERT"
+    };
     char line[20];
     for (uint8_t i = 0u; i < 20u; ++i) line[i] = ' ';
     if (!lcd_graph_log_type) {
@@ -3292,6 +3294,9 @@ static void lcd_graph_prepare_header(void)
         }
     }
     const char *title = titles[lcd_graph_log_type];
+    uint8_t title_length = 0u;
+    while (title[title_length] && title_length < 6u) ++title_length;
+    const uint8_t title_start = (uint8_t)(13u + (6u - title_length) / 2u);
     if (lcd_graph_log_type) {
         lcd_graph_build_logs();
         if (lcd_graph_loading) memcpy(line, "WAIT...", 7u);
@@ -3329,13 +3334,13 @@ static void lcd_graph_prepare_header(void)
         }
     }
     line[12] = '<';
-    line[14] = title[0];
-    line[15] = title[1];
-    line[16] = title[2];
-    if (title[3]) line[17] = title[3];
+    for (uint8_t i = 0u; i < title_length; ++i) {
+        line[title_start + i] = title[i];
+    }
     line[19] = '>';
-    const uint8_t special_start = lcd_graph_cursor_mode ? 20u : 14u;
-    const uint8_t special_end = lcd_graph_cursor_mode ? 19u : 17u;
+    const uint8_t special_start = lcd_graph_cursor_mode ? 20u : title_start;
+    const uint8_t special_end = lcd_graph_cursor_mode ? 19u :
+        (uint8_t)(title_start + title_length - 1u);
     lcd_render_small_line(line, LCD_WIDTH, LCD_TEXT_FOREGROUND,
         20u, 19u, special_start, special_end, LCD_COUNTER_GREEN);
 }
