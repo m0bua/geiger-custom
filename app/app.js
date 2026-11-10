@@ -2075,8 +2075,8 @@ function logDoseClass(record) {
 function updateLogFillOptions(typeId) {
   if (elements.logFillMetric.dataset.type === typeId) return;
   const options = typeId === 'alerts' ?
-    [['duration', 'Duration'], ['dose', 'Dose'], ['average', 'Average'], ['maximum', 'Maximum']] :
-    [['dose', 'Dose'], ['average', 'Average'], ['maximum', 'Maximum'], ['coverage', 'Coverage']];
+    [['duration', 'Duration'], ['dose', 'Dose'], ['maximum', 'Maximum']] :
+    [['dose', 'Dose'], ['maximum', 'Maximum'], ['coverage', 'Coverage']];
   if (!options.some(([value]) => value === logFillMetric)) {
     logFillMetric = options[0][0];
   }
