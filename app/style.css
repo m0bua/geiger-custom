@@ -282,7 +282,7 @@ body.logs-page-active .log-content { height: auto; min-height: 0; max-height: no
 .log-date-tools #log-range-extra { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 .log-date-tools #log-range-extra[hidden] { display: inline-flex !important; visibility: hidden; }
 .log-date-tools > button { flex: 0 0 auto; }
-.log-grid { min-width: 620px; display: grid; grid-template-columns: 1.1fr repeat(4, minmax(90px, 1fr)); gap: 8px; align-items: center; }
+.log-grid { min-width: 660px; display: grid; grid-template-columns: 1.1fr repeat(4, minmax(90px, 1fr)) 32px; gap: 8px; align-items: center; }
 .log-grid-header { position: sticky; z-index: 3; top: 0; box-sizing: border-box; min-height: 32px; padding: 8px 10px; color: var(--muted); background: #111a1f; font-size: 10px; text-transform: uppercase; }
 .log-grid-header .log-sort-button { width: 100%; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; text-align: right; text-transform: inherit; cursor: pointer; }
 .log-grid-header .log-sort-button:first-child { text-align: left; }
@@ -293,6 +293,10 @@ body.logs-page-active .log-content { height: auto; min-height: 0; max-height: no
 .log-record:hover::after, .log-record:focus-within::after { background: rgba(81,157,185,.17); }
 .log-record span { position: relative; z-index: 1; text-align: right; white-space: nowrap; }
 .log-record span:first-child { color: #aab8bd; text-align: left; }
+.log-row-action { justify-self: center; width: 28px; }
+.log-record .log-drilldown-button { position: relative; z-index: 1; width: 28px; min-height: 26px; padding: 0; border: 1px solid rgba(0,229,139,.24); border-radius: 6px; color: var(--green); background: rgba(0,229,139,.06); font: 15px/1 "DM Mono", Consolas, monospace; cursor: pointer; }
+.log-record .log-drilldown-button:hover, .log-record .log-drilldown-button:focus-visible { border-color: var(--green); background: rgba(0,229,139,.14); }
+.log-record .log-drilldown-button:disabled { opacity: .28; cursor: not-allowed; }
 .log-record .log-metric { color: #aab8bd; }
 .log-record .level-white { color: #f3f5f5; }
 .log-record .level-green { color: var(--green); }

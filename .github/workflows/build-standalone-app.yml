@@ -255,6 +255,7 @@ jobs:
           ## Changes
           **Changes since APP-202610291321:**
           - Fixed SPI log reliability: retry transient NOR read failures, continue scanning past invalid sectors/records, and report the first fault reason and address in diagnostics.
+          - Added log drill-down buttons: open an hour as minute records, a day as hour records, or an alert's starting minute.
           - Improved Downloads for saved FLASH, EEPROM, and SPI images: each can be downloaded again or loaded into its matching operation; filenames identify automatic/manual FLASH copies, FLASH firmware identity, and EEPROM/SPI byte ranges.
           - Made firmware operations predictable: ask before firmware writes and before SPI service restarts, and create the automatic original FLASH backup only for an approved firmware write.
           - Kept the current log graph column white, colored historical columns by dose level, and dimmed every incomplete column, including the current one. Numeric values use rate/dose thresholds; ALERT values have no white baseline.

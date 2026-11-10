@@ -291,6 +291,7 @@ jobs:
           ## Changes
           **Changes since the previous pre-release (202611091447-dev-64bcaa1):**
           - Colored log rate values by rate level and dose values by dose level. More now resumes interrupted loads and pages hour/day/month/date ranges back by one matching period. Removed AVG from the log fill-metric choices.
+          - Added log drill-down buttons: open an hour as minute records, a day as hour records, or an alert's starting minute.
           - Added expandable rate and dose details on Overview and visible-range DOSE/MIN/AVG/MAX summaries beneath the rate chart.
           - Organized Settings into collapsible Device, Device controls, and Display theme sections, and made Diagnostics collapsed by default.
           - Renamed device graph headers to DIRECT, MINUTE, HOUR, DAY, and ALERT.

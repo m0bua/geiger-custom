@@ -2052,7 +2052,67 @@ function buildLogHeader(type) {
     [['Date', 'date'], ['Duration', 'duration'], ['Dose', 'dose'], ['Average', 'average'], ['Maximum', 'maximum']] :
     [['Date', 'date'], ['Dose', 'dose'], ['Average', 'average'], ['Maximum', 'maximum'], ['Coverage', 'coverage']];
   columns.forEach(([label, key]) => header.append(makeLogHeaderButton(label, key)));
+  const actionSpace = document.createElement('span');
+  actionSpace.className = 'log-row-action';
+  header.append(actionSpace);
   return header;
+}
+
+async function drillDownLogRecord(record) {
+  const sourceType = selectedLogType;
+  const targetType = sourceType === 'hours' ? 'minutes' :
+    sourceType === 'days' ? 'hours' : sourceType === 'alerts' ? 'minutes' : null;
+  if (!targetType || !record.calendar) return;
+
+  const mode = sourceType === 'hours' ? 'hour' :
+    sourceType === 'days' ? 'day' : 'dates';
+  const period = sourceType === 'hours' ? 3600 :
+    sourceType === 'days' ? 86400 : 60;
+  const start = Math.floor(record.timestamp / period) * period;
+  const end = start + period - 1;
+
+  saveLogView();
+  ++logPageGeneration;
+  selectedLogType = targetType;
+  elements.logRangeMode.value = mode;
+  elements.logTabs.querySelectorAll('[data-log-type]').forEach((tab) => {
+    const active = tab.dataset.logType === targetType;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+  });
+  updateLogRangeControls();
+
+  const epoch = Date.UTC(2000, 0, 1);
+  const date = new Date(epoch + start * 1000);
+  const dateText = formatDeviceDate(date);
+  const hourText = String(date.getUTCHours()).padStart(2, '0');
+  if (mode === 'hour') {
+    const dateInput = document.querySelector('#log-calendar-date');
+    const hourInput = document.querySelector('#log-calendar-hour');
+    if (dateInput) dateInput.value = dateText;
+    if (hourInput) hourInput.value = hourText;
+  } else if (mode === 'day') {
+    const dateInput = document.querySelector('#log-calendar-date');
+    if (dateInput) dateInput.value = dateText;
+  } else {
+    const minuteText = String(date.getUTCMinutes()).padStart(2, '0');
+    const minuteInput = `${dateText}T${hourText}:${minuteText}`;
+    const newer = document.querySelector('#log-newer-minute');
+    const older = document.querySelector('#log-older-minute');
+    if (newer) newer.value = minuteInput;
+    if (older) older.value = minuteInput;
+  }
+
+  logRangeActive = true;
+  logRangeAll = false;
+  logCountLimit = 0;
+  logRangeStart = start;
+  logRangeEnd = end;
+  logSelectedDate = `${start}:${end}`;
+  clearLogView();
+  elements.logContent.scrollTop = 0;
+  renderLogSummary();
+  await loadLogPage(false);
 }
 
 function renderLogTabs() {
@@ -2210,7 +2270,7 @@ function renderLogTotal(type) {
     [`TOTAL (${logRecords.length})`, dose, average, maximumText, `${formatCoverageDuration(covered)} total`];
   const row = elements.logContent.querySelector('.log-total') ?? document.createElement('div');
   row.className = 'log-grid log-record log-total';
-  while (row.children.length > values.length) row.lastElementChild.remove();
+  while (row.children.length > values.length + 1) row.lastElementChild.remove();
   values.forEach((value, index) => {
     const cell = row.children[index] ?? document.createElement('span');
     let className = '';
@@ -2222,6 +2282,12 @@ function renderLogTotal(type) {
     if (cell.textContent !== value) cell.textContent = value;
     if (!cell.isConnected) row.append(cell);
   });
+  let actionSpace = row.children[values.length];
+  if (!actionSpace || !actionSpace.classList.contains('log-row-action')) {
+    actionSpace = document.createElement('span');
+    actionSpace.className = 'log-row-action';
+    row.append(actionSpace);
+  }
   if (!row.isConnected) elements.logContent.append(row);
 }
 function renderLogSummary(preserveRows = false, prependNewRows = true) {
@@ -2268,7 +2334,7 @@ function renderLogSummary(preserveRows = false, prependNewRows = true) {
       logRateClass(record.average), logRateClass(record.maximum)] :
       [null, logDoseClass(record), logRateClass(record.average),
         logRateClass(record.maximum), logCoverageClass(record)];
-    while (row.children.length > values.length) row.lastElementChild.remove();
+    while (row.children.length > values.length + 1) row.lastElementChild.remove();
     for (let index = 0; index < values.length; ++index) {
       const cell = row.children[index] ?? document.createElement('span');
       const isMetric = isAlert ? index >= 2 && index <= 4 : index >= 1 && index <= 3;
@@ -2276,6 +2342,35 @@ function renderLogSummary(preserveRows = false, prependNewRows = true) {
       if (cell.className !== className) cell.className = className;
       if (cell.textContent !== values[index]) cell.textContent = values[index];
       if (cell.parentElement !== row) row.append(cell);
+    }
+    const actionIndex = values.length;
+    let action = row.children[actionIndex];
+    const canDrillDown = ['hours', 'days', 'alerts'].includes(type.id);
+    if (canDrillDown) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'log-row-action log-drilldown-button';
+      button.textContent = '↳';
+      const targetLabel = type.id === 'hours' ? 'minute records for this hour' :
+        type.id === 'days' ? 'hour records for this day' : 'minute record for this alert';
+      button.setAttribute('aria-label', `Open ${targetLabel}`);
+      button.title = record.calendar ? `Open ${targetLabel}` :
+        'Drill-down requires a calendar timestamp.';
+      button.disabled = !record.calendar || logPageLoading || logCsvBusy;
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        void drillDownLogRecord(record);
+      });
+      if (action?.classList.contains('log-row-action')) row.replaceChild(button, action);
+      else row.append(button);
+    } else {
+      if (!action || !action.classList.contains('log-row-action') ||
+          action.tagName !== 'SPAN') {
+        const spacer = document.createElement('span');
+        spacer.className = 'log-row-action';
+        if (action) row.replaceChild(spacer, action);
+        else row.append(spacer);
+      }
     }
     if (!row.isConnected) {
       const firstRecord = elements.logContent.querySelector('.log-record:not(.log-total)');
