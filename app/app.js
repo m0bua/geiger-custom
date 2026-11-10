@@ -381,6 +381,9 @@ const elements = {
   rateFoot: document.querySelector('#rate-foot'),
   rateFootMain: document.querySelector('#rate-foot-main'),
   rateFootCount: document.querySelector('#rate-foot-count'),
+  rateExpand: document.querySelector('#rate-expand'),
+  rateDetails: document.querySelector('#rate-details'),
+  metrics: document.querySelector('.metrics'),
   rateLabel: document.querySelector('#rate-label'),
   rateDose: document.querySelector('#rate-dose'),
   rateWarmup: document.querySelector('#rate-warmup'),
@@ -390,6 +393,9 @@ const elements = {
   dose: document.querySelector('#dose'),
   doseUnit: document.querySelector('#dose-unit'),
   doseFoot: document.querySelector('#dose-foot'),
+  doseExpand: document.querySelector('#dose-expand'),
+  doseDetails: document.querySelector('#dose-details'),
+  doseWarmupSpacer: document.querySelector('#dose-warmup-spacer'),
   uptime: document.querySelector('#uptime'),
   debugBatteryPercent: document.querySelector('#debug-battery-percent'),
   debugBatteryDetail: document.querySelector('#debug-battery-detail'),
@@ -3320,7 +3326,9 @@ function renderOfflinePreview() {
   elements.rateFootCount.textContent = '';
   elements.rateFootCount.hidden = true;
   elements.rateFoot.hidden = false;
+  updateOverviewMetricDetails(0, 0, 0, 0, 0, deviceSettings?.[10] ?? 1);
   elements.rateWarmup.hidden = true;
+  elements.doseWarmupSpacer.hidden = true;
   elements.rateWarmupFill.style.width = '0%';
   elements.loadMoreLogs.hidden = false;
   elements.loadMoreLogs.disabled = true;
@@ -3681,6 +3689,51 @@ function doseRowText(unit, period, mode, cpm, uptime, uptimePulses, dayPulses, t
   return doseValueText(unit, pulses, dosePrefix);
 }
 
+function updateOverviewMetricDetails(cpm, uptimePulses,
+    dayPulses, totalPulses, ratePrefix) {
+  const rateSv = formatRadiation(cpm * 0.00666, ratePrefix, 'Sv', true);
+  const rateR = formatRadiation(cpm * 0.00666 * 100, ratePrefix, 'R', true);
+  document.querySelector('#overview-rate-cpm').textContent = formatGroupedNumber(cpm);
+  document.querySelector('#overview-rate-cps').textContent = (cpm / 60).toFixed(2);
+  document.querySelector('#overview-rate-sv-label').textContent = 'Sv/h';
+  document.querySelector('#overview-rate-sv').textContent = `${rateSv.value} ${rateSv.unit}`;
+  document.querySelector('#overview-rate-r-label').textContent = 'R/h';
+  document.querySelector('#overview-rate-r').textContent = `${rateR.value} ${rateR.unit}`;
+
+  const periods = [uptimePulses, dayPulses, totalPulses];
+  const doseUnits = [
+    {key: 'sv', symbol: 'Sv', factor: 1},
+    {key: 'r', symbol: 'R', factor: 100},
+  ];
+  for (const doseUnit of doseUnits) {
+    periods.forEach((pulses, periodIndex) => {
+      const doseUsv = pulses * (400 / 3600) / 1000 * doseUnit.factor;
+      const formatted = formatRadiation(doseUsv, 1, doseUnit.symbol, false, 6);
+      const period = ['uptime', 'day', 'total'][periodIndex];
+      document.querySelector(`#overview-dose-${doseUnit.key}-${period}`).textContent = formatted.value;
+    });
+  }
+  periods.forEach((pulses, periodIndex) => {
+    const period = ['uptime', 'day', 'total'][periodIndex];
+    document.querySelector(`#overview-dose-cnt-${period}`).textContent = formatGroupedNumber(pulses);
+  });
+}
+
+function setMetricExpanded(button, expanded) {
+  for (const [toggle, details] of [
+    [elements.rateExpand, elements.rateDetails],
+    [elements.doseExpand, elements.doseDetails],
+  ]) {
+    const label = toggle.id.startsWith('rate') ? 'rate' : 'dose';
+    toggle.setAttribute('aria-expanded', String(expanded));
+    toggle.setAttribute('aria-label', `${expanded ? 'Collapse' : 'Expand'} ${label} details`);
+    toggle.title = toggle.getAttribute('aria-label');
+    toggle.textContent = expanded ? '-' : '+';
+    details.hidden = !expanded;
+    toggle.closest('.metric').classList.toggle('is-expanded', expanded);
+  }
+}
+
 function handleStatus(payload) {
   if (![25, 29, 31, 35, 47].includes(payload.length) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
@@ -3717,6 +3770,7 @@ function handleStatus(payload) {
   elements.rateDose.classList.add(levelClass);
   const warmupPulses = Math.min(countTotal, 30);
   elements.rateWarmup.hidden = rateLevel !== 'blue';
+  elements.doseWarmupSpacer.hidden = rateLevel !== 'blue';
   elements.rateWarmup.setAttribute('aria-valuenow', String(warmupPulses));
   elements.rateWarmupFill.style.width = `${(warmupPulses / 30) * 100}%`;
   const uptime = formatUptime(uptimeSeconds);
@@ -3733,6 +3787,8 @@ function handleStatus(payload) {
   const dosePrefix = deviceSettings?.[11] ?? 1;
   const rateUsvh = cpm * 0.00666 * (unit === 2 ? 100 : 1);
   const doseUsv = doseNsv / 1000 * (unit === 2 ? 100 : 1);
+  updateOverviewMetricDetails(cpm, uptimePulses, dayPulses,
+    lifetimePulses, ratePrefix);
   // When the user is looking at an interior slice of the history, keep that
   // slice fixed as new samples arrive. Only the Y scale may change. A view at
   // the live edge (scroll = 0) continues following "now"; the old edge is
@@ -3897,6 +3953,12 @@ async function requestHelloAfterBoot(protocol) {
 }
 
 elements.overviewTab.addEventListener('click', () => selectPage('overview'));
+elements.rateExpand.addEventListener('click', () =>
+  setMetricExpanded(elements.rateExpand,
+    elements.rateExpand.getAttribute('aria-expanded') !== 'true'));
+elements.doseExpand.addEventListener('click', () =>
+  setMetricExpanded(elements.doseExpand,
+    elements.doseExpand.getAttribute('aria-expanded') !== 'true'));
 elements.debugTab.addEventListener('click', () => selectPage('debug'));
 elements.settingsTab.addEventListener('click', () => selectPage('settings'));
 document.querySelector('#settings-refresh').addEventListener('click', refreshSettingsPage);
