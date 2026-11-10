@@ -289,11 +289,12 @@ jobs:
           The HTML and Windows apps identify themselves as Version: ${RELEASE_VERSION}. This build is for testing and may change without notice.
 
           ## Changes
-          **Changes since the previous pre-release:**
-          - Fixed SPI log writing and reading, including recovery from damaged records so one bad entry does not prevent later log data from loading.
-          - Improved log loading and persistent dump downloads; saved FLASH, EEPROM, and SPI images can be downloaded again or loaded into their matching operation.
-          - Updated dump names to identify automatic/manual FLASH copies, firmware identity, and EEPROM/SPI address ranges.
-          - Kept the current log graph column white, colored historical columns by dose level, and dimmed every incomplete column, including the current one. Numeric values use rate/dose thresholds; ALERT values have no white baseline.
+          **Changes since the previous pre-release (202611091447-dev-64bcaa1):**
+          - Colored log rate values by rate level and dose values by dose level. More now resumes interrupted loads and pages hour/day/month/date ranges back by one matching period. Removed AVG from the log fill-metric choices.
+          - Added expandable rate and dose details on Overview and visible-range DOSE/MIN/AVG/MAX summaries beneath the rate chart.
+          - Organized Settings into collapsible Device, Device controls, and Display theme sections, and made Diagnostics collapsed by default.
+          - Renamed device graph headers to DIRECT, MINUTE, HOUR, DAY, and ALERT.
+          - Fixed version link layout on the release portal.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded): ${canonical_sha256}
