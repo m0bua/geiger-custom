@@ -1574,6 +1574,15 @@ function logRecordInRange(record) {
   return !logRangeActive || logRangeAll || isLatestLogView() || (record.calendar &&
     record.timestamp >= logRangeStart && record.timestamp <= logRangeEnd);
 }
+function canLoadOlderLogRange() {
+  const mode = elements.logRangeMode.value;
+  return logRangeActive && !logRangeAll && !isLatestLogView() &&
+    ['hour', 'day', 'month', 'dates'].includes(mode) &&
+    logRangeStart > 0 && logRangeEnd >= logRangeStart;
+}
+function canLoadMoreLogRecords() {
+  return logHasMore || canLoadOlderLogRange();
+}
 
 function calendarSecondsFromInputs(date, time = '00:00') {
   const [year, month, day] = date.split('-').map(Number);
@@ -2140,7 +2149,7 @@ function renderLogSummary(preserveRows = false, prependNewRows = true) {
   updateLogRangeControls();
   elements.loadMoreLogs.hidden = false;
   elements.loadMoreLogs.disabled = !serial || !logInfo || logPageLoading ||
-    !logHasMore || !logRecords.length;
+    !canLoadMoreLogRecords() || (!logRecords.length && !canLoadOlderLogRange());
   if (!logInfo) return;
   const type = logTypes.find((item) => item.id === selectedLogType);
   updateLogFillOptions(type.id);
@@ -2319,6 +2328,37 @@ async function loadMoreLogRecords() {
     logCountLimit = logRecords.length + LOG_INITIAL_TARGETS[type.id];
   } else if (logCountLimit) {
     logCountLimit += LOG_LOAD_MORE_COUNT;
+  } else if (!logHasMore && canLoadOlderLogRange()) {
+    const duration = logRangeEnd - logRangeStart + 1;
+    const previousEnd = logRangeStart - 1;
+    if (elements.logRangeMode.value === 'month') {
+      const epoch = Date.UTC(2000, 0, 1) / 1000;
+      const endDate = new Date(Date.UTC(2000, 0, 1) + previousEnd * 1000);
+      const monthStart = Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), 1) / 1000 - epoch;
+      logRangeStart = Math.max(0, monthStart);
+      logRangeEnd = previousEnd;
+    } else {
+      logRangeEnd = previousEnd;
+      logRangeStart = Math.max(0, logRangeEnd - duration + 1);
+    }
+    logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
+    logHasMore = true;
+    logSelectedDate = `${logRangeStart}:${logRangeEnd}`;
+    if (isRelativeLogView()) {
+      const start = new Date(Date.UTC(2000, 0, 1) + logRangeStart * 1000);
+      const dateInput = document.querySelector('#log-calendar-date');
+      if (dateInput) dateInput.value = elements.logRangeMode.value === 'month' ?
+        `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, '0')}` :
+        formatDeviceDate(start);
+      const hourInput = document.querySelector('#log-calendar-hour');
+      if (hourInput && elements.logRangeMode.value === 'hour') {
+        hourInput.value = String(start.getUTCHours()).padStart(2, '0');
+      }
+    } else {
+      populateRangeInputs(type);
+    }
+    renderLogSummary();
+    saveLogView();
   }
   await loadLogPage(false);
 }
@@ -2444,8 +2484,8 @@ async function loadLogPage(reset = false) {
     if (generation === logPageGeneration) {
       logPageTotal = logRecords.length;
       saveLogView();
-      elements.loadMoreLogs.disabled = !serial || !logInfo || !logHasMore ||
-        !logRecords.length;
+      elements.loadMoreLogs.disabled = !serial || !logInfo ||
+        !canLoadMoreLogRecords() || (!logRecords.length && !canLoadOlderLogRange());
     }
     if (logPageReloadPending && serial && logInfo) { logPageReloadPending = false; if (!logRecords.length) loadLogPage(false); else if (hasCurrentLogDate()) loadNewerLogRecords(); }
   }

@@ -374,7 +374,7 @@
           <li><strong>Without a connection:</strong> Overview, Logs, and Debug show clearly marked illustrative zero data. Settings use factory defaults and can be changed for preview, but preview changes are not saved and reset after reloading the page. Options unsupported by the connected firmware remain visible but disabled.</li>
         </ul>
         <h3>Logs</h3>
-        <p>The Logs page reads the same history used by the device's log graphs. Select a log type and range, then press <strong>Load</strong>. You can choose the type and range before connecting; switching tabs keeps each loaded view. Use the expand button beside the Logs heading to fill the screen; the ↙ button or Escape returns to normal view. The app requests the maximum number of records supported by the connected firmware in each serial exchange, up to ten, and adds returned records and refreshes totals after every response. While loading, <strong>Stop</strong> lets the current device request finish, processes its response, and then stops further requests. <strong>More</strong> extends Latest by another default period, adds 100 records to Count, or resumes an incomplete All or Dates load. It stays visible and is disabled while disconnected, loading, or when no more records are available. The current record may refresh while the page is open.</p>
+        <p>The Logs page reads the same history used by the device's log graphs. Select a log type and range, then press <strong>Load</strong>. You can choose the type and range before connecting; switching tabs keeps each loaded view. Use the expand button beside the Logs heading to fill the screen; the ↙ button or Escape returns to normal view. The app requests the maximum number of records supported by the connected firmware in each serial exchange, up to ten, and adds returned records and refreshes totals after every response. While loading, <strong>Stop</strong> lets the current device request finish, processes its response, and then stops further requests. <strong>More</strong> extends Latest by another default period, adds 100 records to Count, resumes an interrupted load, or moves hour/day/month/date ranges back by one matching period. It stays visible and is disabled while disconnected, loading, or when the selected range cannot be extended. The current record may refresh while the page is open.</p>
         <ul>
           <li><strong>MINUTES:</strong> one record per minute, with dose, average rate, maximum rate, and coverage.</li>
           <li><strong>HOURS:</strong> one record per hour with the same values. The newest unfinished hour is assembled from minute data.</li>
@@ -540,6 +540,13 @@
           <input class="release-history-toggle-input" id="release-history-toggle" type="checkbox">
           <div class="release-history-content">
         <ul class="release-list">
+          <li>
+            <time datetime="2026-11-10">2026-11-10</time> — Log colors and range pagination:
+            <ul>
+              <li><strong>Log values:</strong> rate values use green/yellow/red levels; dose values use white/yellow/red levels.</li>
+              <li><strong>More:</strong> continues interrupted loads and moves calendar ranges back by one hour, day, month, or matching custom date interval.</li>
+            </ul>
+          </li>
           <li>
             <time datetime="2026-11-09">2026-11-09</time> — SPI log reliability, downloads, and graph value colors:
             <ul>
