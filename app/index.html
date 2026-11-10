@@ -20,8 +20,8 @@
       <nav class="tabs" aria-label="Pages">
         <button class="tab active" id="overview-tab" type="button" aria-selected="true">Overview</button>
         <button class="tab" id="logs-tab" type="button" aria-selected="false">Logs</button>
-        <button class="tab" id="debug-tab" type="button" aria-selected="false">Debug</button>
         <button class="tab" id="settings-tab" type="button" aria-selected="false">Settings</button>
+        <button class="tab" id="debug-tab" type="button" aria-selected="false">Debug</button>
         <button class="tab" id="firmware-tab" type="button" aria-selected="false">Firmware</button>
         <button class="tab" id="manual-tab" type="button" aria-selected="false">Manual</button>
         <button class="tab" id="about-tab" type="button" aria-selected="false">About</button>
@@ -97,7 +97,7 @@
             <tr class="debug-data" data-debug-group="debug-log-rows"><th scope="row">STORE</th><td></td><td id="debug-log-store">&#8212;</td></tr>
           </tbody>
         </table>
-        <details class="diagnostics-panel" open>
+        <details class="diagnostics-panel">
           <summary>Diagnostics</summary>
           <div class="diagnostics-actions">
             <button id="copy-diagnostics" class="button button-quiet" type="button">Copy</button>
@@ -110,24 +110,25 @@
 
     <section id="settings-page" class="page settings-panel" hidden>
       <div class="panel-heading"><h2>Settings</h2><div class="panel-heading-actions"><span id="settings-status">Connect to read settings.</span><button id="settings-refresh" class="button button-quiet refresh-button" type="button">Refresh</button></div></div>
-      <section class="settings-clock" aria-label="Device and system clock">
-        <div class="settings-clock-grid">
+      <details class="settings-section device-settings" open>
+        <summary class="settings-section-summary"><span class="settings-section-title">Device</span></summary>
+        <section class="settings-clock" aria-label="Device and system clock">
+          <div class="settings-clock-grid">
           <div><span>DEVICE TIME</span><strong id="settings-device-time">—</strong></div>
           <div><span>DEVICE DATE</span><strong id="settings-device-date">—</strong></div>
           <div><span>DIFFERENCE</span><strong id="settings-clock-difference">—</strong></div>
           <div><span>SYSTEM TIME</span><strong id="settings-system-time">—</strong></div>
           <div><span>SYSTEM DATE</span><strong id="settings-system-date">—</strong></div>
           <button id="sync-clock" class="button button-primary" type="button" disabled>Synchronize</button>
-        </div>
-        <p id="settings-clock-status" role="status" aria-live="polite">Connect to compare or synchronize the device clock.</p>
-      </section>
-      <div id="settings-list" class="settings-list"></div>
-      <p class="settings-note">Use Show to control which settings appear in the device menu. Visibility requires firmware protocol support.</p>
-      <section class="device-controls" aria-labelledby="device-controls-title">
-        <div class="device-controls-heading">
-          <div><h3 id="device-controls-title">Device controls</h3><p>Control the screen, indication mode, and flashlight without using the device buttons.</p></div>
-          <span id="device-controls-status" role="status" aria-live="polite">Connect to control the device.</span>
-        </div>
+          </div>
+          <p id="settings-clock-status" role="status" aria-live="polite">Connect to compare or synchronize the device clock.</p>
+        </section>
+        <div id="settings-list" class="settings-list"></div>
+        <p class="settings-note">Use Show to control which settings appear in the device menu. Visibility requires firmware protocol support.</p>
+      </details>
+      <details class="settings-section device-controls">
+        <summary class="settings-section-summary"><span class="settings-section-title">Device controls</span><span id="device-controls-status" role="status" aria-live="polite">Connect to control the device.</span></summary>
+        <p class="settings-section-description">Control the screen, indication mode, and flashlight without using the device buttons.</p>
         <div class="device-controls-grid">
           <button id="device-wake-screen" class="button button-quiet" type="button" disabled>Wake screen</button>
           <button id="device-screen-always-on" class="button button-quiet" type="button" data-enabled="false" disabled>Screen: Auto</button>
@@ -139,12 +140,10 @@
           </div>
           <button id="device-flashlight" class="button button-quiet" type="button" data-enabled="false" disabled>Flashlight: Off</button>
         </div>
-      </section>
-      <section class="theme-config" aria-labelledby="theme-config-title">
-        <div class="theme-config-heading">
-          <div><h3 id="theme-config-title">Display theme</h3><p>Set the LCD palette and partial graph-column dimming. Changes are stored on the device.</p></div>
-          <span id="theme-status" role="status" aria-live="polite">Connect to edit the display theme.</span>
-        </div>
+      </details>
+      <details class="settings-section theme-config">
+        <summary class="settings-section-summary"><span class="settings-section-title">Display theme</span><span id="theme-status" role="status" aria-live="polite">Connect to edit the display theme.</span></summary>
+        <p class="settings-section-description">Set the LCD palette and partial graph-column dimming. Changes are stored on the device.</p>
         <div class="theme-toolbar">
           <label class="theme-preset-control" for="theme-preset">Palette
             <select id="theme-preset" disabled>
@@ -166,18 +165,17 @@
           <button id="theme-apply" class="button button-primary" type="button" disabled>Apply theme</button>
         </div>
         <div id="theme-colors" class="theme-colors"></div>
-      </section>
+      </details>
     </section>
 
     <section id="logs-page" class="page logs-panel" hidden>
-      <div class="panel-heading">
-        <h2>Logs</h2>
+      <div class="logs-tabs-row">
+        <nav id="log-tabs" class="log-tabs" aria-label="Log types"></nav>
         <div class="panel-heading-actions logs-heading-actions">
           <span id="logs-status">Connect to read logs.</span>
           <button id="toggle-logs-fullscreen" class="button button-quiet logs-fullscreen-button" type="button" aria-label="Expand logs to full screen" title="Expand logs to full screen" aria-pressed="false">⛶</button>
         </div>
       </div>
-      <nav id="log-tabs" class="log-tabs" aria-label="Log types"></nav>
       <div class="logs-tools">
         <div class="logs-left-tools">
           <label for="log-fill-metric">Fill
