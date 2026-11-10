@@ -268,6 +268,8 @@ body.logs-page-active .log-content { height: auto; min-height: 0; max-height: no
 .log-record span { position: relative; z-index: 1; text-align: right; white-space: nowrap; }
 .log-record span:first-child { color: #aab8bd; text-align: left; }
 .log-record .log-metric { color: #aab8bd; }
+.log-record .level-white { color: #f3f5f5; }
+.log-record .level-green { color: var(--green); }
 .log-record .level-yellow { color: #f0d35e; }
 .log-record .level-red { color: #ff6666; }
 .log-record .coverage-red { color: #ff6666; }

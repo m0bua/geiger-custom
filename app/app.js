@@ -2055,12 +2055,13 @@ function logCoverageClass(record, type = logTypes.find((item) => item.id === sel
 }
 function logRateClass(cpm) {
   return cpm * 666 > 90000 ? 'level-red' :
-    (cpm * 666 >= 40000 ? 'level-yellow' : '');
+    (cpm * 666 >= 40000 ? 'level-yellow' : 'level-green');
 }
 function logDoseClass(record) {
   const averageCpm = record.covered ? record.dose * 60 / record.covered :
     (record.dose ? Infinity : 0);
-  return logRateClass(averageCpm);
+  const rateClass = logRateClass(averageCpm);
+  return rateClass === 'level-green' ? 'level-white' : rateClass;
 }
 function updateLogFillOptions(typeId) {
   if (elements.logFillMetric.dataset.type === typeId) return;
@@ -3349,7 +3350,8 @@ function renderOfflinePreview() {
     values.forEach((text, index) => {
       const cell = document.createElement('span');
       if (!alert && index === values.length - 1) cell.className = 'coverage-green';
-      else if (alert ? index >= 2 : index >= 1 && index <= 3) cell.className = 'log-metric';
+      else if (alert ? index === 2 : index === 1) cell.className = `log-metric ${logDoseClass(demoRecord)}`;
+      else if (alert ? index >= 3 : index >= 2 && index <= 3) cell.className = `log-metric ${logRateClass(0)}`;
       cell.textContent = text;
       record.append(cell);
     });
@@ -3360,7 +3362,8 @@ function renderOfflinePreview() {
       ['TOTAL (1)', '0 µSv', '0 µSv/h', '0 µSv/h', `${formatCoverageDuration(demoType.period)} total`];
     totalValues.forEach((text, index) => {
       const cell = document.createElement('span');
-      if (alert ? index >= 2 : index >= 1 && index <= 3) cell.className = 'log-metric';
+      if (alert ? index === 2 : index === 1) cell.className = `log-metric ${logDoseClass(demoRecord)}`;
+      else if (alert ? index >= 3 : index >= 2 && index <= 3) cell.className = `log-metric ${logRateClass(0)}`;
       else if (!alert && index === 4) cell.className = 'coverage-green';
       cell.textContent = text;
       total.append(cell);
