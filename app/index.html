@@ -55,9 +55,9 @@
           <div id="rate-warmup" class="rate-warmup" role="progressbar" aria-label="Warm-up pulses" aria-valuemin="0" aria-valuemax="30" aria-valuenow="0" hidden><span id="rate-warmup-fill"></span></div>
           <p class="metric-foot" id="rate-foot" hidden><span id="rate-foot-main"></span><span id="rate-foot-count" hidden></span></p>
           <div id="rate-details" class="metric-details" hidden>
+            <div class="metric-detail-row"><span id="overview-rate-sv-label">Sv/h</span><strong id="overview-rate-sv">—</strong></div>
             <div class="metric-detail-row"><span>CPM</span><strong id="overview-rate-cpm">—</strong></div>
             <div class="metric-detail-row"><span>CPS</span><strong id="overview-rate-cps">—</strong></div>
-            <div class="metric-detail-row"><span id="overview-rate-sv-label">Sv/h</span><strong id="overview-rate-sv">—</strong></div>
             <div class="metric-detail-row"><span id="overview-rate-r-label">R/h</span><strong id="overview-rate-r">—</strong></div>
           </div>
         </article>
@@ -68,10 +68,10 @@
           <div id="dose-warmup-spacer" class="metric-warmup-spacer" hidden></div>
           <div id="dose-details" class="metric-details" hidden>
             <div class="metric-dose-table">
-              <span></span><span>µSv</span><span>µR</span><span>CNT</span>
-              <span>UPTIME</span><strong id="overview-dose-sv-uptime">—</strong><strong id="overview-dose-r-uptime">—</strong><strong id="overview-dose-cnt-uptime">—</strong>
-              <span>TODAY</span><strong id="overview-dose-sv-day">—</strong><strong id="overview-dose-r-day">—</strong><strong id="overview-dose-cnt-day">—</strong>
-              <span>TOTAL</span><strong id="overview-dose-sv-total">—</strong><strong id="overview-dose-r-total">—</strong><strong id="overview-dose-cnt-total">—</strong>
+              <span></span><span>µSv</span><span>CNT</span><span>µR</span>
+              <span>UPTIME</span><strong id="overview-dose-sv-uptime">—</strong><strong id="overview-dose-cnt-uptime">—</strong><strong id="overview-dose-r-uptime">—</strong>
+              <span>TODAY</span><strong id="overview-dose-sv-day">—</strong><strong id="overview-dose-cnt-day">—</strong><strong id="overview-dose-r-day">—</strong>
+              <span>TOTAL</span><strong id="overview-dose-sv-total">—</strong><strong id="overview-dose-cnt-total">—</strong><strong id="overview-dose-r-total">—</strong>
             </div>
           </div>
         </article>
@@ -432,7 +432,7 @@
           <li><strong>DOSE SOUND — OFF / YELLOW / RED / CUSTOM:</strong> plays a siren at the chosen accumulated-dose threshold.</li>
           <li><strong>DOSE CUSTOM:</strong> selects an accumulated-dose threshold of 5, 7, 10, 30, 50, 100, 500, or 1000 µSv. For the three DOSE alarm settings, YELLOW and RED are the dose that would accumulate at 0.4 or 0.9 µSv/h over the measured time in the selected period. The device menu omits the unit.</li>
           <li><strong>ALARM STOP — CLEAR / BUTTON:</strong> controls when the siren stops. CLEAR stops it when its condition clears; BUTTON keeps it sounding until a button is pressed. During an active alarm, the first button press acknowledges the alarm, silences the siren, stops alarm flashlight flashes, and lets the screen time out without navigating. It can trigger again after the conditions clear and recur.</li>
-          <li><strong>RATE ROW 2:</strong> for Sv/R, show CPM, CPS, OFF, or the opposite radiation unit. For CNT, show Sv, R, OFF, CPM, or CPS; the selected rate format is disabled to avoid duplicating the large value.</li>
+          <li><strong>RATE ROW 2:</strong> app choices are ordered Sv/h, CPM, CPS, R/h, OFF. The current main value is disabled where it would duplicate the large value.</li>
           <li><strong>DOSE ROW 2:</strong> show another unit, another dose period, TIME, CPM, or OFF. CPM uses the measured count rate, not the smoothed main-screen rate. The current unit and current period are unavailable choices.</li>
           <li><strong>LED TIME — AUTO / 1 / 3 / 5 / 10 / 25 / 50 / 80 / 100 ms:</strong> sets the pulse duration. AUTO follows SOLAR, from 5 ms in darkness to 100 ms at 30% solar and above. With the screen off, SOLAR is sampled once per minute while an LED AUTO setting is selected.</li>
           <li><strong>LED BRIGHT — AUTO / 1 / 3 / 5 / 10 / 25 / 50 / 80 / 100%:</strong> sets LED PWM brightness. AUTO follows SOLAR. LED TIME and LED BRIGHT are independent.</li>

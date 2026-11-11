@@ -1151,6 +1151,17 @@ function voltageFromPowerAdc(raw) {
   return `${Math.floor(centivolts / 100)}.${String(centivolts % 100).padStart(2, '0')}V`;
 }
 
+function hideLeadingZero() {
+  const settings = offlinePreview ? demoSettings : deviceSettings;
+  return (settings?.[8] ?? 0) === 1;
+}
+
+function formatCps(cpm) {
+  let text = (cpm / 60).toFixed(2);
+  if (hideLeadingZero()) text = text.replace(/^0\./, '.');
+  return text;
+}
+
 function formatRadiation(valueUsv, prefixSetting, symbol, perHour, digitLimit = null) {
   const prefixes = [
     { name: 'm', factor: 0.001 },
@@ -1179,7 +1190,7 @@ function formatRadiation(valueUsv, prefixSetting, symbol, perHour, digitLimit = 
   const digits = value === 0 ? 0 : Math.max(0,
     Math.min(maxDecimals, decimalsAvailable));
   let text = value.toFixed(digits).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
-  if ((deviceSettings?.[8] ?? 0) === 1) text = text.replace(/^0\./, '.');
+  if (hideLeadingZero()) text = text.replace(/^0\./, '.');
   return { value: text, unit: `${selected.name}${symbol}${perHour ? '/h' : ''}` };
 }
 
@@ -3094,15 +3105,15 @@ function settingsOptions(setting, currentSettings = deviceSettings) {
     const cntMode = unit === 1;
     const mainCountRate = ratePrefix === 1 ? 'CPS' : 'CPM';
     return [
-      // Firmware row values are CPS=3 and CPM=4 in CNT mode. Keep the
-      // complementary format selectable (CPS + CPM or CPM + CPS).
+      // Keep the unit choices ordered Sv/h, CPM, CPS, R/h, OFF while
+      // preserving the firmware's setting values for each UNIT.
+      {label: 'Sv/h', value: cntMode ? 0 : (unit === 0 ? 'duplicate-sv' : 3), disabled: unit === 0},
       {label: 'CPM', value: cntMode ? 4 : 0,
         disabled: cntMode && mainCountRate === 'CPM'},
       {label: 'CPS', value: cntMode ? 3 : 1,
         disabled: cntMode && mainCountRate === 'CPS'},
+      {label: 'R/h', value: cntMode ? 1 : (unit === 2 ? 'duplicate-r' : 3), disabled: unit === 2},
       {label: 'OFF', value: 2, disabled: false},
-      {label: 'SV', value: cntMode ? 0 : (unit === 0 ? 'duplicate-sv' : 3), disabled: unit === 0},
-      {label: 'R', value: cntMode ? 1 : (unit === 2 ? 'duplicate-r' : 3), disabled: unit === 2},
     ];
   }
   if (setting.id === 22) {
@@ -3946,11 +3957,11 @@ function rateRowText(mode, unit, cpm, rateUsvh, ratePrefix) {
       const formatted = formatRadiation(value, 1, symbol, true);
       return `${formatted.value} ${formatted.unit}`;
     }
-    if (mode === 3) return `${(cpm / 60).toFixed(2)} CPS`;
+    if (mode === 3) return `${formatCps(cpm)} CPS`;
   } else {
     if (mode === 2) return '';
     if (mode === 0) return `${formatGroupedNumber(cpm)} CPM`;
-    if (mode === 1) return `${(cpm / 60).toFixed(2)} CPS`;
+    if (mode === 1) return `${formatCps(cpm)} CPS`;
     if (mode === 3) {
       const symbol = unit === 0 ? 'R' : 'Sv';
       const value = unit === 0 ? rateUsvh * 100 : rateUsvh;
@@ -4004,7 +4015,7 @@ function updateOverviewMetricDetails(cpm, uptimePulses,
   const rateSv = formatRadiation(cpm * 0.00666, ratePrefix, 'Sv', true);
   const rateR = formatRadiation(cpm * 0.00666 * 100, ratePrefix, 'R', true);
   document.querySelector('#overview-rate-cpm').textContent = formatGroupedNumber(cpm);
-  document.querySelector('#overview-rate-cps').textContent = (cpm / 60).toFixed(2);
+  document.querySelector('#overview-rate-cps').textContent = formatCps(cpm);
   document.querySelector('#overview-rate-sv-label').textContent = 'Sv/h';
   document.querySelector('#overview-rate-sv').textContent = `${rateSv.value} ${rateSv.unit}`;
   document.querySelector('#overview-rate-r-label').textContent = 'R/h';
