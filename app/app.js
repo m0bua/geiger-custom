@@ -1091,6 +1091,7 @@ let rateChartDragStartX = 0;
 let rateChartDragStartScroll = 0;
 let rateChartActionHintTimer = 0;
 let previousRateCount = null;
+let deviceIndicationMode = null;
 const demoSettings = Array.from({ length: 31 }, () => 0);
 const demoHiddenSettings = new Set([
   8, 10, 11, 13, 14, 15, 16, 17, 19, 20, 21, 24, 25, 26, 27,
@@ -1169,9 +1170,12 @@ function formatRadiation(valueUsv, prefixSetting, symbol, perHour, digitLimit = 
   const selected = prefixes[Math.min(prefix, prefixes.length - 1)];
   const value = valueUsv * selected.factor;
   const integerDigits = Math.max(0, Math.floor(Math.log10(Math.abs(value))) + 1);
-  const maxDecimals = perHour ? (symbol === 'R' ? 1 : 3) : 5;
-  const decimalsAvailable = digitLimit === null ? 5 - integerDigits :
-    digitLimit - Math.max(1, integerDigits);
+  const searchRate = perHour && deviceIndicationMode === 2;
+  const maxDecimals = searchRate ? 6 :
+    (perHour ? (symbol === 'R' ? 1 : 3) : 5);
+  const precisionDigits = searchRate ? 6 : 5;
+  const decimalsAvailable = digitLimit === null ?
+    precisionDigits - integerDigits : digitLimit - Math.max(1, integerDigits);
   const digits = value === 0 ? 0 : Math.max(0,
     Math.min(maxDecimals, decimalsAvailable));
   let text = value.toFixed(digits).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
@@ -3793,6 +3797,7 @@ async function runDeviceControlAction(action, value, button, successText) {
 }
 
 function setDeviceModeActive(mode) {
+  deviceIndicationMode = mode;
   elements.deviceModeButtons.forEach((control) => {
     control.dataset.active = mode !== null &&
       control.dataset.mode === String(mode) ? 'true' : 'false';

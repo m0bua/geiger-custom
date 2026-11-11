@@ -499,7 +499,7 @@
         <section class="manual-chapter">
         <h3>1 · Level screen</h3>
         <p>In NORMAL, the large value is the current rate in the selected UNIT and RATE PREFIX, based on a rolling 60-second measurement. The top row shows device time when set, otherwise hours and minutes since startup, plus solar input and battery status. RATE ROW 2 selects the smaller second row. During startup, the rate is blue and the progress bar fills to 30 CNT; the estimate starts at 23 CPM and settles toward the measured rate. With HV off, Rate shows red DISABLED; counting and rate/dose updates stop, and turning HV back on restarts the rate warm-up from zero. Rate colors and alarms follow their configured thresholds.</p>
-        <p><strong>SEARCH</strong> keeps the display on and flashes the LED on detector pulses. The rate display refreshes every 100 ms, rises when a pulse arrives, then eases down between pulses; it shows up to five decimal places and uses a brighter LED. This responsive display estimate is separate from the measured CPM written to logs and used for alarms. NORMAL refreshes the display every 500 ms. With the screen off or in INVISIBLE, the rate display updates on pulses. <strong>INVISIBLE</strong> suppresses detector indications and alarms and turns the display off after one second; measurements continue. Short Left exits Invisible even while the display is asleep.</p>
+        <p><strong>SEARCH</strong> keeps the display on and flashes the LED on detector pulses. The rate display refreshes every 100 ms, rises when a pulse arrives, then eases down between pulses; it shows up to six significant digits and uses a brighter LED. This responsive display estimate is separate from the measured CPM written to logs and used for alarms. NORMAL refreshes the display every 500 ms. With the screen off or in INVISIBLE, the rate display updates on pulses. <strong>INVISIBLE</strong> suppresses detector indications and alarms and turns the display off after one second; measurements continue. Short Left exits Invisible even while the display is asleep.</p>
         <div class="manual-screen-grid">
           <figure><figcaption>1.0.1 · Rate warm-up with search and flashlight</figcaption><img src="../docs/renders/screens/1.0.1-rate-blue-cnt.svg" alt="Blue 0.153 µSv per hour rate, 15 CNT progress, Search S, and flashlight L" loading="lazy"></figure>
           <figure><figcaption>1.0.2 · Green rate display with CPM</figcaption><img src="../docs/renders/screens/1.0.2-rate-green-cpm.svg" alt="Rate screen with green counter and CPM row" loading="lazy"></figure>
@@ -566,6 +566,12 @@
           <div class="release-history-content">
         <ul class="release-list">
           <li>
+            <time datetime="2026-11-11">2026-11-11</time> — Search rate precision:
+            <ul>
+              <li><strong>SEARCH:</strong> expanded rate display precision to six significant digits on the device and in the app.</li>
+            </ul>
+          </li>
+          <li>
             <time datetime="2026-11-10">2026-11-10</time> — Log navigation, colors, and Overview summaries:
             <ul>
               <li><strong>Logs:</strong> color rate values by rate level and dose values by dose level. More resumes interrupted loads and pages calendar ranges back by the same interval.</li>
@@ -621,7 +627,7 @@
           <li>
             <time datetime="2026-11-02">2026-11-02</time> — Release: search, graphs, logging, firmware safety, and app updates:
             <ul>
-              <li><strong>Search and display:</strong> SEARCH refreshes the rate every 100 ms, reacts immediately to pulses, eases down between pulses, shows up to five decimal places for Sv/R, and uses a brighter LED. NORMAL refreshes every 500 ms; with the display off, rate updates follow pulses. Fixed rate/dose secondary-row rendering and kept warm-up CNT aligned with the dose row.</li>
+              <li><strong>Search and display:</strong> SEARCH refreshes the rate every 100 ms, reacts immediately to pulses, eases down between pulses, shows up to six significant digits for Sv/R, and uses a brighter LED. NORMAL refreshes every 500 ms; with the display off, rate updates follow pulses. Fixed rate/dose secondary-row rendering and kept warm-up CNT aligned with the dose row.</li>
               <li><strong>Graphs and logs:</strong> added dedicated live histories for 3, 5, and 10 minutes and fixed cursor cleanup at graph edges. Minute coverage now follows elapsed time, avoiding false partial records when sampling is delayed. Persistent logs exclude the 30-pulse blue warm-up while RAM graph history, the app's live minute row, and live dose continue to include it. Automatic hourly dose resynchronization is disabled, with DAY/TOTAL correction available after loading the DAY graph.</li>
               <li><strong>Log viewer:</strong> expands to full screen; displays coverage as compact elapsed time and alert duration without unit suffixes, omitting zero leading fields. Requests up to ten records per device exchange and updates rows and totals as each response arrives. Stop finishes the current request before halting. More extends Latest by one period, Count by 100 records, or resumes All/Dates; it remains visible but disables when unavailable. Live refresh no longer rebuilds rows under the pointer.</li>
               <li><strong>Firmware and backups:</strong> The first firmware write saves a permanent full FLASH backup in browser storage. FLASH, EEPROM, and SPI dumps appear in Downloads and can be loaded into their matching write form. Restore original applies to the separately saved FLASH copy; a pending SPI recovery can be restored from Downloads. Actions are grouped in the persistent activity log; older actions collapse when a new one starts.</li>
