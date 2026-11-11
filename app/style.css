@@ -241,14 +241,17 @@ button { font: inherit; }
 .settings-clock { margin: 14px 0 16px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: rgba(8,14,17,.42); }
 .settings-clock-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: end; }
 .settings-clock-grid > div { display: grid; gap: 5px; min-width: 0; }
+.settings-clock-grid .clock-difference-line { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
 .settings-clock-grid span { color: #819096; font: 500 9px "DM Mono", Consolas, monospace; letter-spacing: .08em; }
 .settings-clock-grid strong { overflow: hidden; color: #dce6e8; font: 500 12px "DM Mono", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 #settings-clock-difference[data-state="positive"] { color: var(--green); }
 #settings-clock-difference[data-state="negative"] { color: #ff7474; }
+#settings-clock-difference[data-state="warming"] { color: #899397; }
 .settings-clock-grid .button { justify-self: start; }
 .settings-clock > p { margin: 10px 0 0; color: var(--muted); font-size: 10px; }
 .settings-clock > p[data-level="success"] { color: var(--green); }
 .settings-clock > p[data-level="error"] { color: #ff7474; }
+.clock-stability-hint { color: #899397; font: 10px "DM Mono", Consolas, monospace; white-space: nowrap; }
 .logs-panel { padding: 18px; border: 1px solid var(--line); border-radius: 11px; background: rgba(17,26,31,.8); }
 body.logs-page-active { overflow: hidden; }
 body.logs-page-active .shell { display: flex; height: 100dvh; min-height: 0; flex-direction: column; }

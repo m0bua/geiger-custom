@@ -192,7 +192,8 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         write_u16(&response[4], PROTOCOL_V1_MAX_PAYLOAD);
         write_u32(&response[6], (1u << 0u) | (1u << 1u) |
             (1u << 2u) | (1u << 3u) | (1u << 4u) | (1u << 5u) |
-            (1u << 6u) | (1u << 7u) | (1u << 8u) | (1u << 9u));
+            (1u << 6u) | (1u << 7u) | (1u << 8u) | (1u << 9u) |
+            (1u << 10u));
         response_length = 10u;
     } else if (opcode == PROTOCOL_V1_OP_GET_STATUS && payload_length == 0u) {
         /* status, uptime, today's CNT, CPM, dose in nSv, ADC raw, flags */
@@ -263,10 +264,20 @@ static void handle_frame(uint8_t *frame, uint8_t length)
             response[0] = PROTOCOL_STATUS_INVALID_VALUE;
         }
     } else if (opcode == PROTOCOL_V1_OP_SET_RTC) {
-        if (payload_length != 4u ||
-            !board_rtc_set_time(read_u32(&frame[8]))) {
+        if (payload_length == 6u) {
+        uint32_t actual_seconds;
+        uint16_t actual_milliseconds;
+        if (!board_rtc_set_time_precise(read_u32(&frame[8]),
+                read_u16(&frame[12]), &actual_seconds,
+                &actual_milliseconds)) {
             response[0] = PROTOCOL_STATUS_INVALID_VALUE;
+            response_length = 1u;
+        } else {
+            write_u32(&response[1], actual_seconds);
+            response[5] = (uint8_t)actual_milliseconds;
+            response_length = 6u;
         }
+        } else response[0] = PROTOCOL_STATUS_INVALID_VALUE;
     } else if (opcode == PROTOCOL_V1_OP_DEVICE_ACTION &&
                payload_length == 2u) {
         deferred_action_id = frame[8];
@@ -292,9 +303,10 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         }
         uint32_t uptime_seconds = 0u;
         uint32_t calendar_seconds = 0u;
+        uint16_t calendar_milliseconds = 0u;
         bool calendar_valid = false;
-        (void)board_rtc_log_time(&uptime_seconds, &calendar_seconds,
-            &calendar_valid);
+        (void)board_rtc_log_time_precise(&uptime_seconds, &calendar_seconds,
+            &calendar_milliseconds, &calendar_valid);
         response[10] = calendar_valid ? 1u : 0u;
         write_u32(&response[11], calendar_valid ? calendar_seconds : 0u);
         const uint32_t spi_bytes = spi_nor_size_bytes();
@@ -329,11 +341,12 @@ static void handle_frame(uint8_t *frame, uint8_t length)
             response[30] = 5u; /* WRITE / log writer */
             response[31] = log_writer_fault_reason();
         }
+        response[35] = calendar_valid ? (uint8_t)calendar_milliseconds : 0u;
         if (probe_spi &&
             board_display_log_memory() != BOARD_LOG_MEMORY_SPI) {
             spi_nor_deinit();
         }
-        response_length = 35u;
+        response_length = 36u;
     } else if (opcode == PROTOCOL_V1_OP_GET_LOG_PAGE && payload_length == 18u) {
         const uint8_t *request = &frame[8];
         uint8_t type = request[0], requested = request[1], count = 0u;

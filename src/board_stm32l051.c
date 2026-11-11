@@ -74,6 +74,8 @@ static uint32_t lcd_search_mode_started;
 #define RTC_CR         REG32(RTC_BASE + 0x08u)
 #define RTC_ISR        REG32(RTC_BASE + 0x0Cu)
 #define RTC_PRER       REG32(RTC_BASE + 0x10u)
+#define RTC_SSR        REG32(RTC_BASE + 0x28u)
+#define RTC_SHIFTR     REG32(RTC_BASE + 0x2Cu)
 #define RTC_WPR        REG32(RTC_BASE + 0x24u)
 #define RTC_BKP0R      REG32(RTC_BASE + 0x50u)
 #define RTC_BKP1R      REG32(RTC_BASE + 0x54u)
@@ -539,6 +541,9 @@ typedef struct {
 } rtc_calendar_t;
 
 static bool rtc_read_calendar(rtc_calendar_t *calendar);
+static bool rtc_read_calendar_precise(rtc_calendar_t *calendar,
+                                      uint32_t *subsecond,
+                                      uint32_t *prediv);
 
 #define RTC_CONFIG_MAGIC 0x47523255u /* v2: correct RTCEN/RTCRST setup */
 #define RTC_TIME_VALID_MAGIC 0x54494D45u
@@ -622,6 +627,31 @@ bool board_rtc_log_time(uint32_t *uptime_seconds, uint32_t *calendar_seconds,
     return true;
 }
 
+bool board_rtc_log_time_precise(uint32_t *uptime_seconds,
+                                uint32_t *calendar_seconds,
+                                uint16_t *calendar_milliseconds,
+                                bool *calendar_valid)
+{
+    rtc_calendar_t calendar;
+    uint32_t subsecond, prer;
+    bool valid;
+    if (uptime_seconds == NULL || calendar_seconds == NULL ||
+        calendar_milliseconds == NULL || calendar_valid == NULL) return false;
+    valid = rtc_time_valid && rtc_read_calendar_precise(&calendar, &subsecond, &prer);
+    *uptime_seconds = board_uptime_seconds;
+    *calendar_valid = valid;
+    *calendar_seconds = valid ? rtc_calendar_seconds_since_2000(&calendar) : 0u;
+    *calendar_milliseconds = 0u;
+    if (valid) {
+        uint32_t prediv = prer & 0x7FFFu;
+        uint32_t ticks = subsecond <= prediv ? prediv - subsecond :
+            (2u * prediv + 1u) - subsecond;
+        if (subsecond > prediv && *calendar_seconds != 0u) --*calendar_seconds;
+        *calendar_milliseconds = (uint16_t)ticks;
+    }
+    return true;
+}
+
 uint8_t board_rtc_debug_status(void)
 {
     if (rtc_init_error != 0u) return rtc_init_error;
@@ -682,26 +712,30 @@ static void rtc_seed_from_build(rtc_calendar_t *calendar)
 
 static bool rtc_read_calendar(rtc_calendar_t *calendar)
 {
-    uint32_t time;
-    uint32_t date;
+    uint32_t subsecond, prediv;
+    return rtc_read_calendar_precise(calendar, &subsecond, &prediv);
+}
 
+static bool rtc_read_calendar_precise(rtc_calendar_t *calendar,
+                                      uint32_t *subsecond,
+                                      uint32_t *prediv)
+{
+    uint32_t time, date;
     if (!rtc_ready) return false;
-    /* TR locks the calendar shadow registers; DR must be the final read to
-     * unlock them. A trailing TR would leave the date shadow locked. */
+    /* Reading SSR first freezes the matching TR/DR shadow snapshot. */
+    *subsecond = RTC_SSR & 0xFFFFu;
     time = RTC_TR;
     date = RTC_DR;
+    *prediv = (RTC_PRER & 0x7FFFu);
     calendar->hour = rtc_from_bcd((time >> 16u) & 0x3Fu);
     calendar->minute = rtc_from_bcd((time >> 8u) & 0x7Fu);
     calendar->second = rtc_from_bcd(time & 0x7Fu);
-    calendar->year = (uint16_t)(2000u +
-        rtc_from_bcd((date >> 16u) & 0xFFu));
+    calendar->year = (uint16_t)(2000u + rtc_from_bcd((date >> 16u) & 0xFFu));
     calendar->month = rtc_from_bcd((date >> 8u) & 0x1Fu);
     calendar->day = rtc_from_bcd(date & 0x3Fu);
-    return calendar->month >= 1u && calendar->month <= 12u &&
-        calendar->day >= 1u &&
-        calendar->day <= rtc_days_in_month(calendar->year, calendar->month) &&
-        calendar->hour < 24u && calendar->minute < 60u &&
-        calendar->second < 60u;
+    return *prediv != 0u && calendar->month >= 1u && calendar->month <= 12u &&
+        calendar->day >= 1u && calendar->day <= rtc_days_in_month(calendar->year, calendar->month) &&
+        calendar->hour < 24u && calendar->minute < 60u && calendar->second < 60u;
 }
 
 static bool rtc_write_calendar(const rtc_calendar_t *calendar,
@@ -758,6 +792,49 @@ bool board_rtc_set_time(uint32_t seconds_since_2000)
     }
     calendar.second = (uint8_t)(seconds_since_2000 % 60u);
     return rtc_write_calendar(&calendar, true);
+}
+
+bool board_rtc_set_time_precise(uint32_t seconds_since_2000,
+                                uint16_t milliseconds,
+                                uint32_t *actual_seconds,
+                                uint16_t *actual_milliseconds)
+{
+    uint32_t uptime, current_seconds, subsecond, prediv, ticks, target;
+    bool valid;
+    if (milliseconds >= 1000u || actual_seconds == NULL ||
+        actual_milliseconds == NULL || !board_rtc_set_time(seconds_since_2000) ||
+        !rtc_read_calendar_precise(&(rtc_calendar_t){0}, &subsecond, &prediv)) return false;
+    ticks = prediv + 1u;
+    target = prediv == 255u ?
+        ((uint32_t)milliseconds * 256u + 500u) / 1000u :
+        ((uint32_t)milliseconds * 289u + 500u) / 1000u;
+    if (target >= ticks) target = ticks - 1u;
+    {
+        uint32_t current_ticks = subsecond <= prediv ? prediv - subsecond :
+            (2u * prediv + 1u) - subsecond;
+        int32_t signed_delta = (int32_t)target - (int32_t)current_ticks;
+        if (signed_delta != 0) {
+            uint32_t shift = (signed_delta > 0 ? (1u << 31u) |
+                (ticks - (uint32_t)signed_delta) : (uint32_t)(-signed_delta));
+            uint32_t timeout = 20000000u;
+            RTC_WPR = 0xCAu;
+            RTC_WPR = 0x53u;
+            while ((RTC_ISR & (1u << 3u)) != 0u && --timeout != 0u) { }
+            if (timeout == 0u) { RTC_WPR = 0xFFu; return false; }
+            RTC_SHIFTR = shift;
+            if (!rtc_wait_flag(&RTC_ISR, 1u << 3u, true) ||
+                !rtc_wait_flag(&RTC_ISR, 1u << 3u, false) ||
+                !rtc_wait_flag(&RTC_ISR, 1u << 5u, true)) {
+                RTC_WPR = 0xFFu;
+                return false;
+            }
+            RTC_WPR = 0xFFu;
+        }
+    }
+    if (!board_rtc_log_time_precise(&uptime, &current_seconds,
+            actual_milliseconds, &valid) || !valid) return false;
+    *actual_seconds = current_seconds;
+    return true;
 }
 
 static void board_rtc_init(void)

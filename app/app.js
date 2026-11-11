@@ -23,6 +23,7 @@ const CAP_GET_SETTINGS = 1 << 1;
 const CAP_SET_SETTING = 1 << 2;
 const CAP_GET_SPI_DUMP = 1 << 5;
 const CAP_SET_RTC = 1 << 6;
+const CAP_PRECISE_RTC = 1 << 10;
 const CAP_DEVICE_ACTION = 1 << 7;
 const CAP_THEME_CONFIG = 1 << 9;
 const THEME_COLORS = [
@@ -287,6 +288,7 @@ const elements = {
   settingsSystemTime: document.querySelector('#settings-system-time'),
   settingsClockDifference: document.querySelector('#settings-clock-difference'),
   settingsClockStatus: document.querySelector('#settings-clock-status'),
+  settingsClockHint: document.querySelector('#settings-clock-hint'),
   syncClock: document.querySelector('#sync-clock'),
   overviewUptime: document.querySelector('#overview-uptime'),
   solarPercent: document.querySelector('#solar-percent'),
@@ -908,7 +910,7 @@ class SerialProtocol {
     this.frameBytes.push(byte);
   }
 
-  async request(opcode, payload = new Uint8Array(), timeoutMs = null) {
+  async request(opcode, payload = new Uint8Array(), timeoutMs = null, withTiming = false) {
     if (!this.writer || this.closing) throw new Error('Serial port is not open.');
     const requestTimeout = timeoutMs ??
       (this.port instanceof Cp210xUsbPort ? 3500 : 1800);
@@ -923,7 +925,7 @@ class SerialProtocol {
         logDiagnostic(`RX timeout ${commandName} id=${id} after ${(performance.now() - startedAt).toFixed(1)} ms.`);
         reject(new Error('Device did not respond. Check the USB connection and try again.'));
       }, requestTimeout);
-      this.pending.set(id, { opcode, resolve, reject, timeout, startedAt });
+      this.pending.set(id, { opcode, resolve, reject, timeout, startedAt, withTiming });
     });
     try {
       logDiagnostic(`TX ${commandName} id=${id} ${formatProtocolPayload(payload)}.`);
@@ -943,6 +945,10 @@ class SerialProtocol {
     return promise;
   }
 
+  requestTimed(opcode, payload = new Uint8Array(), timeoutMs = null) {
+    return this.request(opcode, payload, timeoutMs, true);
+  }
+
   dispatch(frame) {
     const pending = this.pending.get(frame.requestId);
     const commandName = PROTOCOL_OPCODE_NAMES.get(frame.opcode) || `OP_${frame.opcode}`;
@@ -953,7 +959,9 @@ class SerialProtocol {
     clearTimeout(pending.timeout);
     this.pending.delete(frame.requestId);
     logDiagnostic(`RX ${commandName} id=${frame.requestId} ${(performance.now() - pending.startedAt).toFixed(1)} ms ${formatProtocolPayload(frame.payload)}.`);
-    pending.resolve(frame.payload);
+    const receivedAt = performance.now();
+    pending.resolve(pending.withTiming ?
+      {payload: frame.payload, startedAt: pending.startedAt, receivedAt} : frame.payload);
   }
 
   async disconnect() {
@@ -1067,6 +1075,7 @@ let logRefreshRetryAt = 0;
 const diagnosticsLog = [];
 let demoLogRenderer = null;
 let clockSyncBusy = false;
+let clockConnectedAt = null;
 const rateHistory = [];
 const rateHistoryLevels = [];
 const rateHistoryPulses = [];
@@ -1514,8 +1523,8 @@ function renderDebugLogInfo() {
   elements.debugSpi.classList.toggle('state-error', spiError);
 }
 
-function applyLogInfo(payload) {
-  if ((payload.length !== 30 && payload.length !== 35) || payload[0] !== 0 || payload[26] !== 2) {
+function applyLogInfo(payload, sampledAt = performance.now()) {
+  if (![30, 35, 36].includes(payload.length) || payload[0] !== 0 || payload[26] !== 2) {
     throw new ProtocolError('Update the device firmware to use the new logs.');
   }
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
@@ -1524,7 +1533,13 @@ function applyLogInfo(payload) {
     minutes: view.getUint16(2, true), hours: view.getUint16(4, true),
     days: view.getUint16(6, true), alerts: view.getUint16(8, true), seconds: payload[29],
     calendarValid: !!payload[10], calendarSeconds: view.getUint32(11, true),
-    calendarAnchorSeconds: view.getUint32(11, true), calendarAnchorUptime: view.getUint32(22, true),
+    calendarAnchorSeconds: view.getUint32(11, true),
+    calendarMilliseconds: payload.length >= 36 ? payload[35] * 1000 /
+      (payload[21] === 1 ? 256 : 289) : 0,
+    calendarAnchorMilliseconds: payload.length >= 36 ? payload[35] * 1000 /
+      (payload[21] === 1 ? 256 : 289) : 0,
+    calendarAnchorPerformance: sampledAt,
+    calendarAnchorUptime: view.getUint32(22, true),
     spiSizeMb: payload[15], spiReady: !!payload[16],
     jedec: Array.from(payload.subarray(17, 20), (byte) => byte.toString(16).padStart(2, '0')).join(' ').toUpperCase(),
     rtcStatus: ({1: 'OSC ERR', 2: 'INIT ERR', 3: 'SYNC ERR', 4: 'DBP ERR', 5: 'SET', 6: 'NOT SET', 7: 'NOT READY'}[payload[20]] || 'UNKNOWN'),
@@ -1559,12 +1574,13 @@ async function refreshLogCounts() {
   logCountsRefreshBusy = true;
   const activeSerial = serial;
   try {
+    const requestStartedAt = performance.now();
     const payload = await activeSerial.request(OP_GET_LOG_INFO, undefined, 10000);
     if (serial === activeSerial) {
       if (logInfoPollingFailed) logDiagnostic('GET_LOG_INFO polling resumed.');
       logInfoPollingFailed = false;
       const before = logInfo;
-      applyLogInfo(payload);
+      applyLogInfo(payload, (requestStartedAt + performance.now()) / 2);
       if (before && (before.spiFaultOperation !== logInfo.spiFaultOperation ||
           before.spiFaultStage !== logInfo.spiFaultStage || before.spiFaultAddress !== logInfo.spiFaultAddress) &&
           logInfo.spiFaultOperation) {
@@ -2714,8 +2730,9 @@ async function loadLogInfo() {
   const requestStarted = performance.now();
   try {
     logDiagnostic('GET_LOG_INFO request: read selected storage, physical counts, SPI identification, RTC and writer fault.');
+    const requestStartedAt = performance.now();
     const payload = await serial.request(OP_GET_LOG_INFO, undefined, 15000);
-    applyLogInfo(payload);
+    applyLogInfo(payload, (requestStartedAt + performance.now()) / 2);
     if (!logTypes.some((type) => type.id === selectedLogType)) selectedLogType = 'minutes';
     logDiagnostic(`GET_LOG_INFO response ${(performance.now() - requestStarted).toFixed(1)} ms, ${payload.length} bytes: memory=${logMemoryName(logInfo.memory)}, readSource=${logMemoryName(logInfo.source)}, counts MIN=${logInfo.minutes} HOUR=${logInfo.hours} DAY=${logInfo.days} ALERT=${logInfo.alerts}, SPI-ready=${logInfo.spiReady}, size=${logInfo.spiSizeMb}MB, JEDEC=${logInfo.jedec || '—'}, writerFault=${logInfo.error}, spiFault=${spiFaultDescription(logInfo)}, RTC=${logInfo.rtcStatus}`);
     renderLogTabs(); updateSpiDumpAvailability();
@@ -2737,28 +2754,77 @@ async function synchronizeDeviceClock() {
   }
 
   clockSyncBusy = true;
+  const activeSerial = serial;
+  const resumePolling = !!pollTimer;
+  clearInterval(pollTimer);
+  pollTimer = 0;
   elements.syncClock.textContent = 'Synchronizing…';
   elements.settingsClockStatus.dataset.level = '';
   elements.settingsClockStatus.textContent = 'Writing system time to the device…';
   updateRtcControls();
   try {
-    const secondsSince2000 = localCalendarSeconds(systemNow);
-    const request = new Uint8Array(4);
-    new DataView(request.buffer).setUint32(0, secondsSince2000, true);
-    const syncStartedAt = Date.now();
-    const response = await serial.request(OP_SET_RTC, request, 20000);
-    if (response.length !== 1 || response[0] !== 0) {
-      throw new ProtocolError('The device rejected the clock update.');
+    const idleDeadline = performance.now() + 5000;
+    while ((activeSerial.pending.size || activeSerial.activeWrites.size) &&
+        performance.now() < idleDeadline) await delay(10);
+    if (activeSerial.pending.size || activeSerial.activeWrites.size) {
+      throw new Error('Wait for the current device request to finish, then synchronize again.');
     }
-    while (logInfoLoading) await delay(20);
-    await loadLogInfo();
-    if (logInfo) {
-      logInfo.calendarValid = true;
-      logInfo.calendarSeconds = secondsSince2000 +
-        Math.floor((Date.now() - syncStartedAt) / 1000);
+    const hasPreciseRtc = (protocolCapabilities & CAP_PRECISE_RTC) !== 0;
+    if (hasPreciseRtc) {
+      const probe = await activeSerial.requestTimed(OP_GET_STATUS,
+        new Uint8Array(), 5000);
+      if (probe.payload.length < 25 || probe.payload[0] !== 0) {
+        throw new ProtocolError('The device returned an invalid time calibration response.');
+      }
+      const targetMs = localCalendarMilliseconds(new Date()) +
+        (probe.receivedAt - probe.startedAt) / 2;
+      let targetSeconds = Math.floor(targetMs / 1000);
+      let targetMilliseconds = Math.round(targetMs - targetSeconds * 1000);
+      if (targetMilliseconds >= 1000) {
+        ++targetSeconds;
+        targetMilliseconds = 0;
+      }
+      const request = new Uint8Array(6);
+      const view = new DataView(request.buffer);
+      view.setUint32(0, targetSeconds, true);
+      view.setUint16(4, targetMilliseconds, true);
+      const response = await activeSerial.requestTimed(OP_SET_RTC,
+        request, 10000);
+      const payload = response.payload;
+      if (payload.length !== 6 || payload[0] !== 0) {
+        throw new ProtocolError('The device rejected the precise clock update.');
+      }
+      const receivedView = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+      const deviceMs = receivedView.getUint32(1, true) * 1000 +
+        payload[5] * 1000 / (logInfo?.clockSource === 'LSE' ? 256 : 289) +
+        (response.receivedAt - response.startedAt) / 2;
+      if (logInfo) {
+        logInfo.calendarValid = true;
+        logInfo.calendarSeconds = Math.floor(deviceMs / 1000);
+        logInfo.calendarAnchorSeconds = Math.floor(deviceMs / 1000);
+        logInfo.calendarMilliseconds = deviceMs % 1000;
+        logInfo.calendarAnchorMilliseconds = deviceMs % 1000;
+        logInfo.calendarAnchorPerformance = response.receivedAt;
+      }
       updateDeviceDateTime();
     } else {
-      renderSettingsClock();
+      const request = new Uint8Array(4);
+      const sendTime = new Date();
+      const secondsSince2000 = localCalendarSeconds(sendTime);
+      new DataView(request.buffer).setUint32(0, secondsSince2000, true);
+      const syncStartedAt = Date.now();
+      const response = await activeSerial.request(OP_SET_RTC, request, 20000);
+      if (response.length !== 1 || response[0] !== 0) {
+        throw new ProtocolError('The device rejected the clock update.');
+      }
+      while (logInfoLoading) await delay(20);
+      await loadLogInfo();
+      if (logInfo) {
+        logInfo.calendarValid = true;
+        logInfo.calendarSeconds = secondsSince2000 +
+          Math.floor((Date.now() - syncStartedAt) / 1000);
+        updateDeviceDateTime();
+      } else renderSettingsClock();
     }
     elements.settingsClockStatus.dataset.level = 'success';
     elements.settingsClockStatus.textContent = 'Device clock synchronized to system time.';
@@ -2767,6 +2833,14 @@ async function synchronizeDeviceClock() {
     elements.settingsClockStatus.textContent = error.message;
   } finally {
     clockSyncBusy = false;
+    if (resumePolling && serial === activeSerial &&
+        elements.connection.dataset.state === 'connected') {
+      pollTimer = setInterval(() => {
+        refreshStatus();
+        refreshLatestLogRecord();
+        refreshLogCounts();
+      }, 1000);
+    }
     elements.syncClock.textContent = 'Synchronize';
     updateRtcControls();
   }
@@ -2775,6 +2849,7 @@ async function synchronizeDeviceClock() {
 function setConnection(state, label) {
   const canDisconnect = state === 'connected' || state === 'disconnect-pending';
   elements.connection.dataset.state = state;
+  if (state !== 'connected') clockConnectedAt = null;
   elements.connectionLabel.textContent = label;
   elements.connect.disabled = state === 'connecting';
   elements.connect.textContent = canDisconnect ? 'Disconnect' :
@@ -2824,6 +2899,17 @@ function localCalendarSeconds(date) {
     946684800;
 }
 
+function localCalendarMilliseconds(date) {
+  return localCalendarSeconds(date) * 1000 + date.getMilliseconds();
+}
+
+function estimatedDeviceCalendarMilliseconds(now = performance.now()) {
+  if (!logInfo?.calendarValid) return null;
+  const elapsed = Math.max(0, now - (logInfo.calendarAnchorPerformance ?? now));
+  return logInfo.calendarAnchorSeconds * 1000 +
+    (logInfo.calendarAnchorMilliseconds ?? 0) + elapsed;
+}
+
 function formatLocalDate(date) {
   return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'),
     String(date.getDate()).padStart(2, '0')].join('-');
@@ -2864,26 +2950,34 @@ function formatClockDifference(milliseconds) {
 
 function renderSettingsClock() {
   const systemNow = new Date();
+  const isConnected = clockConnectedAt !== null &&
+    elements.connection.dataset.state === 'connected';
+  const withinInitialWindow = isConnected &&
+    performance.now() - clockConnectedAt < 30000;
   elements.settingsSystemDate.textContent = formatLocalDate(systemNow);
   elements.settingsSystemTime.textContent = formatLocalTime(systemNow);
   if (!logInfo?.calendarValid) {
     elements.settingsDeviceDate.textContent = 'NOT SET';
     elements.settingsDeviceTime.textContent = '—';
     elements.settingsClockDifference.textContent = '—';
-    elements.settingsClockDifference.dataset.state = 'neutral';
+    elements.settingsClockHint.hidden = !withinInitialWindow;
+    elements.settingsClockDifference.dataset.state = withinInitialWindow ? 'warming' : 'neutral';
     return;
   }
 
-  const deviceDate = new Date(Date.UTC(2000, 0, 1) + logInfo.calendarSeconds * 1000);
+  const deviceNowMs = estimatedDeviceCalendarMilliseconds();
+  const deviceDate = new Date(Date.UTC(2000, 0, 1) + deviceNowMs);
   elements.settingsDeviceDate.textContent = formatDeviceDate(deviceDate);
   elements.settingsDeviceTime.textContent = formatDeviceTime(deviceDate);
-  const differenceMs = logInfo.calendarSeconds * 1000 -
-    localCalendarSeconds(systemNow) * 1000 - systemNow.getMilliseconds();
+  const differenceMs = deviceNowMs - localCalendarMilliseconds(systemNow);
+  const warming = isConnected && withinInitialWindow &&
+    Math.abs(differenceMs) > 10;
+  elements.settingsClockHint.hidden = !warming;
   const sign = differenceMs > 0 ? '+' : (differenceMs < 0 ? '−' : '');
   elements.settingsClockDifference.textContent =
     `${sign}${formatClockDifference(differenceMs)}`;
-  elements.settingsClockDifference.dataset.state = differenceMs > 0 ? 'positive' :
-    (differenceMs < 0 ? 'negative' : 'neutral');
+  elements.settingsClockDifference.dataset.state = warming ? 'warming' :
+    (differenceMs > 0 ? 'positive' : (differenceMs < 0 ? 'negative' : 'neutral'));
 }
 
 function updateRtcControls() {
@@ -2909,7 +3003,7 @@ function updateDeviceDateTime(uptimeText = null) {
     elements.debugTime.textContent = '--:--:--';
     elements.logsDeviceTime.textContent = '—';
   } else {
-    const date = new Date(Date.UTC(2000, 0, 1) + logInfo.calendarSeconds * 1000);
+    const date = new Date(Date.UTC(2000, 0, 1) + estimatedDeviceCalendarMilliseconds());
     elements.deviceDate.textContent = [date.getUTCFullYear(),
       String(date.getUTCMonth() + 1).padStart(2, '0'),
       String(date.getUTCDate()).padStart(2, '0')].join('-');
@@ -2932,6 +3026,7 @@ function handleHello(payload) {
     throw new ProtocolError(`Unsupported protocol or capabilities (version ${protocolVersion}, payload ${maxPayload}).`);
   }
   protocolCapabilities = capabilities;
+  clockConnectedAt = performance.now();
   protocolMaxPayload = Math.min(MAX_PAYLOAD, maxPayload);
   /* The current status frame does not carry indication-mode state. Do not
    * leave the offline demo's Normal marker visible after connecting. */
@@ -2939,6 +3034,7 @@ function handleHello(payload) {
   updateRtcControls();
   updateDeviceControls();
   updateSpiDumpAvailability();
+  renderSettingsClock();
 }
 
 function updateSpiDumpAvailability() {
@@ -3948,14 +4044,6 @@ function handleStatus(payload) {
   elements.rateWarmup.setAttribute('aria-valuenow', String(warmupPulses));
   elements.rateWarmupFill.style.width = `${(warmupPulses / 30) * 100}%`;
   const uptime = formatUptime(uptimeSeconds);
-  if (logInfo?.calendarValid) {
-    if (logInfo.calendarAnchorUptime === null) {
-      logInfo.calendarAnchorUptime = uptimeSeconds;
-      logInfo.calendarAnchorSeconds = logInfo.calendarSeconds;
-    }
-    logInfo.calendarSeconds = logInfo.calendarAnchorSeconds +
-      Math.max(0, uptimeSeconds - logInfo.calendarAnchorUptime);
-  }
   const unit = deviceSettings?.[9] ?? 0;
   const ratePrefix = deviceSettings?.[10] ?? 1;
   const dosePrefix = deviceSettings?.[11] ?? 1;
