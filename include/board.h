@@ -123,6 +123,7 @@ bool board_display_led_flash_enabled(bool screen_on);
 bool board_display_led_auto(void);
 bool board_display_click_sound_enabled(bool screen_on);
 bool board_display_search_mode(void);
+uint8_t board_display_indication_mode(void);
 bool board_display_invisible_mode(void);
 bool board_display_use_spi(void);
 uint8_t board_display_log_memory(void);

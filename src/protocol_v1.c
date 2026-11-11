@@ -193,13 +193,13 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         write_u32(&response[6], (1u << 0u) | (1u << 1u) |
             (1u << 2u) | (1u << 3u) | (1u << 4u) | (1u << 5u) |
             (1u << 6u) | (1u << 7u) | (1u << 8u) | (1u << 9u) |
-            (1u << 10u));
+            (1u << 10u) | (1u << 11u));
         response_length = 10u;
     } else if (opcode == PROTOCOL_V1_OP_GET_STATUS && payload_length == 0u) {
-        /* status, uptime, today's CNT, CPM, dose in nSv, ADC raw, flags */
+        /* status, uptime, today's CNT, CPM x10, dose in nSv, ADC raw, flags */
         write_u32(&response[1], current_status.uptime_seconds);
         write_u32(&response[5], current_status.count_today);
-        write_u32(&response[9], current_status.rate_cpm);
+        write_u32(&response[9], current_status.rate_cpm_tenths);
         write_u32(&response[13], current_status.dose_nsv);
         write_u16(&response[17], current_status.battery_raw);
         write_u16(&response[19], current_status.solar_raw);

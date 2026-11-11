@@ -4150,6 +4150,11 @@ bool board_display_search_mode(void)
     return lcd_indication_mode == 2u;
 }
 
+uint8_t board_display_indication_mode(void)
+{
+    return lcd_indication_mode;
+}
+
 bool board_display_invisible_mode(void)
 {
     return lcd_indication_mode == 0u && lcd_screen_page < 2u;

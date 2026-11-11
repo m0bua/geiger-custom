@@ -24,6 +24,7 @@ const CAP_SET_SETTING = 1 << 2;
 const CAP_GET_SPI_DUMP = 1 << 5;
 const CAP_SET_RTC = 1 << 6;
 const CAP_PRECISE_RTC = 1 << 10;
+const CAP_RATE_CPM_TENTHS = 1 << 11;
 const CAP_DEVICE_ACTION = 1 << 7;
 const CAP_THEME_CONFIG = 1 << 9;
 const THEME_COLORS = [
@@ -1029,6 +1030,7 @@ let firmwareBackupBusy = false;
 let firmwareStopRequested = false;
 let dumpBusy = false;
 let pollTimer = 0;
+let fastRatePollTimer = 0;
 let polling = false;
 let protocolCapabilities = 0;
 let protocolMaxPayload = 64;
@@ -3654,7 +3656,7 @@ function renderOfflinePreview() {
   elements.rateFootCount.textContent = '';
   elements.rateFootCount.hidden = true;
   elements.rateFoot.hidden = false;
-  updateOverviewMetricDetails(0, 0, 0, 0, 0, deviceSettings?.[10] ?? 1);
+  updateOverviewMetricDetails(0, 0, 0, 0, deviceSettings?.[10] ?? 1, 0);
   elements.rateWarmup.hidden = true;
   elements.doseWarmupSpacer.hidden = true;
   elements.rateWarmupFill.style.width = '0%';
@@ -3821,6 +3823,19 @@ function setDeviceModeActive(mode) {
     control.dataset.active = mode !== null &&
       control.dataset.mode === String(mode) ? 'true' : 'false';
   });
+  if (mode === 2 && serial && !fastRatePollTimer) {
+    fastRatePollTimer = setInterval(() => {
+      if (!serial || deviceIndicationMode !== 2) {
+        clearInterval(fastRatePollTimer);
+        fastRatePollTimer = 0;
+      } else if (pollTimer) {
+        refreshStatus(true);
+      }
+    }, 100);
+  } else if (mode !== 2 && fastRatePollTimer) {
+    clearInterval(fastRatePollTimer);
+    fastRatePollTimer = 0;
+  }
 }
 
 async function loadSettings() {
@@ -4019,11 +4034,11 @@ function doseRowText(unit, period, mode, cpm, uptime, uptimePulses, dayPulses, t
 }
 
 function updateOverviewMetricDetails(cpm, uptimePulses,
-    dayPulses, totalPulses, ratePrefix) {
-  const rateSv = formatRadiation(cpm * 0.00666, ratePrefix, 'Sv', true);
-  const rateR = formatRadiation(cpm * 0.00666 * 100, ratePrefix, 'R', true);
-  document.querySelector('#overview-rate-cpm').textContent = formatGroupedNumber(cpm);
-  document.querySelector('#overview-rate-cps').textContent = formatCps(cpm);
+    dayPulses, totalPulses, ratePrefix, rateUsvh = cpm * 0.00666) {
+  const rateSv = formatRadiation(rateUsvh, ratePrefix, 'Sv', true);
+  const rateR = formatRadiation(rateUsvh * 100, ratePrefix, 'R', true);
+  document.querySelector('#overview-rate-cpm').textContent = formatGroupedNumber(Math.round(cpm));
+  document.querySelector('#overview-rate-cps').textContent = formatCps(Math.round(cpm));
   document.querySelector('#overview-rate-sv-label').textContent = 'Sv/h';
   document.querySelector('#overview-rate-sv').textContent = `${rateSv.value} ${rateSv.unit}`;
   document.querySelector('#overview-rate-r-label').textContent = 'R/h';
@@ -4068,7 +4083,13 @@ function handleStatus(payload) {
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const uptimeSeconds = view.getUint32(1, true);
   const count = view.getUint32(5, true);
-  const cpm = view.getUint32(9, true);
+  const reportedRate = view.getUint32(9, true);
+  const hasTenthsRate = (protocolCapabilities & CAP_RATE_CPM_TENTHS) !== 0;
+  const cpm = hasTenthsRate ? reportedRate / 10 : reportedRate;
+  const rate100000ths = hasTenthsRate ?
+    Math.floor((reportedRate * 666 + 5) / 10) : reportedRate * 666;
+  const baseRateUsvh = rate100000ths / 100000;
+  const displayedCpm = Math.round(cpm);
   const doseNsvWhole = view.getUint32(13, true);
   const doseFraction = payload.length >= 31 ? view.getUint16(29, true) : 0;
   const doseNsv = doseNsvWhole + doseFraction / 3600;
@@ -4081,6 +4102,10 @@ function handleStatus(payload) {
   const sleepSeconds = payload.length >= 47 ? view.getUint32(39, true) : null;
   const usbSeconds = payload.length >= 47 ? view.getUint32(43, true) : null;
   const statusFlags = view.getUint16(23, true);
+  if (hasTenthsRate) {
+    const indicationMode = (statusFlags >>> 2) & 0x03;
+    setDeviceModeActive(indicationMode <= 2 ? indicationMode : null);
+  }
   const batteryStartRaw = payload.length >= 47 ? (statusFlags >>> 4) & 0x0fff : null;
   const dosePeriod = deviceSettings?.[23] ?? 1;
   const doseRowMode = deviceSettings?.[22] ?? 0;
@@ -4093,7 +4118,8 @@ function handleStatus(payload) {
     (dosePeriod === 0 ? uptimePulses : dosePeriod === 1 ? dayPulses : lifetimePulses) :
     derivedDosePulses;
   rateLevel = countTotal < 30 ? 'blue' :
-    (cpm * 666 > 90000 ? 'red' : (cpm * 666 >= 40000 ? 'yellow' : 'green'));
+    (displayedCpm * 666 > 90000 ? 'red' :
+      (displayedCpm * 666 >= 40000 ? 'yellow' : 'green'));
   const levelClass = `level-${rateLevel}`;
   elements.rateDose.classList.remove('level-blue', 'level-green', 'level-yellow', 'level-red');
   elements.rateDose.classList.add(levelClass);
@@ -4106,10 +4132,10 @@ function handleStatus(payload) {
   const unit = deviceSettings?.[9] ?? 0;
   const ratePrefix = deviceSettings?.[10] ?? 1;
   const dosePrefix = deviceSettings?.[11] ?? 1;
-  const rateUsvh = cpm * 0.00666 * (unit === 2 ? 100 : 1);
+  const rateUsvh = baseRateUsvh * (unit === 2 ? 100 : 1);
   const doseUsv = doseNsv / 1000 * (unit === 2 ? 100 : 1);
   updateOverviewMetricDetails(cpm, uptimePulses, dayPulses,
-    lifetimePulses, ratePrefix);
+    lifetimePulses, ratePrefix, baseRateUsvh);
   // When the user is looking at an interior slice of the history, keep that
   // slice fixed as new samples arrive. Only the Y scale may change. A view at
   // the live edge (scroll = 0) continues following "now"; the old edge is
@@ -4120,7 +4146,7 @@ function handleStatus(payload) {
 
   if (unit === 1) {
     elements.rateLabel.textContent = 'RATE';
-    elements.rateDose.textContent = formatGroupedNumber(cpm);
+    elements.rateDose.textContent = formatGroupedNumber(displayedCpm);
     elements.rateUnit.textContent = 'CPM';
     elements.dose.textContent = formatGroupedNumber(dosePulseCount);
     elements.doseUnit.textContent = 'CNT';
@@ -4135,7 +4161,7 @@ function handleStatus(payload) {
     elements.doseUnit.textContent = dose.unit;
   }
   const rateRowMode = deviceSettings?.[12] ?? 0;
-  const rateRow = rateRowText(rateRowMode, unit, cpm, rateUsvh,
+  const rateRow = rateRowText(rateRowMode, unit, displayedCpm, rateUsvh,
     deviceSettings?.[10] ?? 1);
   elements.rateFootMain.textContent = rateRow;
   elements.rateFootCount.textContent = rateLevel === 'blue' ? `${formatGroupedNumber(warmupPulses)} CNT` : '';
@@ -4155,7 +4181,7 @@ function handleStatus(payload) {
   const pulseDelta = previousRateCount === null || countTotal < previousRateCount ?
     0 : countTotal - previousRateCount;
   previousRateCount = countTotal;
-  rateHistory.push(unit === 1 ? cpm : rateUsvh);
+  rateHistory.push(unit === 1 ? displayedCpm : rateUsvh);
   rateHistoryLevels.push(rateLevel);
   rateHistoryPulses.push(pulseDelta);
   rateHistoryTimes.push(logInfo?.calendarValid ? logInfo.calendarSeconds :
@@ -4209,15 +4235,17 @@ function setStateValue(element, active, onText, offText) {
   element.classList.toggle('state-off', !active);
 }
 
-async function refreshStatus() {
+async function refreshStatus(quiet = false) {
   if (!serial || polling) return;
   polling = true;
   try {
     const payload = await serial.request(OP_GET_STATUS);
     handleStatus(payload);
-    showNotice('Connected. Readings update once per second.', 'success');
+    if (!quiet) showNotice(deviceIndicationMode === 2 ?
+      'Connected. Search readings update every 100 ms.' :
+      'Connected. Readings update once per second.', 'success');
   } catch (error) {
-    showNotice(error.message, 'error');
+    if (!quiet) showNotice(error.message, 'error');
   } finally {
     polling = false;
   }

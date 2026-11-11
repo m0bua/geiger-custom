@@ -892,13 +892,14 @@ int main(void)
             protocol_v1_status_t status;
             status.uptime_seconds = board_uptime_seconds_get();
             status.count_today = today_pulse_count;
-            status.rate_cpm = latest_display_cpm;
+            status.rate_cpm_tenths = display_rate_cpm_tenths;
             status.dose_nsv = dose_thousandths;
             status.battery_raw = battery_adc_raw;
             status.solar_raw = solar_adc_raw;
             status.usb_raw = usb_adc_raw;
             status.flags = (uint16_t)((hv_enabled ? 1u : 0u) |
                 (board_display_usb_connected() ? 2u : 0u) |
+                ((uint16_t)(board_display_indication_mode() & 3u) << 2u) |
                 ((board_display_battery_start_raw() & 0x0FFFu) << 4u));
             status.count_total = board_detector_count();
             status.dose_fraction_3600 = (uint16_t)dose_fraction;

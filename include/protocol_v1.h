@@ -9,11 +9,13 @@
 typedef struct {
     uint32_t uptime_seconds;
     uint32_t count_today;
-    uint32_t rate_cpm;
+    /* Live display rate in tenths of CPM, matching the LCD value. */
+    uint32_t rate_cpm_tenths;
     uint32_t dose_nsv;
     uint16_t battery_raw;
     uint16_t solar_raw;
     uint16_t usb_raw;
+    /* bit 0 HV, bit 1 USB, bits 2-3 indication mode, bits 4-15 B-START ADC */
     uint16_t flags;
     uint32_t count_total;
     uint16_t dose_fraction_3600;
