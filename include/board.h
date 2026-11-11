@@ -57,6 +57,7 @@ void board_rgb_set_color(uint8_t red, uint8_t green, uint8_t blue);
 void board_rgb_set_brightness(uint8_t percent);
 uint8_t board_rgb_begin_flash(void);
 void board_display_init(void);
+void board_display_apply_hv_setting(void);
 void board_display_service(void);
 void board_display_left_short(void);
 void board_display_right_short(void);

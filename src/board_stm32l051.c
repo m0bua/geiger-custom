@@ -6417,7 +6417,10 @@ void board_display_init(void)
     lcd_cpm_redraw_pending = true;
     lcd_started = true;
     lcd_configure();
-    /* RTC, saved configuration and display are ready before enabling HV. */
+}
+
+void board_display_apply_hv_setting(void)
+{
     board_hv_set_enabled(lcd_settings_value_index[SETTING_HV] == 0u);
 }
 

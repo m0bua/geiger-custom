@@ -44,7 +44,7 @@ bool log_history_next_from(uint8_t memory, uint8_t type, uint32_t period,
                             bool include_live, log_point_t *point)
 {
     if (cursor == NULL || point == NULL || type > 3u) return false;
-    if (type != LOG_RECORD_ALERT && (period < 60u || period % 60u || period > LOG_QUERY_MAX_PERIOD_SECONDS)) return false;
+    if (type != LOG_RECORD_ALERT && (period < 60u || period % 60u)) return false;
     uint32_t uptime = 0u, reference = 0u;
     bool valid = false;
     (void)board_rtc_log_time(&uptime, &reference, &valid);
@@ -91,10 +91,13 @@ bool log_history_next_from(uint8_t memory, uint8_t type, uint32_t period,
     }
     if (!found) return false;
     if (type == LOG_RECORD_ALERT) {
+        uint32_t average = log_record_average_cpm(
+            best.record.count, best.record.duration_seconds);
+        uint32_t maximum = best.record.maximum_cpm;
         *point = (log_point_t){
             .period_start = best.time, .period_seconds = best.record.duration_seconds,
-            .count = best.record.count, .maximum_cpm = best.record.maximum_cpm,
-            .average_cpm = log_record_average_cpm(best.record.count, best.record.duration_seconds),
+            .count = best.record.count, .maximum_cpm = maximum,
+            .average_cpm = average,
             .covered_seconds = best.record.duration_seconds, .epoch = best.epoch, .id = best.id,
             .calendar_valid = (best.year & LOG_YEAR_VALID) != 0u,
             .available = true, .live = live_point
@@ -114,10 +117,11 @@ bool log_history_next_from(uint8_t memory, uint8_t type, uint32_t period,
                 best.record.duration_seconds : period;
         }
         if (coverage > period) coverage = period;
+        uint32_t average = log_record_average_cpm(count, coverage);
         *point = (log_point_t){
             .period_start = start, .period_seconds = period,
             .count = count,
-            .average_cpm = log_record_average_cpm(count, coverage),
+            .average_cpm = average,
             .maximum_cpm = maximum,
             .covered_seconds = coverage, .epoch = best.epoch, .id = best.id,
             .calendar_valid = (best.year & LOG_YEAR_VALID) != 0u,
@@ -139,12 +143,13 @@ bool log_history_next_from(uint8_t memory, uint8_t type, uint32_t period,
                 best.record.duration_seconds : period;
         }
         if (coverage > period) coverage = period;
+        uint32_t average = log_record_average_cpm(count,
+            coverage != 0u ? coverage : period);
         *point = (log_point_t){
             .period_start = best.time - best.time % period,
             .period_seconds = period,
             .count = count,
-            .average_cpm = log_record_average_cpm(count,
-                coverage != 0u ? coverage : period),
+            .average_cpm = average,
             .maximum_cpm = maximum,
             .covered_seconds = coverage,
             .epoch = best.epoch,
@@ -163,6 +168,17 @@ bool log_history_next_from(uint8_t memory, uint8_t type, uint32_t period,
         point->calendar_valid = reader.time.calendar_valid;
         cursor->skip = 0u;
         best.time = start;
+    }
+    /* AVG is derived from the pulse count. During a live interval with no
+     * pulse yet, keep it aligned with the current detector rate instead of
+     * showing zero while MAX already reflects the rate. Archived records do
+     * not retain a separate rate sample, so their stored maximum is the
+     * available fallback when the derived average is zero. */
+    if (type != LOG_RECORD_ALERT && period == 60u && point->live) {
+        point->average_cpm = log_writer_current_rate_cpm();
+    } else if (point->average_cpm == 0u) {
+        point->average_cpm = point->live ? log_writer_current_rate_cpm() :
+            point->maximum_cpm;
     }
     cursor->time = best.time;
     cursor->epoch = best.epoch;

@@ -1,19 +1,12 @@
 #include "log_query.h"
 
-#include <limits.h>
-
 typedef struct {
-    uint64_t count;
+    uint32_t count;
     uint32_t maximum_cpm;
     uint32_t covered_seconds;
     bool complete;
     bool live;
 } log_accumulator_t;
-
-static uint32_t clamp_count(uint64_t count)
-{
-    return count > UINT32_MAX ? UINT32_MAX : (uint32_t)count;
-}
 
 static bool add_record(log_query_read_fn read_record, void *context,
                        log_record_kind_t kind, uint16_t epoch,
@@ -197,15 +190,15 @@ bool log_query_aggregate(log_query_read_fn read_record, void *context,
     log_accumulator_t aggregate;
     bool found;
     if (read_record == NULL || point == NULL || period_seconds < 60u ||
-        period_seconds % 60u != 0u || period_seconds > LOG_QUERY_MAX_PERIOD_SECONDS) return false;
+        period_seconds % 60u != 0u) return false;
     found = aggregate_range(read_record, context, epoch, period_start,
         period_seconds, &aggregate);
     *point = (log_point_t){
         .period_start = period_start,
         .period_seconds = period_seconds,
-        .count = clamp_count(aggregate.count),
+        .count = aggregate.count,
         .average_cpm = log_record_average_cpm(
-            clamp_count(aggregate.count), aggregate.covered_seconds),
+            aggregate.count, aggregate.covered_seconds),
         .maximum_cpm = aggregate.maximum_cpm,
         .covered_seconds = aggregate.covered_seconds,
         .epoch = epoch,
@@ -227,7 +220,7 @@ bool log_query_read(log_query_read_fn read_record, void *context,
     newest_start = newest_time - (newest_time % m);
 
     for (uint8_t index = 0u; index < n; ++index) {
-        const uint64_t back = (uint64_t)index * m;
+        const uint32_t back = (uint32_t)index * m;
         log_accumulator_t aggregate;
         if (back > newest_start) {
             points[index] = (log_point_t){
@@ -238,12 +231,12 @@ bool log_query_read(log_query_read_fn read_record, void *context,
             };
             continue;
         }
-        const uint32_t start = newest_start - (uint32_t)back;
+        const uint32_t start = newest_start - back;
         const bool found = aggregate_range(read_record, context, epoch,
             start, m, &aggregate);
         points[index].period_start = start;
         points[index].period_seconds = m;
-        points[index].count = clamp_count(aggregate.count);
+        points[index].count = aggregate.count;
         points[index].average_cpm = log_record_average_cpm(
             points[index].count, aggregate.covered_seconds);
         points[index].maximum_cpm = aggregate.maximum_cpm;

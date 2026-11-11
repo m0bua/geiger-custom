@@ -10,9 +10,11 @@ bool log_writer_init(void);
 
 /* Feed one second of detector data. Warm-up data stays live in RAM but is not
  * included in persistent records until persistent_allowed becomes true. */
-void log_writer_second(uint32_t pulses, uint32_t cpm,
+void log_writer_second(uint32_t pulses, uint32_t rate_cpm,
                        uint32_t uptime_seconds, uint32_t calendar_seconds,
                        bool calendar_valid, bool persistent_allowed);
+void log_writer_hv_disabled(void);
+uint32_t log_writer_current_rate_cpm(void);
 
 bool log_writer_fault(void);
 uint8_t log_writer_fault_reason(void);

@@ -183,6 +183,8 @@ int main(void)
     screen_alarm_active = board_display_screen_alarm_active();
     sound_alarm_active = board_display_sound_alarm_active();
     board_sound_alarm_set(sound_alarm_active);
+    /* Keep the detector HV off until log recovery and startup state loading finish. */
+    board_display_apply_hv_setting();
     hv_enabled = board_hv_is_enabled();
     if (!hv_enabled) {
         latest_cpm = 0u;
@@ -463,6 +465,7 @@ int main(void)
                         board_display_set_rate_alarm(0u, 0u, false);
                         board_display_set_rate(0u, 0u, 0u, false);
                     } else {
+                        log_writer_hv_disabled();
                         latest_cpm = 0u;
                         latest_display_cpm = 0u;
                         display_rate_cpm_tenths = 0u;
@@ -640,7 +643,8 @@ int main(void)
                     daily_dose_count() : session_pulses_total;
                 /* Keep the live minute available to the app while excluding
                  * blue warm-up samples from persistent log records. */
-                log_writer_second(second_pulses, cpm, log_uptime_seconds,
+                log_writer_second(second_pulses, latest_display_cpm,
+                    log_uptime_seconds,
                     log_calendar_seconds, log_calendar_valid, cpm_valid);
                 if (board_display_dose_period() == 1u) {
                     if (dose_measurement_seconds < UINT32_MAX) {

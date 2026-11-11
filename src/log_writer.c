@@ -87,6 +87,7 @@ static bool previous_calendar_valid;
 static int32_t calendar_uptime_offset;
 static bool have_calendar_uptime_offset;
 static uint8_t active_log_memory = 0xFFu;
+static uint32_t live_rate_cpm;
 
 static bool minute_location(uint32_t seconds, bool calendar_valid,
                             uint32_t *minute_key, uint32_t *period_index,
@@ -380,6 +381,7 @@ static void start_minute(uint32_t time_seconds, bool calendar_valid)
     minute_accumulator.period_index = period_index;
     minute_accumulator.count = 0u;
     minute_accumulator.maximum_cpm = 0u;
+    minute_accumulator.live_maximum_cpm = 0u;
     minute_accumulator.samples = 0u;
     minute_accumulator.warmup_count = 0u;
     minute_accumulator.persistent_samples = 0u;
@@ -406,6 +408,8 @@ static void start_minute(uint32_t time_seconds, bool calendar_valid)
                 minute_accumulator.first_source_time;
         }
     }
+    if (live_rate_cpm > minute_accumulator.live_maximum_cpm)
+        minute_accumulator.live_maximum_cpm = live_rate_cpm;
     minute_accumulator.active = true;
 }
 
@@ -425,6 +429,7 @@ bool log_writer_init(void)
     have_clock_sample = false;
     have_calendar_uptime_offset = false;
     active_log_memory = log_memory;
+    live_rate_cpm = 0u;
 
     if (!log_eeprom_init()) goto failed;
     if (log_memory == BOARD_LOG_MEMORY_OFF) {
@@ -454,7 +459,7 @@ failed:
     return false;
 }
 
-void log_writer_second(uint32_t pulses, uint32_t cpm,
+void log_writer_second(uint32_t pulses, uint32_t rate_cpm,
                        uint32_t uptime_seconds, uint32_t calendar_seconds,
                        bool calendar_valid, bool persistent_allowed)
 {
@@ -468,6 +473,7 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
         (void)log_writer_init();
     }
     if (!writer_ready) return;
+    live_rate_cpm = rate_cpm;
     if (!have_clock_sample && !calendar_valid) ++current_epoch;
     if (have_clock_sample && calendar_valid && previous_calendar_valid) {
         const uint32_t uptime_delta = uptime_seconds - previous_uptime;
@@ -547,11 +553,10 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
 
     update_period_tracker(LOG_RECORD_HOUR, &hour_accumulator, source_time, calendar_valid);
     update_period_tracker(LOG_RECORD_DAY, &day_accumulator, source_time, calendar_valid);
-    update_live_period(&hour_accumulator, 3600u, pulses, cpm);
-    update_live_period(&day_accumulator, 86400u, pulses, cpm);
     if (minute_accumulator.active) {
-        if (minute_accumulator.first_source_time == UINT32_MAX)
+        if (minute_accumulator.first_source_time == UINT32_MAX) {
             minute_accumulator.first_source_time = source_time;
+        }
         if (source_time >= minute_accumulator.first_source_time) {
             uint32_t elapsed = source_time -
                 minute_accumulator.first_source_time + 1u;
@@ -564,13 +569,13 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
         } else {
             minute_accumulator.count += pulses;
         }
-        if (cpm > minute_accumulator.live_maximum_cpm) {
-            minute_accumulator.live_maximum_cpm = cpm;
+        if (rate_cpm > minute_accumulator.live_maximum_cpm) {
+            minute_accumulator.live_maximum_cpm = rate_cpm;
         }
         if (persistent_allowed) {
             if (minute_accumulator.persistent_first_source_time == UINT32_MAX) {
                 minute_accumulator.persistent_first_source_time = source_time;
-                minute_accumulator.maximum_cpm = cpm;
+                minute_accumulator.maximum_cpm = rate_cpm;
             }
             if (source_time >= minute_accumulator.persistent_first_source_time) {
                 uint32_t elapsed = source_time -
@@ -579,14 +584,18 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
                 if (minute_accumulator.persistent_samples < elapsed)
                     minute_accumulator.persistent_samples = (uint16_t)elapsed;
             }
-            if (cpm > minute_accumulator.maximum_cpm)
-                minute_accumulator.maximum_cpm = cpm;
+            if (rate_cpm > minute_accumulator.maximum_cpm)
+                minute_accumulator.maximum_cpm = rate_cpm;
         } else if (minute_accumulator.warmup_count < 30u) {
             const uint32_t remaining = 30u - minute_accumulator.warmup_count;
             minute_accumulator.warmup_count = pulses >= remaining ? 30u :
                 (uint8_t)(minute_accumulator.warmup_count + pulses);
         }
     }
+    update_live_period(&hour_accumulator, 3600u, pulses,
+        minute_accumulator.live_maximum_cpm);
+    update_live_period(&day_accumulator, 86400u, pulses,
+        minute_accumulator.live_maximum_cpm);
 
     alarm_level = current_led_level();
     if (persistent_allowed && !alert_accumulator.active &&
@@ -594,7 +603,7 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
         alert_accumulator.active = true;
         alert_accumulator.minute_index = period_index;
         alert_accumulator.count = 0u;
-        alert_accumulator.maximum_cpm = cpm;
+        alert_accumulator.maximum_cpm = rate_cpm;
         alert_accumulator.duration = 0u;
         alert_accumulator.epoch = current_epoch;
         alert_accumulator.segment_id =
@@ -607,8 +616,8 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
         } else {
             alert_accumulator.count += pulses;
         }
-        if (cpm > alert_accumulator.maximum_cpm) {
-            alert_accumulator.maximum_cpm = cpm;
+        if (rate_cpm > alert_accumulator.maximum_cpm) {
+            alert_accumulator.maximum_cpm = rate_cpm;
         }
         if (alert_accumulator.duration < 4096u) {
             ++alert_accumulator.duration;
@@ -619,7 +628,7 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
                 alert_accumulator.active = true;
                 alert_accumulator.minute_index = period_index;
                 alert_accumulator.count = 0u;
-                alert_accumulator.maximum_cpm = cpm;
+                alert_accumulator.maximum_cpm = rate_cpm;
                 alert_accumulator.duration = 0u;
                 alert_accumulator.epoch = current_epoch;
                 alert_accumulator.segment_id =
@@ -642,7 +651,6 @@ void log_writer_second(uint32_t pulses, uint32_t cpm,
             ++current_epoch;
             hour_accumulator.active = day_accumulator.active = false;
         }
-        start_minute(next, calendar_valid);
     }
 
     previous_uptime = uptime_seconds;
@@ -691,6 +699,22 @@ bool log_writer_live(log_record_kind_t kind, log_stored_t *item)
         return true;
     }
     return false;
+}
+
+void log_writer_hv_disabled(void)
+{
+    minute_accumulator.active = false;
+    hour_accumulator.active = false;
+    day_accumulator.active = false;
+    alert_accumulator.active = false;
+    have_clock_sample = false;
+    have_calendar_uptime_offset = false;
+    live_rate_cpm = 0u;
+}
+
+uint32_t log_writer_current_rate_cpm(void)
+{
+    return live_rate_cpm;
 }
 
 bool log_writer_change_memory(uint8_t target)
