@@ -288,6 +288,7 @@ jobs:
           - Improved device clock synchronization with a timed exchange and subsecond RTC data; the app shows “Waiting to stabilize…” beside the time difference while the comparison settles.
           - Updated the device's large numeric font to Anonymous Pro Bold, standardized unit ordering throughout the app, and matched R/h display precision to the device.
           - Corrected log MAX aggregation: a live minute starts with the first real sample's computed rate, later samples only raise MAX, hourly MAX uses minute maxima, and daily MAX uses hourly maxima.
+          - Disabled settings and device actions not supported by the connected firmware's settings count or protocol capabilities.
           - Organized Settings into collapsible Device, Device controls, and Display theme sections; collapsed Diagnostics by default, renamed device graph headers, and fixed release portal version-link layout.
 
           Firmware BIN SHA-256: ${firmware_sha256}

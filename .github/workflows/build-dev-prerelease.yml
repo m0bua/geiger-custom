@@ -296,6 +296,7 @@ jobs:
           - Added CNT and elapsed seconds to the Overview chart summary, showed seconds in device time, and moved SOLAR and BATTERY to the end of the status row.
           - Standardized unit ordering across the app and matched R/h display precision to the device.
           - Updated log MAX calculation to start from the first real sample's computed rate. Later samples only raise it; hourly MAX rolls up from minute maxima and daily MAX from hourly maxima.
+          - Disabled settings and device actions that the connected firmware does not expose through its settings count or protocol capabilities.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded): ${canonical_sha256}

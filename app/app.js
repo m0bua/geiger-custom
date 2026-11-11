@@ -3176,18 +3176,21 @@ function makeSettingVisibilityControl(settingId, supported, preview) {
 
 function renderSettings() {
   elements.settingsList.replaceChildren();
-  const preview = deviceSettings === null;
-  const currentSettings = preview ? demoSettings : deviceSettings;
+  const preview = !serial;
+  const currentSettings = deviceSettings ?? demoSettings;
+  const settingsProtocolSupported = preview ||
+    (protocolCapabilities & (CAP_GET_SETTINGS | CAP_SET_SETTING)) ===
+      (CAP_GET_SETTINGS | CAP_SET_SETTING);
   const rows = [];
   for (const setting of remoteSettings) {
     if (setting.id === 19) continue;
     const supportSettings = deviceSettings ?? demoSettings;
-    const hasSetting = supportSettings !== null &&
-      setting.id < supportSettings.length;
+    const hasSetting = preview || (deviceSettings !== null &&
+      setting.id < deviceSettings.length);
     const actionSupported = !serial ||
       ![14, 18, 19].includes(setting.id) ||
       (protocolCapabilities & CAP_DEVICE_ACTION) !== 0;
-    const supported = hasSetting && actionSupported;
+    const supported = settingsProtocolSupported && hasSetting && actionSupported;
     const optionSettings = preview ? demoSettings :
       (supported ? currentSettings : demoSettings);
     const options = settingsOptions(setting, optionSettings).map((option, index) =>
@@ -3218,7 +3221,8 @@ function renderSettings() {
       row.append(actionTitle);
       const powerOffButton = makeDeviceActionButton('POWER OFF', 1);
       const rebootButton = makeDeviceActionButton('REBOOT', 2);
-      const rebootSupported = supportSettings !== null && 19 < supportSettings.length &&
+      const rebootSupported = settingsProtocolSupported &&
+        deviceSettings !== null && 19 < deviceSettings.length &&
         (!serial || (protocolCapabilities & CAP_DEVICE_ACTION) !== 0);
       for (const [button, actionIsSupported] of [
         [powerOffButton, supported], [rebootButton, rebootSupported]
@@ -3316,11 +3320,15 @@ function renderSettings() {
   pair.append(...rows);
   elements.settingsList.append(pair);
   if (preview) {
-    elements.settingsStatus.textContent = serial ?
-      (protocolCapabilities ?
-        'Settings unavailable in this firmware; showing factory defaults.' :
-        'Waiting for device settings; showing factory defaults.') :
+    elements.settingsStatus.textContent =
       'Offline preview · temporary changes; reload to restore factory defaults.';
+  } else if (deviceSettings === null) {
+    const protocolReady =
+      (protocolCapabilities & (CAP_GET_SETTINGS | CAP_SET_SETTING)) ===
+        (CAP_GET_SETTINGS | CAP_SET_SETTING);
+    elements.settingsStatus.textContent = protocolReady ?
+      'Waiting for device settings; controls remain disabled.' :
+      'Settings unavailable in this firmware; controls disabled.';
   } else if (deviceSettings) {
     const unsupportedCount = remoteSettings.filter(({ id }) =>
       id >= deviceSettings.length || ([14, 18, 19].includes(id) &&
