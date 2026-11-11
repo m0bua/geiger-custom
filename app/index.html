@@ -41,14 +41,12 @@
     </section>
 
     <section id="overview-page" class="page">
-      <section class="device-header" aria-label="Device header">
-        <div class="header-reading"><span>SOLAR</span><strong id="solar-percent">—%</strong></div>
-        <div class="header-reading"><span>BATTERY</span><strong id="battery-percent">—%</strong></div>
-      </section>
-      <section class="device-clock" aria-label="Device time">
+      <section class="device-clock" aria-label="Device status and time">
         <div><span>TIME</span><strong id="device-time">—</strong></div>
         <div><span>DATE</span><strong id="device-date">—</strong></div>
         <div><span>UPTIME</span><strong id="overview-uptime">—</strong></div>
+        <div><span>SOLAR</span><strong id="solar-percent">—%</strong></div>
+        <div><span>BATTERY</span><strong id="battery-percent">—%</strong></div>
       </section>
       <section class="metrics" aria-label="Live readings">
         <article class="metric metric-primary">
@@ -80,12 +78,20 @@
       </section>
       <section class="chart-panel" aria-label="Recent rate history">
         <canvas id="rate-chart" aria-label="Rate over the latest 1000 seconds; use the wheel to zoom and drag to scroll"></canvas>
+        <output id="rate-chart-action-hint" class="chart-action-hint" aria-label="Chart action" hidden>
+          <svg data-action-icon="zoom-in" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5 21 21M10.5 7.5v6M7.5 10.5h6"></path></svg>
+          <svg data-action-icon="zoom-out" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5 21 21M7.5 10.5h6"></path></svg>
+          <svg data-action-icon="older" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"></path></svg>
+          <svg data-action-icon="newer" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"></path></svg>
+        </output>
         <output id="rate-chart-tooltip" class="chart-tooltip" role="tooltip" hidden></output>
         <div class="chart-summary" aria-label="Statistics for the visible chart range">
           <div><span>DOSE</span><strong id="chart-range-dose">—</strong></div>
+          <div><span>CNT</span><strong id="chart-range-cnt">—</strong></div>
           <div><span>MIN</span><strong id="chart-range-min">—</strong></div>
           <div><span>AVG</span><strong id="chart-range-avg">—</strong></div>
           <div><span>MAX</span><strong id="chart-range-max">—</strong></div>
+          <div><span>SEC</span><strong id="chart-range-seconds">—</strong></div>
         </div>
       </section>
     </section>

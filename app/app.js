@@ -276,10 +276,13 @@ const elements = {
   notice: document.querySelector('#notice'),
   rateChart: document.querySelector('#rate-chart'),
   rateTooltip: document.querySelector('#rate-chart-tooltip'),
+  rateChartActionHint: document.querySelector('#rate-chart-action-hint'),
   chartRangeMin: document.querySelector('#chart-range-min'),
   chartRangeAvg: document.querySelector('#chart-range-avg'),
   chartRangeMax: document.querySelector('#chart-range-max'),
   chartRangeDose: document.querySelector('#chart-range-dose'),
+  chartRangeCnt: document.querySelector('#chart-range-cnt'),
+  chartRangeSeconds: document.querySelector('#chart-range-seconds'),
   deviceDate: document.querySelector('#device-date'),
   deviceTime: document.querySelector('#device-time'),
   settingsDeviceDate: document.querySelector('#settings-device-date'),
@@ -1086,6 +1089,7 @@ let rateChartScrollSeconds = 0;
 let rateChartDragging = false;
 let rateChartDragStartX = 0;
 let rateChartDragStartScroll = 0;
+let rateChartActionHintTimer = 0;
 let previousRateCount = null;
 const demoSettings = Array.from({ length: 31 }, () => 0);
 const demoHiddenSettings = new Set([
@@ -1165,7 +1169,7 @@ function formatRadiation(valueUsv, prefixSetting, symbol, perHour, digitLimit = 
   const selected = prefixes[Math.min(prefix, prefixes.length - 1)];
   const value = valueUsv * selected.factor;
   const integerDigits = Math.max(0, Math.floor(Math.log10(Math.abs(value))) + 1);
-  const maxDecimals = perHour ? 3 : 5;
+  const maxDecimals = perHour ? (symbol === 'R' ? 1 : 3) : 5;
   const decimalsAvailable = digitLimit === null ? 5 - integerDigits :
     digitLimit - Math.max(1, integerDigits);
   const digits = value === 0 ? 0 : Math.max(0,
@@ -1207,6 +1211,34 @@ function resetRateChartViewport() {
   drawRateChart();
 }
 
+function positionRateChartActionHint(pointerEvent) {
+  const panel = elements.rateChart.parentElement;
+  const panelRect = panel.getBoundingClientRect();
+  const hintSize = 33;
+  const gap = 9;
+  let left = pointerEvent.clientX - panelRect.left + gap;
+  let top = pointerEvent.clientY - panelRect.top + gap;
+  if (left + hintSize > panel.clientWidth - 6) {
+    left = pointerEvent.clientX - panelRect.left - hintSize - gap;
+  }
+  if (top + hintSize > panel.clientHeight - 6) {
+    top = pointerEvent.clientY - panelRect.top - hintSize - gap;
+  }
+  elements.rateChartActionHint.style.left = `${Math.max(6, left)}px`;
+  elements.rateChartActionHint.style.top = `${Math.max(6, top)}px`;
+}
+
+function showRateChartActionHint(mode, label, pointerEvent) {
+  clearTimeout(rateChartActionHintTimer);
+  elements.rateChartActionHint.dataset.mode = mode;
+  elements.rateChartActionHint.setAttribute('aria-label', label);
+  elements.rateChartActionHint.hidden = false;
+  positionRateChartActionHint(pointerEvent);
+  rateChartActionHintTimer = setTimeout(() => {
+    elements.rateChartActionHint.hidden = true;
+  }, 600);
+}
+
 function updateRateChartSummary(values, pulses, levels) {
   const setRateSummary = (element, value, isWarmup) => {
     const settings = offlinePreview ? demoSettings : deviceSettings;
@@ -1239,6 +1271,9 @@ function updateRateChartSummary(values, pulses, levels) {
     setRateSummary(elements.chartRangeMax, maximum, levels[maxIndex] === 'blue');
   }
   const pulseTotal = pulses.reduce((sum, count) => sum + count, 0);
+  elements.chartRangeCnt.textContent = offlinePreview ? '—' : formatGroupedNumber(pulseTotal);
+  elements.chartRangeSeconds.textContent = values.length ?
+    formatGroupedNumber(values.length) : '—';
   const settings = offlinePreview ? demoSettings : deviceSettings;
   const unit = settings?.[9] ?? 0;
   const dose = unit === 1 ? `${formatGroupedNumber(pulseTotal)} CNT` :
@@ -3007,7 +3042,7 @@ function updateDeviceDateTime(uptimeText = null) {
     elements.deviceDate.textContent = [date.getUTCFullYear(),
       String(date.getUTCMonth() + 1).padStart(2, '0'),
       String(date.getUTCDate()).padStart(2, '0')].join('-');
-    elements.deviceTime.textContent = `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
+    elements.deviceTime.textContent = formatDeviceTime(date);
     elements.debugDate.textContent = elements.deviceDate.textContent;
     elements.debugTime.textContent = `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}:${String(date.getUTCSeconds()).padStart(2, '0')}`;
     elements.logsDeviceTime.textContent = `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}:${String(date.getUTCSeconds()).padStart(2, '0')}`;
@@ -6776,6 +6811,9 @@ document.querySelectorAll('.debug-section-toggle').forEach((button) => {
   });
 });
 elements.rateChart.addEventListener('pointermove', showRateChartTooltip);
+elements.rateChart.addEventListener('pointermove', (event) => {
+  if (!elements.rateChartActionHint.hidden) positionRateChartActionHint(event);
+});
 elements.rateChart.addEventListener('pointerleave', () => {
   if (rateChartDragging) return;
   hideRateChartTooltip();
@@ -6807,6 +6845,8 @@ elements.rateChart.addEventListener('wheel', (event) => {
   event.preventDefault();
   const rect = elements.rateChart.getBoundingClientRect();
   const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  const previousZoom = rateChartZoomSeconds;
+  const previousScroll = rateChartScrollSeconds;
   const ageAtPointer = rateChartScrollSeconds + (1 - ratio) * rateChartZoomSeconds;
   // Keep the usual wheel convention: wheel up zooms in, wheel down zooms out.
   // The sample below the pointer stays fixed while the viewport has room;
@@ -6814,6 +6854,14 @@ elements.rateChart.addEventListener('wheel', (event) => {
   rateChartZoomSeconds *= event.deltaY < 0 ? 0.8 : 1.25;
   rateChartScrollSeconds = ageAtPointer - (1 - ratio) * rateChartZoomSeconds;
   clampRateChartViewport();
+  const scrollDelta = rateChartScrollSeconds - previousScroll;
+  if (Math.abs(rateChartZoomSeconds - previousZoom) >= 0.01) {
+    showRateChartActionHint(event.deltaY < 0 ? 'zoom-in' : 'zoom-out',
+      event.deltaY < 0 ? 'Zoom in' : 'Zoom out', event);
+  } else if (Math.abs(scrollDelta) >= 0.01) {
+    showRateChartActionHint(scrollDelta > 0 ? 'older' : 'newer',
+      scrollDelta > 0 ? 'Browse older history' : 'Browse newer history', event);
+  }
   hideRateChartTooltip();
   drawRateChart();
 }, {passive: false});
