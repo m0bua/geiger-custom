@@ -392,9 +392,9 @@
       <details class="information-card manual-card">
         <summary>Readings and data</summary>
         <ul>
-          <li><strong>Overview:</strong> shows the current rate, accumulated dose for today, device date/time and uptime, solar level, and battery level. Expand the Rate and Dose cards for additional units and periods. The chart shows dose plus minimum, average, and maximum rate for its visible range; zoom with the wheel and scroll by dragging. Hover over the chart to read a plotted value.</li>
+          <li><strong>Overview:</strong> shows the current rate, accumulated dose for today, device time and date, uptime, solar level, and battery level in one status row. Expand the Rate and Dose cards for additional units and periods. The chart shows dose, CNT, minimum, average, maximum, and elapsed seconds for its visible range; zoom with the wheel and scroll by dragging. Hover over the chart to read a plotted value.</li>
           <li><strong>Logs:</strong> inspect minute, hour, day, and alert records. Choose a range, load records, and export them as CSV. See the detailed Logs guide below for coverage, live records, and storage.</li>
-          <li><strong>Settings:</strong> read and change options supported by the connected firmware. Device settings, Device controls, and Display theme are separate collapsible sections. Values that depend on another setting may be disabled. The Show checkboxes control which options appear in the device menu; setting and visibility changes are applied immediately. The device clock can be synchronized to the computer's current local time. POWER OFF is always shown and has no visibility checkbox.</li>
+          <li><strong>Settings:</strong> read and change options supported by the connected firmware. Device settings, Device controls, and Display theme are separate collapsible sections. Values that depend on another setting may be disabled. The Show checkboxes control which options appear in the device menu; setting and visibility changes are applied immediately. The device clock can be synchronized to the computer's current local time. After connecting or synchronizing, a gray “Waiting to stabilize…” hint appears beside the difference while the comparison settles. POWER OFF is always shown and has no visibility checkbox.</li>
           <li><strong>Debug:</strong> inspect device time, uptime, pulse count, power readings, physical log counts, storage state, and SPI memory size. Sections are in one table and can be collapsed independently. Expand Diagnostics (collapsed initially) to view app-device protocol requests and responses, errors, timeouts, and firmware operations. It retains the latest 1,000 entries; Copy exports the retained log and Clear empties it.</li>
           <li><strong>Without a connection:</strong> Overview, Logs, and Debug show clearly marked illustrative zero data. Settings use factory defaults and can be changed for preview, but preview changes are not saved and reset after reloading the page. Options unsupported by the connected firmware remain visible but disabled.</li>
         </ul>
@@ -406,7 +406,7 @@
           <li><strong>DAYS:</strong> one record per day. The newest unfinished day is assembled from smaller intervals.</li>
           <li><strong>ALERTS:</strong> one record per alert episode, showing compact duration (seconds, M:SS, or H:MM:SS with zero leading fields omitted), dose, average rate, and maximum rate.</li>
         </ul>
-        <p>Dose is accumulated detector counts converted to the selected <strong>UNIT</strong> and prefix. In <strong>CNT</strong> mode, dose is shown as CNT and rates as CPM. Average rate uses the record's actual covered time; missing time is not treated as zero activity.</p>
+        <p>Dose is accumulated detector counts converted to the selected <strong>UNIT</strong> and prefix. In <strong>CNT</strong> mode, dose is shown as CNT and rates as CPM. Average rate uses the record's actual covered time; missing time is not treated as zero activity. A new live minute begins with its first actual sample, and its MAX starts at that sample's computed rate, rising only when a later rate is higher. Hour MAX is the highest minute MAX; day MAX is the highest hour MAX.</p>
         <p><strong>Coverage</strong> applies to minute, hour, and day records. It shows the represented percentage and a compact elapsed time: seconds below one minute, minutes and seconds below one hour, then <code>hh:mm:ss</code> and an optional day field for longer spans. Zero leading fields are omitted. The state follows as <em>full</em>, <em>partial</em>, or <em>live</em>. A partial record's dose and average describe only the time actually measured. A live record is the current in-progress interval and can change until it closes. Alert records show duration instead of coverage.</p>
         <p><strong>Coverage colors:</strong> green means the record is genuinely complete. An incomplete record can round to 100% and is shown in yellow so it is not mistaken for a full interval.</p>
         <p>The <strong>Fill</strong> selector changes the shaded bar behind table values. For MINUTES, HOURS, and DAYS it can compare Dose, Average, Maximum, or Coverage; for ALERTS it can compare Duration, Dose, Average, or Maximum. The shading is scaled against the largest value in the currently loaded records. Metric text is highlighted when it reaches a warning or red level.</p>
@@ -441,7 +441,7 @@
           <li><strong>TONE — STOCK / CLASSIC:</strong> selects the sound character for pulse clicks and the siren.</li>
           <li><strong>LONG PRESS — 300 / 500 / 700 / 900 / 1100 / 1300 ms:</strong> sets the time required to trigger a long button press.</li>
           <li><strong>BATT FORMAT — % / V / RAW:</strong> selects the battery value shown on the device's main screens. Debug shows voltage and RAW for %, percentage and RAW for V, or voltage and percentage for RAW.</li>
-          <li><strong>UNIT — Sv / CNT / R:</strong> selects the unit for both main screens and the app's Overview and Logs. R follows the device's stock-compatible ×100 scaling of Sv. Changing UNIT resets the rate and dose prefixes to their defaults for that unit.</li>
+          <li><strong>UNIT — Sv / CNT / R:</strong> selects the unit for both main screens and the app's Overview and Logs. Choices use the same order throughout the app: Sv, CNT, R for dose and Sv/h, CPM, CPS, R/h for rate. R follows the device's stock-compatible ×100 scaling of Sv. Changing UNIT resets the rate and dose prefixes to their defaults for that unit.</li>
           <li><strong>RATE PREFIX:</strong> for Sv/R, choose m, µ, n, or AUTO; for CNT, choose CPM or CPS.</li>
           <li><strong>DOSE PREFIX:</strong> for Sv/R, choose m, µ, n, or AUTO. It is unavailable for CNT.</li>
           <li><strong>LEAD ZERO — SHOW / HIDE:</strong> controls the zero before a decimal fraction.</li>
@@ -566,9 +566,13 @@
           <div class="release-history-content">
         <ul class="release-list">
           <li>
-            <time datetime="2026-11-11">2026-11-11</time> — Search rate precision:
+            <time datetime="2026-11-11">2026-11-11</time> — Rate display, time sync, logs, and Overview:
             <ul>
-              <li><strong>SEARCH:</strong> expanded rate display precision to six significant digits on the device and in the app.</li>
+              <li><strong>SEARCH:</strong> expanded rate display precision to six significant digits on the device and in the app; R/h values use one decimal place to match the device display.</li>
+              <li><strong>Clock sync:</strong> improved RTC synchronization with a timed exchange, subsecond device time, and a stabilization hint beside the clock difference.</li>
+              <li><strong>Overview:</strong> added CNT and elapsed seconds to the visible-range chart summary, showed seconds in device time, and moved SOLAR and BATTERY to the end of the status row.</li>
+              <li><strong>Logs:</strong> initialize live MAX from the first real sample's computed rate; hourly and daily MAX values now roll up from minute and hour maxima respectively.</li>
+              <li><strong>Display and units:</strong> updated the large device font to Anonymous Pro Bold and standardized unit ordering across the app.</li>
             </ul>
           </li>
           <li>

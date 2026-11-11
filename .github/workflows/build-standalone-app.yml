@@ -283,6 +283,12 @@ jobs:
           - Expanded the stock firmware catalog with newly published images and source links; improved Quick flash, firmware validation, startup/recovery handling, and release portal versioning.
           - Fixed LTO startup by preserving the real SysTick handler; aligned standalone and PlatformIO builds, added startup/vector validation, and verified UART HEX programming.
           - Added battery/ADC, display, logging, protocol, storage, and release documentation plus regression coverage for dose, logs, storage, and embedded images.
+          - Improved log navigation and review: color rate and dose values by their respective levels, resume interrupted More loads, page calendar ranges back by matching intervals, and drill down from hour/day/alert rows. Removed AVG from Fill choices.
+          - Added expandable Rate and Dose details and visible-range DOSE/MIN/AVG/MAX summaries to Overview. Added CNT and elapsed seconds to the chart summary, showed seconds in device time, and moved SOLAR and BATTERY to the end of the status row.
+          - Improved device clock synchronization with a timed exchange and subsecond RTC data; the app shows “Waiting to stabilize…” beside the time difference while the comparison settles.
+          - Updated the device's large numeric font to Anonymous Pro Bold, standardized unit ordering throughout the app, and matched R/h display precision to the device.
+          - Corrected log MAX aggregation: a live minute starts with the first real sample's computed rate, later samples only raise MAX, hourly MAX uses minute maxima, and daily MAX uses hourly maxima.
+          - Organized Settings into collapsible Device, Device controls, and Display theme sections; collapsed Diagnostics by default, renamed device graph headers, and fixed release portal version-link layout.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded; used for app compatibility checks): ${canonical_sha256}

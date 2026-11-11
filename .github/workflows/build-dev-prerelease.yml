@@ -289,13 +289,13 @@ jobs:
           The HTML and Windows apps identify themselves as Version: ${RELEASE_VERSION}. This build is for testing and may change without notice.
 
           ## Changes
-          **Changes since the previous pre-release (202611091447-dev-64bcaa1):**
-          - Colored log rate values by rate level and dose values by dose level. More now resumes interrupted loads and pages hour/day/month/date ranges back by one matching period. Removed AVG from the log fill-metric choices.
-          - Added log drill-down buttons: open an hour as minute records, a day as hour records, or an alert's starting minute.
-          - Added expandable rate and dose details on Overview and visible-range DOSE/MIN/AVG/MAX summaries beneath the rate chart.
-          - Organized Settings into collapsible Device, Device controls, and Display theme sections, and made Diagnostics collapsed by default.
-          - Renamed device graph headers to DIRECT, MINUTE, HOUR, DAY, and ALERT.
-          - Fixed version link layout on the release portal.
+          **Changes since the previous pre-release (202611100906-dev-ba6dcfc):**
+          - Added log drill-down controls to open an hour as minute records, a day as hour records, or an alert's starting minute.
+          - Updated the device's large numeric font to Anonymous Pro Bold.
+          - Improved clock synchronization with a timed exchange and subsecond RTC data; the app shows “Waiting to stabilize…” beside the difference while the comparison settles.
+          - Added CNT and elapsed seconds to the Overview chart summary, showed seconds in device time, and moved SOLAR and BATTERY to the end of the status row.
+          - Standardized unit ordering across the app and matched R/h display precision to the device.
+          - Updated log MAX calculation to start from the first real sample's computed rate. Later samples only raise it; hourly MAX rolls up from minute maxima and daily MAX from hourly maxima.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded): ${canonical_sha256}
