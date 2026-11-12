@@ -3162,13 +3162,16 @@ function updateLogActions() {
   elements.exportLogsCsv.hidden = offline && !hasArchive;
   elements.exportAllLogsCsv.hidden = offline && !hasArchive;
   const typeRecordsLoaded = logRecords.length > 0;
-  const anyDeviceLogs = logInfo && logTypes.some((type) => logInfo[type.countKey] > 0);
   const anyImportedLogs = offlineLogsImported &&
     Object.values(offlineLogCounts()).some((count) => count > 0);
+  const anyLoadedDeviceLogs = logRecords.length > 0 || logTypes.some((type) => {
+    const activeKey = logTypeActiveView.get(type.id);
+    return (activeKey && logViewCache.get(activeKey)?.records?.length > 0) || false;
+  });
   elements.exportLogsCsv.disabled = offline ? !hasArchive || !typeRecordsLoaded :
     !serial || !typeRecordsLoaded || logCsvBusy || logPageLoading;
   elements.exportAllLogsCsv.disabled = offline ? !anyImportedLogs :
-    !serial || !anyDeviceLogs || logCsvBusy || logPageLoading;
+    !serial || !logInfo || !anyLoadedDeviceLogs || logCsvBusy || logPageLoading;
 }
 
 function exportLogsCsv() {
@@ -3197,21 +3200,7 @@ function exportLogsCsv() {
   }
 }
 
-async function fetchLatestLogRecords(type) {
-  const target = LOG_INITIAL_TARGETS[type.id];
-  const records = [];
-  let cursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
-  let more = true;
-  while (more && records.length < target) {
-    const page = await queryLogPage(type, cursor, 0, Math.min(target - records.length, LOG_MAX_RECORDS_PER_REQUEST));
-    records.push(...page.records);
-    cursor = page.cursor;
-    more = page.more && page.records.length > 0;
-  }
-  return {records, cursor, more};
-}
-
-async function exportAllLogsCsv() {
+function exportAllLogsCsv() {
   if (logCsvBusy) return;
   logCsvBusy = true;
   updateLogRangeControls();
@@ -3229,16 +3218,6 @@ async function exportAllLogsCsv() {
         const cached = activeKey ? logViewCache.get(activeKey) : null;
         if (type.id === selectedLogType) records = logRecords.slice();
         else records = cached?.records?.slice() || [];
-        if (!records.length && logInfo[type.countKey] > 0) {
-          elements.logsStatus.textContent = `Loading latest ${type.label.toLowerCase()} for Export All…`;
-          const latest = await fetchLatestLogRecords(type);
-          records = latest.records;
-          const key = `${type.id}:latest`;
-          logViewCache.set(key, {records: records.slice(), cursor: latest.cursor,
-            more: latest.more, rangeActive: false, rangeAll: false, countLimit: 0,
-            rangeStart: 0, rangeEnd: 0, selectedDate: '', mode: 'latest'});
-          logTypeActiveView.set(type.id, key);
-        }
         entries.push(...records.map((record) => ({record, type})));
       }
     }
