@@ -289,14 +289,11 @@ jobs:
           The HTML and Windows apps identify themselves as Version: ${RELEASE_VERSION}. This build is for testing and may change without notice.
 
           ## Changes
-          **Changes since the previous pre-release (202611100906-dev-ba6dcfc):**
-          - Added log drill-down controls to open an hour as minute records, a day as hour records, or an alert's starting minute.
-          - Updated the device's large numeric font to Anonymous Pro Bold.
-          - Improved clock synchronization with a timed exchange and subsecond RTC data; the app shows “Waiting to stabilize…” beside the difference while the comparison settles.
-          - Added CNT and elapsed seconds to the Overview chart summary, showed seconds in device time, and moved SOLAR and BATTERY to the end of the status row.
-          - Standardized unit ordering across the app and matched R/h display precision to the device.
-          - Updated log MAX calculation to start from the first real sample's computed rate. Later samples only raise it; hourly MAX rolls up from minute maxima and daily MAX from hourly maxima.
-          - Disabled settings and device actions that the connected firmware does not expose through its settings count or protocol capabilities.
+          **Changes since 202611112101:**
+          - Companion app changes only; firmware behavior is unchanged.
+          - Added offline log import for app-exported CSV files and complete EEPROM/SPI BIN dumps. CSV imports merge into the archive; BIN imports replace it. Imported records can be browsed and exported without a device connection.
+          - Added Export All for records already loaded across log types. It skips types with no loaded records and does not fetch additional data.
+          - Added pagination for large log tables, shown above 100 loaded records, with page-size choices from 10 through 5,000 or All; the default is 1,000.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded): ${canonical_sha256}
