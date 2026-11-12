@@ -312,10 +312,20 @@ const elements = {
   exitLogsFullscreen: document.querySelector('#exit-logs-fullscreen'),
   logTabs: document.querySelector('#log-tabs'),
   logContent: document.querySelector('#log-content'),
+  logPagination: document.querySelector('#log-pagination'),
+  logPageSize: document.querySelector('#log-page-size'),
+  logPageNumberLabel: document.querySelector('#log-page-number-label'),
+  logPageNumber: document.querySelector('#log-page-number'),
+  logPageStatus: document.querySelector('#log-page-status'),
+  logPagePrevious: document.querySelector('#log-page-previous'),
+  logPageNext: document.querySelector('#log-page-next'),
   logRangeMode: document.querySelector('#log-range-mode'),
   logRangeExtra: document.querySelector('#log-range-extra'),
   logFillMetric: document.querySelector('#log-fill-metric'),
   exportLogsCsv: document.querySelector('#export-logs-csv'),
+  exportAllLogsCsv: document.querySelector('#export-all-logs-csv'),
+  importLogs: document.querySelector('#import-logs'),
+  importLogsFile: document.querySelector('#import-logs-file'),
   logsDeviceTime: document.querySelector('#logs-device-time'),
   loadLogSelection: document.querySelector('#load-log-selection'),
   logsStatus: document.querySelector('#logs-status'),
@@ -1048,6 +1058,9 @@ let selectedResetAction = 0;
 let logInfo = null;
 let selectedLogType = 'minutes';
 let logRecords = [];
+let logDisplayPage = 0;
+let offlineImportedLogStore = null;
+let offlineLogsImported = false;
 let logStartOffset = 0;
 let rateHistoryUnit = 'CPM';
 let rateLevel = 'blue';
@@ -1706,7 +1719,7 @@ function restoreLogView() {
 }
 function clearLogView() {
   logRecords = []; logCursor = {time: 0xffffffff, epoch: 0xffff, skip: 0}; logHasMore = true;
-  logStartOffset = 0; logPageTotal = 0;
+  logStartOffset = 0; logPageTotal = 0; logDisplayPage = 0;
 }
 function isLatestLogView() {
   return elements.logRangeMode.value === 'latest';
@@ -1930,11 +1943,14 @@ function updateLogRangeControls() {
     (logStopRequested ? 'Stopping…' : 'Stop') : 'Load';
   elements.loadLogSelection.classList.toggle('button-stop', logPageLoading);
   elements.loadLogSelection.disabled = logPageLoading ? logStopRequested :
-    (!serial || !logInfo || logCsvBusy ||
+    ((!serial && !offlineLogsImported) || !logInfo || logCsvBusy ||
       (relativeMode && (!logInfo.calendarValid || !relativeLogRange())) ||
       (datesMode && (!logInfo.calendarValid || !readCustomLogRange(type))) ||
       (countMode && !validCount));
   elements.exportLogsCsv.disabled = !serial || !logRecords.length || logCsvBusy || logPageLoading;
+  elements.loadMoreLogs.hidden = !serial;
+  updateLogPagination();
+  updateLogActions();
 }
 
 function initializeCustomRangeInputs(type) {
@@ -2096,6 +2112,49 @@ function sortedLogRecords(type) {
   });
 }
 
+function updateLogPagination(total = logRecords.length) {
+  const enabled = Boolean(logInfo && total > 100);
+  elements.logPagination.hidden = !enabled;
+  elements.logPageSize.disabled = !enabled || logPageLoading || logCsvBusy;
+  if (!enabled) {
+    logDisplayPage = 0;
+    return;
+  }
+  const pageSize = elements.logPageSize.value === 'all' ?
+    Math.max(1, total) : Number(elements.logPageSize.value) || 1000;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  logDisplayPage = Math.min(logDisplayPage, pageCount - 1);
+  if (elements.logPageNumber.dataset.pageCount !== String(pageCount)) {
+    const options = document.createDocumentFragment();
+    for (let page = 0; page < pageCount; ++page) {
+      const option = document.createElement('option');
+      option.value = String(page);
+      option.textContent = formatGroupedNumber(page + 1);
+      options.append(option);
+    }
+    elements.logPageNumber.replaceChildren(options);
+    elements.logPageNumber.dataset.pageCount = String(pageCount);
+  }
+  elements.logPageNumber.value = String(logDisplayPage);
+  elements.logPageNumberLabel.hidden = pageCount <= 1;
+  elements.logPageNumber.disabled = logCsvBusy || logPageLoading || pageCount <= 1;
+  const start = total ? logDisplayPage * pageSize + 1 : 0;
+  const end = total ? Math.min(total, (logDisplayPage + 1) * pageSize) : 0;
+  elements.logPageStatus.textContent = total ?
+    `${formatGroupedNumber(start)}–${formatGroupedNumber(end)} of ${formatGroupedNumber(total)} · Page ${formatGroupedNumber(logDisplayPage + 1)} of ${formatGroupedNumber(pageCount)}` :
+    '0 records';
+  elements.logPagePrevious.disabled = logDisplayPage === 0 || logCsvBusy || logPageLoading;
+  elements.logPageNext.disabled = logDisplayPage + 1 >= pageCount || logCsvBusy || logPageLoading;
+}
+
+function visibleLogRecords(sorted) {
+  if (sorted.length <= 100) return sorted;
+  if (elements.logPageSize.value === 'all') return sorted;
+  const pageSize = Number(elements.logPageSize.value) || 1000;
+  const start = logDisplayPage * pageSize;
+  return sorted.slice(start, start + pageSize);
+}
+
 function makeLogHeaderButton(label, key) {
   const button = document.createElement('button');
   button.type = 'button';
@@ -2108,6 +2167,8 @@ function makeLogHeaderButton(label, key) {
   button.addEventListener('click', () => {
     if (logSortKey === key) logSortDirection = logSortDirection === 'asc' ? 'desc' : 'asc';
     else { logSortKey = key; logSortDirection = 'desc'; }
+    logDisplayPage = 0;
+    elements.logContent.scrollTop = 0;
     renderLogSummary();
   });
   return button;
@@ -2194,8 +2255,21 @@ function renderLogTabs() {
     button.setAttribute('aria-selected', String(type.id === selectedLogType));
     button.addEventListener('click', () => {
       if (selectedLogType === type.id) return;
+      if (!serial && offlineLogsImported) {
+        selectedLogType = type.id;
+        logDisplayPage = 0;
+        updateLogRangeControls();
+        elements.logTabs.querySelectorAll('[data-log-type]').forEach((tab) => {
+          const active = tab.dataset.logType === selectedLogType;
+          tab.classList.toggle('active', active);
+          tab.setAttribute('aria-selected', String(active));
+        });
+        loadImportedLogSelection(false);
+        return;
+      }
       saveLogView(); ++logPageGeneration;
       selectedLogType = type.id;
+      logDisplayPage = 0;
       updateLogRangeControls();
       elements.logTabs.querySelectorAll('[data-log-type]').forEach((tab) => {
         const active = tab.dataset.logType === selectedLogType;
@@ -2365,7 +2439,8 @@ function renderLogSummary(preserveRows = false, prependNewRows = true) {
   }
   if (!preserveRows) elements.logContent.replaceChildren();
   updateLogRangeControls();
-  elements.loadMoreLogs.hidden = false;
+  updateLogPagination();
+  elements.loadMoreLogs.hidden = !serial;
   elements.loadMoreLogs.disabled = !serial || !logInfo || logPageLoading ||
     !canLoadMoreLogRecords() || (!logRecords.length && !canLoadOlderLogRange());
   if (!logInfo) return;
@@ -2384,7 +2459,7 @@ function renderLogSummary(preserveRows = false, prependNewRows = true) {
   const existingRows = preserveRows ? new Map(
     [...elements.logContent.querySelectorAll('.log-record:not(.log-total)')]
       .map((row) => [row.dataset.logKey, row])) : null;
-  for (const record of sortedLogRecords(type)) {
+  for (const record of visibleLogRecords(sortedLogRecords(type))) {
     const key = logRecordKey(record);
     let row = null;
     if (preserveRows) {
@@ -2509,7 +2584,55 @@ async function applyCalendarRange(range, mode) {
   await loadLogPage(false);
 }
 
+function loadImportedLogSelection() {
+  if (!offlineLogsImported || !logInfo) return;
+  const type = logTypes.find((item) => item.id === selectedLogType);
+  const mode = elements.logRangeMode.value;
+  let range = null;
+  if (['hour', 'day', 'month'].includes(mode)) {
+    if (!logInfo.calendarValid) {
+      elements.logsStatus.textContent = 'Imported records have no calendar timestamps for this range.';
+      return;
+    }
+    range = relativeLogRange();
+  } else if (mode === 'dates') {
+    if (!logInfo.calendarValid) {
+      elements.logsStatus.textContent = 'Imported records have no calendar timestamps for this range.';
+      return;
+    }
+    range = readCustomLogRange(type);
+  }
+  if (['hour', 'day', 'month', 'dates'].includes(mode) && !range) return;
+
+  if (range) {
+    logRangeActive = true;
+    logRangeAll = false;
+    logCountLimit = 0;
+    logRangeStart = range.start;
+    logRangeEnd = range.end;
+    logSelectedDate = `${range.start}:${range.end}`;
+  } else {
+    logRangeActive = false;
+    logRangeAll = mode === 'all';
+    logCountLimit = mode === 'count' ?
+      Number(document.querySelector('#log-custom-count')?.value) || 0 : 0;
+    logRangeStart = 0;
+    logRangeEnd = 0;
+    logSelectedDate = mode === 'all' ? 'all' : '';
+  }
+  const allRecords = offlineImportedLogStore[type.id].slice();
+  let records = range ? allRecords.filter(logRecordInRange) :
+    allRecords.sort((left, right) => right.timestamp - left.timestamp || right.epoch - left.epoch);
+  if (mode === 'count' && logCountLimit) records = records.slice(0, logCountLimit);
+  clearLogView();
+  logRecords = records;
+  renderLogSummary();
+  elements.logsStatus.textContent = `Imported archive · ${formatGroupedNumber(logRecords.length)} ${type.label.toLowerCase()} records shown.`;
+  updateLogActions();
+}
+
 async function loadLogSelection() {
+  if (!serial && offlineLogsImported) return loadImportedLogSelection();
   if (!serial || !logInfo) return;
   logRefreshRetryAt = 0;
   const mode = elements.logRangeMode.value;
@@ -2646,8 +2769,410 @@ function downloadLogCsv(records, filename) {
   URL.revokeObjectURL(url);
 }
 
+function parseCsvRows(text) {
+  const rows = [];
+  let row = [], field = '', quoted = false;
+  const input = text.replace(/^\uFEFF/, '');
+  for (let index = 0; index < input.length; ++index) {
+    const char = input[index];
+    if (quoted) {
+      if (char === '"' && input[index + 1] === '"') {
+        field += '"';
+        ++index;
+      } else if (char === '"') quoted = false;
+      else field += char;
+    } else if (char === '"' && field.length === 0) quoted = true;
+    else if (char === ',') { row.push(field); field = ''; }
+    else if (char === '\n' || char === '\r') {
+      if (char === '\r' && input[index + 1] === '\n') ++index;
+      row.push(field); field = '';
+      if (row.some((cell) => cell.length)) rows.push(row);
+      row = [];
+    } else field += char;
+  }
+  if (quoted) throw new Error('CSV contains an unfinished quoted field.');
+  if (field.length || row.length) {
+    row.push(field);
+    if (row.some((cell) => cell.length)) rows.push(row);
+  }
+  return rows;
+}
+
+function csvTimestampSeconds(text, calendar) {
+  if (calendar) {
+    const match = /^(\d{2}|\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?$/.exec(text.trim());
+    if (!match) throw new Error(`Invalid calendar timestamp: ${text}`);
+    const year = Number(match[1].length === 2 ? `20${match[1]}` : match[1]);
+    const month = Number(match[2]), day = Number(match[3]);
+    const hour = Number(match[4] || 0), minute = Number(match[5] || 0);
+    const date = new Date(Date.UTC(year, month - 1, day, hour, minute));
+    if (year < 2000 || year > 2099 || date.getUTCFullYear() !== year ||
+        date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day ||
+        hour > 23 || minute > 59) throw new Error(`Invalid calendar timestamp: ${text}`);
+    return Math.floor(date.getTime() / 1000 - Date.UTC(2000, 0, 1) / 1000);
+  }
+  const match = /^UP\s+(\d+):(\d{2})(?::(\d{2}))?$/i.exec(text.trim());
+  if (!match) throw new Error(`Invalid uptime timestamp: ${text}`);
+  const hours = Number(match[1]), minutes = Number(match[2]), seconds = Number(match[3] || 0);
+  if (minutes > 59 || seconds > 59) throw new Error(`Invalid uptime timestamp: ${text}`);
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+function parseLogCsv(text) {
+  const rows = parseCsvRows(text);
+  if (rows.length < 2) throw new Error('CSV has no log records.');
+  const header = rows[0].map((name) => name.trim().toLowerCase());
+  const required = ['timestamp', 'log_type', 'dose', 'dose_unit', 'average',
+    'rate_unit', 'maximum', 'covered_seconds', 'status', 'epoch',
+    'record_id', 'calendar_valid'];
+  const index = Object.fromEntries(required.map((name) => [name, header.indexOf(name)]));
+  if (required.some((name) => index[name] < 0)) {
+    throw new Error('Unsupported CSV columns. Import a CSV exported by this app.');
+  }
+  const imported = {minutes: [], hours: [], days: [], alerts: []};
+  const numeric = (row, column, label) => {
+    if (!row[index[column]]?.trim()) throw new Error(`Missing ${label} in CSV.`);
+    const value = Number(row[index[column]]);
+    if (!Number.isFinite(value) || value < 0) throw new Error(`Invalid ${label} in CSV.`);
+    return value;
+  };
+  const unitName = (value) => value.trim().replace(/[μµu]/gi, 'µ').replace(/\s/g, '');
+  for (let rowIndex = 1; rowIndex < rows.length; ++rowIndex) {
+    const row = rows[rowIndex];
+    if (row.length !== header.length) throw new Error(`CSV row ${rowIndex + 1} has the wrong number of columns.`);
+    const type = row[index.log_type].trim().toLowerCase();
+    if (!Object.hasOwn(imported, type)) throw new Error(`Unknown log type on CSV row ${rowIndex + 1}.`);
+    const calendarFlag = numeric(row, 'calendar_valid', 'calendar flag');
+    if (calendarFlag !== 0 && calendarFlag !== 1) throw new Error(`Invalid calendar flag on CSV row ${rowIndex + 1}.`);
+    const calendar = calendarFlag === 1;
+    const doseUnit = unitName(row[index.dose_unit]);
+    const rateUnit = unitName(row[index.rate_unit]);
+    const doseFactor = doseUnit === 'CNT' ? 1 : doseUnit === 'µSv' ? 1 / 0.000111 :
+      doseUnit === 'µR' ? 1 / 0.0111 : 0;
+    const rateFactor = rateUnit === 'CPM' ? 1 : rateUnit === 'µSv/h' ? 1 / 0.00666 :
+      rateUnit === 'µR/h' ? 1 / 0.666 : 0;
+    if (!doseFactor || !rateFactor) throw new Error(`Unsupported units on CSV row ${rowIndex + 1}.`);
+    const dose = Math.round(numeric(row, 'dose', 'dose') * doseFactor);
+    const average = Math.round(numeric(row, 'average', 'average rate') * rateFactor);
+    const maximum = Math.round(numeric(row, 'maximum', 'maximum rate') * rateFactor);
+    const covered = Math.round(numeric(row, 'covered_seconds', 'coverage'));
+    const epoch = Math.round(numeric(row, 'epoch', 'epoch'));
+    const id = Math.round(numeric(row, 'record_id', 'record id'));
+    if (![dose, average, maximum, covered, epoch, id].every(Number.isSafeInteger) ||
+        epoch > 65535 || id > 65535 || covered > 0xffffffff) {
+      throw new Error(`Out-of-range value on CSV row ${rowIndex + 1}.`);
+    }
+    const status = row[index.status].trim().toLowerCase();
+    if (!['full', 'partial', 'live'].includes(status)) throw new Error(`Unknown record status on CSV row ${rowIndex + 1}.`);
+    imported[type].push({timestamp: csvTimestampSeconds(row[index.timestamp], calendar),
+      dose, average, maximum, covered, epoch, id, calendar, available: true,
+      partial: status === 'partial', live: status === 'live'});
+  }
+  return imported;
+}
+
+function emptyOfflineLogStore() {
+  return {minutes: [], hours: [], days: [], alerts: []};
+}
+
+function offlineLogCounts(store = offlineImportedLogStore) {
+  return {minutes: store?.minutes.length ?? 0, hours: store?.hours.length ?? 0,
+    days: store?.days.length ?? 0, alerts: store?.alerts.length ?? 0};
+}
+
+function mergeImportedLogStore(target, incoming) {
+  for (const type of logTypes) {
+    const combined = new Map();
+    for (const record of [...(target[type.id] || []), ...(incoming[type.id] || [])]) {
+      combined.set(`${record.timestamp}:${record.epoch}:${record.id}`, record);
+    }
+    target[type.id] = [...combined.values()].sort((a, b) => b.timestamp - a.timestamp || b.epoch - a.epoch);
+  }
+}
+
+function logCrc16(bytes, initial = 0xffff) {
+  let crc = initial;
+  for (const byte of bytes) {
+    crc ^= byte << 8;
+    for (let bit = 0; bit < 8; ++bit) {
+      crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+    }
+  }
+  return crc;
+}
+
+function logCrc8(bytes) {
+  let crc = 0;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; ++bit) {
+      crc = crc & 0x80 ? ((crc << 1) ^ 0x07) & 0xff : (crc << 1) & 0xff;
+    }
+  }
+  return crc;
+}
+
+function readLogBits(bytes, bitOffset, bitCount) {
+  let value = 0;
+  for (let bit = 0; bit < bitCount; ++bit) {
+    if (bytes[(bitOffset + bit) >> 3] & (1 << ((bitOffset + bit) & 7))) value += 2 ** bit;
+  }
+  return value;
+}
+
+function decodePackedLogRecord(type, bytes, version = 2) {
+  const periods = {minutes: 60, hours: 3600, days: 86400, alerts: 60};
+  const layout = {
+    minutes: {time: 20, count: 19, alert: false},
+    hours: {time: 14, count: 24, alert: false},
+    days: {time: 9, count: 29, alert: false},
+    alerts: {time: 20, count: 25, alert: true},
+  }[type];
+  if (!layout) return null;
+  const legacy = version === 1 && type !== 'alerts';
+  const required = layout.alert ? 11 : legacy ? 8 : 9;
+  if (bytes.length !== required) return null;
+  let bit = 0;
+  const periodIndex = readLogBits(bytes, bit, layout.time); bit += layout.time;
+  const count = readLogBits(bytes, bit, layout.count); bit += layout.count;
+  const maximum = readLogBits(bytes, bit, 19); bit += 19;
+  let duration = 0;
+  if (layout.alert) { duration = readLogBits(bytes, bit, 12) + 1; bit += 12; }
+  const segment = readLogBits(bytes, bit, 6); bit += 6;
+  let covered = periods[type];
+  if (layout.alert) covered = duration;
+  else if (!legacy) {
+    const missingCode = readLogBits(bytes, bit, 8); bit += 8;
+    covered = missingCode === 0 ? periods[type] :
+      Math.max(1, Math.floor((periods[type] * (256 - missingCode) + 128) / 256));
+  }
+  const periodIndexLimit = {minutes: 527040, hours: 8784, days: 366, alerts: 527040}[type];
+  const countLimit = {minutes: 262144, hours: 262144 * 60,
+    days: 262144 * 1440, alerts: Math.floor(262144 * 4096 / 60)}[type];
+  if (periodIndex >= periodIndexLimit || count > countLimit || maximum > 262144 ||
+      segment >= 64 || duration > 4096) return null;
+  for (; bit < bytes.length * 8; ++bit) {
+    if (bytes[bit >> 3] & (1 << (bit & 7))) return null;
+  }
+  const average = covered ? Math.floor((count * 60 + Math.floor(covered / 2)) / covered) : 0;
+  return {periodIndex, dose: count, average, maximum, covered, segment};
+}
+
+function logTimestampFromIndex(type, periodIndex, yearDescriptor, referenceYear) {
+  const period = type === 'minutes' || type === 'alerts' ? 60 : type === 'hours' ? 3600 : 86400;
+  if (!(yearDescriptor & 0x20)) {
+    return {timestamp: (yearDescriptor & 0x1f) * 366 * 86400 + periodIndex * period,
+      calendar: false};
+  }
+  const yearCode = yearDescriptor & 0x1f;
+  const delta = ((yearCode - (referenceYear & 0x1f) + 48) % 32) - 16;
+  const year = referenceYear + delta;
+  if (year < 2000 || year > 2099) return null;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const maximumIndex = (leap ? 366 : 365) * 86400 / period;
+  if (periodIndex >= maximumIndex) return null;
+  const start = Date.UTC(year, 0, 1) / 1000 - Date.UTC(2000, 0, 1) / 1000;
+  return {timestamp: start + periodIndex * period, calendar: true};
+}
+
+function decodeEepromState(bytes, base, capacities) {
+  const state = bytes.subarray(base, base + 15);
+  if (state.length !== 15 || state[0] !== 0x4c || state[1] !== 3 ||
+      state[14] !== 0xa5 || logCrc8(state.subarray(0, 13)) !== state[13]) return null;
+  const heads = [], counts = [];
+  for (let index = 0; index < 8; ++index) {
+    const packed = readLogBits(state, 24 + index * 7, 7);
+    const typeIndex = Math.floor(index / 2);
+    if ((index & 1) === 0) {
+      if (packed >= capacities[typeIndex]) return null;
+      heads.push(packed);
+    } else {
+      if (packed > capacities[typeIndex]) return null;
+      counts.push(packed);
+    }
+  }
+  return {generation: state[2], heads, counts,
+    activeEpoch: state[10] | (state[11] << 8)};
+}
+
+function parseEepromLogDump(bytes) {
+  if (bytes.length !== 2048) throw new Error('EEPROM import requires a complete 2 KiB image.');
+  const capacities = [62, 25, 50, 30];
+  const stateA = decodeEepromState(bytes, 1998, capacities);
+  const stateB = decodeEepromState(bytes, 2013, capacities);
+  const state = stateA && stateB ?
+    ((((stateB.generation - stateA.generation) << 24) >> 24) > 0 ? stateB : stateA) : stateA || stateB;
+  if (!state) throw new Error('This EEPROM image has no supported log index (current format required).');
+  const segmentYears = bytes.subarray(1934, 1998);
+  const tableCrc = bytes[2044] | (bytes[2045] << 8);
+  if (logCrc16(segmentYears) !== tableCrc) throw new Error('EEPROM calendar metadata failed its checksum.');
+  const records = emptyOfflineLogStore();
+  const bases = [348, 906, 1131, 1581];
+  const sizes = [9, 9, 9, 11];
+  const types = ['minutes', 'hours', 'days', 'alerts'];
+  const referenceYear = new Date().getFullYear();
+  for (let typeIndex = 0; typeIndex < types.length; ++typeIndex) {
+    const type = types[typeIndex], capacity = capacities[typeIndex];
+    for (let age = 0; age < state.counts[typeIndex]; ++age) {
+      const slot = (state.heads[typeIndex] + capacity - 1 - age) % capacity;
+      const offset = bases[typeIndex] + slot * sizes[typeIndex];
+      const decoded = decodePackedLogRecord(type, bytes.subarray(offset, offset + sizes[typeIndex]));
+      if (!decoded) throw new Error(`EEPROM ${type} record ${slot} is invalid.`);
+      if (segmentYears[decoded.segment] === 0xff) throw new Error(`EEPROM ${type} record has no calendar segment.`);
+      const time = logTimestampFromIndex(type, decoded.periodIndex,
+        segmentYears[decoded.segment], referenceYear);
+      if (!time) throw new Error(`EEPROM ${type} record timestamp is out of range.`);
+      const period = type === 'minutes' || type === 'alerts' ? 60 : type === 'hours' ? 3600 : 86400;
+      records[type].push({timestamp: time.timestamp, calendar: time.calendar,
+        epoch: (state.activeEpoch - ((state.activeEpoch - decoded.segment) & 63)) & 0xffff,
+        id: slot, dose: decoded.dose, average: decoded.average, maximum: decoded.maximum,
+        covered: decoded.covered, available: true, partial: type !== 'alerts' && decoded.covered < period,
+        live: false});
+    }
+  }
+  return {source: 'EEPROM', records};
+}
+
+function parseSpiLogDump(bytes) {
+  const sectorSize = 4096, headerSize = 32;
+  if (bytes.length !== 1024 * 1024) {
+    throw new Error('SPI log import requires the complete 1 MiB chip image; partial ranges are unsupported.');
+  }
+  const sectorCount = bytes.length / sectorSize;
+  const partitions = [Math.floor(sectorCount * 90 / 256),
+    Math.floor(sectorCount * 30 / 256), Math.floor(sectorCount * 50 / 256)];
+  const starts = [0, partitions[0], partitions[0] + partitions[1],
+    partitions[0] + partitions[1] + partitions[2]];
+  const ends = [starts[1], starts[2], starts[3], sectorCount];
+  const streamTypes = ['minutes', 'hours', 'days', 'alerts'];
+  const records = emptyOfflineLogStore();
+  const referenceYear = new Date().getFullYear();
+  let recognizedHeaders = 0, nextId = [0, 0, 0, 0];
+  for (let sector = 0; sector < sectorCount; ++sector) {
+    const streamIndex = starts.findIndex((start, index) => sector >= start && sector < ends[index]);
+    const type = streamTypes[streamIndex];
+    const address = sector * sectorSize;
+    const header = bytes.subarray(address, address + headerSize);
+    if (header.every((byte) => byte === 0xff) || header[17] === 0) continue;
+    if (header[0] !== 0x4c || header[1] !== 0x47 || header[2] !== 0x32 ||
+        header[3] !== 0x53 || (header[4] !== 1 && header[4] !== 2) ||
+        header[16] !== 0xa5 || logCrc16(header.subarray(0, 14)) !==
+          (header[14] | (header[15] << 8))) continue;
+    const headerType = streamTypes[header[5]];
+    if (headerType !== type || header[6] >= 64 || (header[7] & 0xc0)) continue;
+    ++recognizedHeaders;
+    const version = header[4];
+    const dataSize = type === 'alerts' ? 11 : version === 1 ? 8 : 9;
+    const slotSize = dataSize + 3;
+    const capacity = Math.floor((sectorSize - headerSize) / slotSize);
+    const generation = new DataView(bytes.buffer, bytes.byteOffset + address + 8, 4).getUint32(0, true);
+    const epoch = header[12] | (header[13] << 8);
+    for (let slot = 0; slot < capacity; ++slot) {
+      const offset = address + headerSize + slot * slotSize;
+      const entry = bytes.subarray(offset, offset + slotSize);
+      if (entry.every((byte) => byte === 0xff) || entry[dataSize + 2] !== 0xa5) continue;
+      const context = new Uint8Array(11);
+      context[0] = header[5]; context[1] = header[6]; context[2] = header[7];
+      context[3] = epoch & 0xff; context[4] = epoch >> 8;
+      new DataView(context.buffer).setUint32(5, generation, true);
+      new DataView(context.buffer).setUint16(9, slot, true);
+      const expectedCrc = entry[dataSize] | (entry[dataSize + 1] << 8);
+      const actualCrc = logCrc16(entry.subarray(0, dataSize), logCrc16(context));
+      if (actualCrc !== expectedCrc) continue;
+      const decoded = decodePackedLogRecord(type, entry.subarray(0, dataSize), version);
+      if (!decoded || decoded.segment !== header[6]) continue;
+      const time = logTimestampFromIndex(type, decoded.periodIndex, header[7], referenceYear);
+      if (!time) continue;
+      const period = type === 'minutes' || type === 'alerts' ? 60 : type === 'hours' ? 3600 : 86400;
+      records[type].push({timestamp: time.timestamp, calendar: time.calendar, epoch,
+        id: nextId[streamIndex]++ & 0xffff, dose: decoded.dose, average: decoded.average,
+        maximum: decoded.maximum, covered: decoded.covered, available: true,
+        partial: type !== 'alerts' && decoded.covered < period, live: false});
+    }
+  }
+  const recordCount = Object.values(records).reduce((sum, list) => sum + list.length, 0);
+  if (!recognizedHeaders || !recordCount) throw new Error('No valid Geiger-2 log sectors were found in this SPI image.');
+  for (const list of Object.values(records)) {
+    list.sort((a, b) => b.epoch - a.epoch || b.timestamp - a.timestamp);
+  }
+  return {source: 'SPI', records};
+}
+
+function parseLogMemoryDump(bytes) {
+  if (bytes.length === 2048) return parseEepromLogDump(bytes);
+  return parseSpiLogDump(bytes);
+}
+
+function activateOfflineImportedLogs() {
+  const counts = offlineLogCounts();
+  const all = Object.values(offlineImportedLogStore).flat();
+  const calendarRecords = all.filter((record) => record.calendar);
+  logInfo = {minutes: counts.minutes, hours: counts.hours, days: counts.days,
+    alerts: counts.alerts, calendarValid: calendarRecords.length > 0,
+    calendarSeconds: calendarRecords.reduce((latest, record) => Math.max(latest, record.timestamp), 0),
+    memory: 0, error: false};
+  offlineLogsImported = true;
+  logViewCache.clear();
+  logTypeActiveView.clear();
+  logRangeInputCache.clear();
+  logRangeDefaults.clear();
+  logCountLimit = 0;
+  logRangeActive = false;
+  logRangeAll = false;
+  logRangeStart = 0;
+  logRangeEnd = 0;
+  elements.logRangeMode.value = 'latest';
+  const firstType = logTypes.find((type) => counts[type.id] > 0);
+  if (firstType) selectedLogType = firstType.id;
+  logRecords = offlineImportedLogStore[selectedLogType].slice();
+  clearLogView();
+  logRecords = offlineImportedLogStore[selectedLogType].slice();
+  updateLogRangeControls();
+  renderLogTabs();
+  elements.logsStatus.textContent = `Imported logs · ${Object.values(counts).reduce((sum, count) => sum + count, 0)} records`;
+}
+
+async function importLogFile(file) {
+  if (!file) return;
+  const extension = file.name.split('.').pop().toLowerCase();
+  let imported;
+  let sourceLabel;
+  if (extension === 'csv') {
+    imported = parseLogCsv(await file.text());
+    if (!offlineImportedLogStore) offlineImportedLogStore = emptyOfflineLogStore();
+    mergeImportedLogStore(offlineImportedLogStore, imported);
+    sourceLabel = 'CSV merged';
+  } else if (extension === 'bin') {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    imported = parseLogMemoryDump(bytes);
+    offlineImportedLogStore = imported.records;
+    sourceLabel = `${imported.source} dump loaded`;
+  } else {
+    throw new Error('Choose an app-exported CSV or a full EEPROM/SPI log dump (.bin).');
+  }
+  activateOfflineImportedLogs();
+  elements.logsStatus.textContent = `${sourceLabel} · ${Object.values(offlineLogCounts()).reduce((sum, count) => sum + count, 0)} records`;
+  updateLogActions();
+}
+
+function updateLogActions() {
+  const offline = !serial;
+  const hasArchive = offline && offlineLogsImported;
+  elements.importLogs.hidden = !offline;
+  elements.exportLogsCsv.hidden = offline && !hasArchive;
+  elements.exportAllLogsCsv.hidden = offline && !hasArchive;
+  const typeRecordsLoaded = logRecords.length > 0;
+  const anyDeviceLogs = logInfo && logTypes.some((type) => logInfo[type.countKey] > 0);
+  const anyImportedLogs = offlineLogsImported &&
+    Object.values(offlineLogCounts()).some((count) => count > 0);
+  elements.exportLogsCsv.disabled = offline ? !hasArchive || !typeRecordsLoaded :
+    !serial || !typeRecordsLoaded || logCsvBusy || logPageLoading;
+  elements.exportAllLogsCsv.disabled = offline ? !anyImportedLogs :
+    !serial || !anyDeviceLogs || logCsvBusy || logPageLoading;
+}
+
 function exportLogsCsv() {
-  if (!serial || !logInfo || logCsvBusy) return;
+  if ((!serial && !offlineLogsImported) || (serial && !logInfo) || logCsvBusy) return;
   const generation = logPageGeneration;
   const type = logTypes.find((item) => item.id === selectedLogType);
   const records = logRecords.slice();
@@ -2664,6 +3189,64 @@ function exportLogsCsv() {
     downloadLogCsv(records.map((record) => ({record, type})),
       filename);
     elements.logsStatus.textContent = `Exported ${formatGroupedNumber(records.length)} ${type.label.toLowerCase()} records.`;
+  } catch (error) {
+    elements.logsStatus.textContent = error.message;
+  } finally {
+    logCsvBusy = false;
+    updateLogRangeControls();
+  }
+}
+
+async function fetchLatestLogRecords(type) {
+  const target = LOG_INITIAL_TARGETS[type.id];
+  const records = [];
+  let cursor = {time: 0xffffffff, epoch: 0xffff, skip: 0};
+  let more = true;
+  while (more && records.length < target) {
+    const page = await queryLogPage(type, cursor, 0, Math.min(target - records.length, LOG_MAX_RECORDS_PER_REQUEST));
+    records.push(...page.records);
+    cursor = page.cursor;
+    more = page.more && page.records.length > 0;
+  }
+  return {records, cursor, more};
+}
+
+async function exportAllLogsCsv() {
+  if (logCsvBusy) return;
+  logCsvBusy = true;
+  updateLogRangeControls();
+  elements.logsStatus.textContent = 'Preparing Export All…';
+  try {
+    let entries = [];
+    if (!serial && offlineLogsImported) {
+      entries = logTypes.flatMap((type) =>
+        offlineImportedLogStore[type.id].map((record) => ({record, type})));
+    } else if (serial && logInfo) {
+      saveLogView();
+      for (const type of logTypes) {
+        let records;
+        const activeKey = logTypeActiveView.get(type.id);
+        const cached = activeKey ? logViewCache.get(activeKey) : null;
+        if (type.id === selectedLogType) records = logRecords.slice();
+        else records = cached?.records?.slice() || [];
+        if (!records.length && logInfo[type.countKey] > 0) {
+          elements.logsStatus.textContent = `Loading latest ${type.label.toLowerCase()} for Export All…`;
+          const latest = await fetchLatestLogRecords(type);
+          records = latest.records;
+          const key = `${type.id}:latest`;
+          logViewCache.set(key, {records: records.slice(), cursor: latest.cursor,
+            more: latest.more, rangeActive: false, rangeAll: false, countLimit: 0,
+            rangeStart: 0, rangeEnd: 0, selectedDate: '', mode: 'latest'});
+          logTypeActiveView.set(type.id, key);
+        }
+        entries.push(...records.map((record) => ({record, type})));
+      }
+    }
+    if (!entries.length) throw new Error('No loaded log records to export.');
+    entries.sort((a, b) => a.type.protocolId - b.type.protocolId ||
+      b.record.timestamp - a.record.timestamp || b.record.epoch - a.record.epoch);
+    downloadLogCsv(entries, 'device-logs-all.csv');
+    elements.logsStatus.textContent = `Exported ${formatGroupedNumber(entries.length)} records across all log types.`;
   } catch (error) {
     elements.logsStatus.textContent = error.message;
   } finally {
@@ -3625,6 +4208,7 @@ function importThemeConfigCode() {
 }
 
 function renderOfflinePreview() {
+  if (!offlineLogsImported) logInfo = null;
   setDeviceModeActive(1);
   if (elements.deviceScreenAlwaysOn) {
     elements.deviceScreenAlwaysOn.dataset.enabled = 'false';
@@ -3759,8 +4343,10 @@ function renderOfflinePreview() {
     tab.addEventListener('click', () => renderDemoLog(id));
     elements.logTabs.append(tab);
   });
-  renderDemoLog(selectedLogType);
+  if (offlineLogsImported) activateOfflineImportedLogs();
+  else renderDemoLog(selectedLogType);
   updateLogRangeControls();
+  updateLogActions();
   elements.settingsDeviceTime.textContent = '--:--:--';
   elements.settingsDeviceDate.textContent = '---- -- --';
   elements.settingsClockDifference.textContent = '—';
@@ -4351,12 +4937,49 @@ elements.copyDiagnostics.addEventListener('click', async () => {
   }
 });
 elements.logRangeMode.addEventListener('change', updateLogRangeControls);
+elements.logPageSize.addEventListener('change', () => {
+  logDisplayPage = 0;
+  elements.logContent.scrollTop = 0;
+  renderLogSummary();
+});
+elements.logPagePrevious.addEventListener('click', () => {
+  logDisplayPage = Math.max(0, logDisplayPage - 1);
+  elements.logContent.scrollTop = 0;
+  renderLogSummary();
+});
+elements.logPageNext.addEventListener('click', () => {
+  ++logDisplayPage;
+  elements.logContent.scrollTop = 0;
+  renderLogSummary();
+});
+elements.logPageNumber.addEventListener('change', () => {
+  logDisplayPage = Number(elements.logPageNumber.value) || 0;
+  elements.logContent.scrollTop = 0;
+  renderLogSummary();
+});
 elements.logFillMetric.addEventListener('change', () => {
   logFillMetric = elements.logFillMetric.value;
   if (serial && logInfo) renderLogSummary();
   else demoLogRenderer?.(selectedLogType);
 });
 elements.exportLogsCsv.addEventListener('click', exportLogsCsv);
+elements.exportAllLogsCsv.addEventListener('click', exportAllLogsCsv);
+elements.importLogs.addEventListener('click', () => elements.importLogsFile.click());
+elements.importLogsFile.addEventListener('change', async () => {
+  const file = elements.importLogsFile.files?.[0];
+  if (!file) return;
+  elements.importLogs.disabled = true;
+  elements.logsStatus.textContent = `Reading ${file.name}…`;
+  try {
+    await importLogFile(file);
+  } catch (error) {
+    elements.logsStatus.textContent = `Import failed: ${error.message}`;
+  } finally {
+    elements.importLogs.disabled = false;
+    elements.importLogsFile.value = '';
+    updateLogActions();
+  }
+});
 elements.firmwareTab.addEventListener('click', () => selectPage('firmware'));
 elements.rebootFirmware.addEventListener('click', rebootToFirmware);
 elements.rebootBootloader.addEventListener('click', rebootToBootloader);
@@ -6505,6 +7128,7 @@ async function connectDevice(portOverride = null, transport = null) {
       renderOfflinePreview();
       showNotice(error.message, 'error');
     });
+    updateLogActions();
     await serial.connect(portOverride, transport);
     bootloaderPortOpen = false;
     elements.rebootFirmware.disabled = false;

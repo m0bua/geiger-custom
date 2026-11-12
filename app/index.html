@@ -231,8 +231,31 @@
           <button id="load-log-selection" class="button button-quiet" type="button" disabled>Load</button>
           <button id="load-more-logs" class="button button-quiet" type="button" disabled>More</button>
           <button id="export-logs-csv" class="button button-quiet" type="button" disabled>Export</button>
+          <button id="export-all-logs-csv" class="button button-quiet" type="button" disabled hidden>Export All</button>
+          <button id="import-logs" class="button button-quiet" type="button" hidden>Import</button>
+          <input id="import-logs-file" type="file" accept=".csv,.bin,text/csv,application/octet-stream" hidden>
           <button id="exit-logs-fullscreen" class="button button-quiet logs-fullscreen-button" type="button" aria-label="Exit full screen" title="Exit full screen" hidden>↙</button>
         </div>
+      </div>
+      <div id="log-pagination" class="log-pagination" hidden>
+        <span id="log-page-status" aria-live="polite"></span>
+        <label for="log-page-size">Rows
+          <select id="log-page-size">
+            <option value="10">10</option>
+            <option value="30">30</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="500">500</option>
+            <option value="1000" selected>1000</option>
+            <option value="5000">5000</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+        <label id="log-page-number-label" for="log-page-number">Page
+          <select id="log-page-number"></select>
+        </label>
+        <button id="log-page-previous" class="button button-quiet" type="button" disabled>Previous</button>
+        <button id="log-page-next" class="button button-quiet" type="button" disabled>Next</button>
       </div>
       <div id="log-content" class="log-content"></div>
     </section>

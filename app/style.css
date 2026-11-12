@@ -287,6 +287,15 @@ body.logs-page-active .log-content { height: auto; min-height: 0; max-height: no
 .log-date-tools #log-range-extra { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 .log-date-tools #log-range-extra[hidden] { display: inline-flex !important; visibility: hidden; }
 .log-date-tools > button { flex: 0 0 auto; }
+.log-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 7px; min-height: 36px; padding: 4px 0; color: var(--muted); font-size: 10px; }
+.log-pagination[hidden] { display: none; }
+.log-pagination > span { font: 10px "DM Mono", Consolas, monospace; white-space: nowrap; }
+.log-pagination > label { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.log-pagination select { min-height: 28px; padding: 0 7px; border: 1px solid var(--line); border-radius: 7px; color: #d8e2e4; background: #111a1f; font: 10px "DM Mono", Consolas, monospace; }
+.log-pagination #log-page-size { min-width: 64px; }
+.log-pagination #log-page-number { min-width: 58px; }
+.log-pagination label[hidden] { display: none; }
+.log-pagination .button { min-height: 28px; padding: 0 9px; font-size: 10px; }
 .log-grid { min-width: 660px; display: grid; grid-template-columns: 1.1fr repeat(4, minmax(90px, 1fr)) 32px; gap: 8px; align-items: center; }
 .log-grid-header { position: sticky; z-index: 3; top: 0; box-sizing: border-box; min-height: 32px; padding: 8px 10px; color: var(--muted); background: #111a1f; font-size: 10px; text-transform: uppercase; }
 .log-grid-header .log-sort-button { width: 100%; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; text-align: right; text-transform: inherit; cursor: pointer; }
