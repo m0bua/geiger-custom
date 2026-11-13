@@ -420,11 +420,28 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
 [hidden] { display: none !important; }
 @keyframes pulse { 50% { opacity: .35; } }
 @media (min-width: 1180px) {
-  .settings-pair { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(10, auto); column-gap: 56px; }
-  .theme-color-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .release-history-content { max-height: 160px; }
 }
+@media (min-width: 860px) {
+  .settings-pair { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(10, auto); column-gap: 56px; }
+}
+@media (min-width: 651px) and (max-width: 1179px) {
+  .theme-colors { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .theme-color-group { grid-template-columns: 1fr; gap: 8px; }
+  .theme-color-grid { grid-template-columns: 1fr; }
+}
+@media (min-width: 651px) and (max-width: 859px) {
+  .settings-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: none; grid-auto-flow: row; }
+  .setting-row { align-items: flex-start; flex-direction: column; justify-content: center; gap: 6px; padding: 7px 0; }
+  .setting-row > label { width: 100%; }
+  .setting-controls { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+  .setting-row select { min-width: 0; max-width: 100%; flex: 1 1 110px; }
+  .setting-row.setting-reset, .setting-row.setting-power-actions { grid-column: 1 / -1; order: 1; }
+  .setting-row.setting-power-actions { align-items: center; flex-direction: row; justify-content: space-between; }
+  .setting-power-actions .setting-controls { width: auto; justify-content: flex-end; }
+}
 @media (max-width: 650px) {
+  .settings-pair { grid-template-columns: 1fr; grid-template-rows: none; grid-auto-flow: row; }
   .shell { width: calc(100% - 28px); }
   .toolbar { min-height: 58px; gap: 4px; }
   .tabs { min-width: 0; flex: 1 1 auto; overflow-x: auto; scrollbar-width: none; }
@@ -447,9 +464,8 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .metric-value small { font-size: 10px; }
   .metric-value { margin-top: 14px; }
   .detail-grid { grid-template-columns: repeat(2, 1fr); }
-  .settings-pair { grid-template-columns: 1fr; grid-template-rows: none; grid-auto-flow: row; }
   .theme-color-group { grid-template-columns: 1fr; gap: 8px; }
-  .theme-color-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .theme-color-grid { grid-template-columns: 1fr; }
   .settings-clock-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .settings-section-summary { align-items: flex-start; flex-wrap: wrap; gap: 8px; }
   #device-controls-status, #theme-status { order: 2; flex: 1 1 100%; }
@@ -482,4 +498,10 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .local-build-flash { align-items: flex-start; flex-direction: column; }
   .detail:nth-last-child(-n+3) { border-bottom: 1px solid rgba(160,186,194,.08); }
   .detail:nth-last-child(-n+2) { border-bottom: 0; }
+}
+@media (max-width: 860px) {
+  .toolbar { min-height: 0; flex-wrap: wrap; gap: 12px 4px; padding: 8px 0; }
+  .toolbar .connection { order: 1; margin-left: auto; font-size: 12px; gap: 8px; }
+  .toolbar .actions { order: 2; }
+  .toolbar .tabs { order: 3; flex: 0 0 100%; width: 100%; min-width: 0; flex-wrap: wrap; overflow: visible; }
 }

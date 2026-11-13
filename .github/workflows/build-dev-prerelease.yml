@@ -293,6 +293,9 @@ jobs:
           - NORMAL rate decreases now ease down smoothly on the device using elapsed time; rising readings respond faster. Measured CPM, logs, alarms, and the SEARCH estimator remain unchanged.
           - Rate refresh follows priority: SEARCH or USB every 100 ms, screen on every 500 ms, NORMAL with screen off every second, and INVISIBLE with screen off and no USB every 5 seconds. In the three economical states, each pulse refreshes immediately and resets the timer.
           - The companion app reads device status every 100 ms while connected and keeps chart history on one-second buckets, accumulating all pulse counts in each point.
+          - The rate chart supports two-finger pinch zoom on touchscreens, anchored around the gesture midpoint; one-finger dragging scrolls the history.
+          - Display theme groups use one full-width row each on wide and narrow screens, and two side-by-side columns at intermediate widths. Tablet layouts stack labels above controls and place Reset and Power actions below the settings.
+          - On narrow screens, connection status and controls have a separate row above the wrapping page tabs.
           - Live log refresh preserves the selected row order and rereads the previous live record from the device when a new period begins, including across paginated responses.
           - Updated the release portal: initially show three stable releases and the first newer pre-release. Stable history has its own Show more control; one shared pre-release control reveals all remaining pre-releases and older pre-releases.
 

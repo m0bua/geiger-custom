@@ -77,7 +77,7 @@
         </article>
       </section>
       <section class="chart-panel" aria-label="Recent rate history">
-        <canvas id="rate-chart" aria-label="Rate over the latest 1000 seconds; use the wheel to zoom and drag to scroll"></canvas>
+        <canvas id="rate-chart" aria-label="Rate over the latest 1000 seconds; pinch or use the wheel to zoom and drag to scroll"></canvas>
         <output id="rate-chart-action-hint" class="chart-action-hint" aria-label="Chart action" hidden>
           <svg data-action-icon="zoom-in" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5 21 21M10.5 7.5v6M7.5 10.5h6"></path></svg>
           <svg data-action-icon="zoom-out" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5 21 21M7.5 10.5h6"></path></svg>
@@ -415,7 +415,7 @@
       <details class="information-card manual-card">
         <summary>Readings and data</summary>
         <ul>
-          <li><strong>Overview:</strong> shows the current rate, accumulated dose for today, device time and date, uptime, solar level, and battery level in one status row. Expand the Rate and Dose cards for additional units and periods. The chart shows dose, CNT, minimum, average, maximum, and elapsed seconds for its visible range; zoom with the wheel and scroll by dragging. Hover over the chart to read a plotted value.</li>
+          <li><strong>Overview:</strong> shows the current rate, accumulated dose for today, device time and date, uptime, solar level, and battery level in one status row. Expand the Rate and Dose cards for additional units and periods. The chart shows dose, CNT, minimum, average, maximum, and elapsed seconds for its visible range; zoom with the wheel or pinch with two fingers, and scroll by dragging. Hover over the chart to read a plotted value.</li>
           <li><strong>Logs:</strong> inspect minute, hour, day, and alert records. Choose a range, load records, and export them as CSV. When disconnected, import an app-exported CSV or a complete EEPROM/SPI BIN log dump for offline browsing. See the detailed Logs guide below for pagination, import/export, coverage, live records, and storage.</li>
           <li><strong>Settings:</strong> read and change options supported by the connected firmware. Device settings, Device controls, and Display theme are separate collapsible sections. Values that depend on another setting may be disabled. The Show checkboxes control which options appear in the device menu; setting and visibility changes are applied immediately. The device clock can be synchronized to the computer's current local time. After connecting or synchronizing, a gray “Waiting to stabilize…” hint appears beside the difference while the comparison settles. POWER OFF is always shown and has no visibility checkbox.</li>
           <li><strong>Debug:</strong> inspect device time, uptime, pulse count, power readings, physical log counts, storage state, and SPI memory size. Sections are in one table and can be collapsed independently. Expand Diagnostics (collapsed initially) to view app-device protocol requests and responses, errors, timeouts, and firmware operations. It retains the latest 1,000 entries; Copy exports the retained log and Clear empties it.</li>
@@ -599,6 +599,9 @@
             <ul>
               <li><strong>Device rate:</strong> NORMAL readings rise quickly and ease down smoothly over time. Refresh priority is SEARCH or USB every 100 ms, screen on every 500 ms, NORMAL screen off every second, and INVISIBLE screen off without USB every 5 seconds. In the three economical states, a pulse refreshes immediately and resets the timer.</li>
               <li><strong>App chart:</strong> status refreshes every 100 ms while connected; the chart keeps one-second history points and accumulates pulse counts.</li>
+              <li><strong>Touchscreen chart:</strong> pinch with two fingers to zoom around the center of the gesture; after pinching, drag with one finger to scroll.</li>
+              <li><strong>Settings layout:</strong> Display theme groups use one full-width row each on wide and narrow screens, and two side-by-side columns at intermediate widths. Tablet layouts stack labels above controls and move Reset and Power actions below the settings.</li>
+              <li><strong>Navigation:</strong> on narrow screens, connection status and controls occupy their own row above the wrapping page tabs.</li>
               <li><strong>Logs:</strong> live refresh preserves row order and rereads the previous live record at a period boundary so its final device values replace the in-progress values.</li>
               <li><strong>Release portal:</strong> shows three stable releases and the first newer pre-release initially, with separate stable-history and shared pre-release history controls.</li>
             </ul>

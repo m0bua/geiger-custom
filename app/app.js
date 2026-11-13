@@ -1103,6 +1103,8 @@ const RATE_CHART_BUFFER_SECONDS = 1000;
 let rateChartZoomSeconds = RATE_CHART_BUFFER_SECONDS;
 let rateChartScrollSeconds = 0;
 let rateChartDragging = false;
+const rateChartPointers = new Map();
+let rateChartPinchStart = null;
 let rateChartDragStartX = 0;
 let rateChartDragStartScroll = 0;
 let rateChartActionHintTimer = 0;
@@ -3777,6 +3779,7 @@ function renderSettings() {
     }
     const isReset = setting.id === 14;
     const isPowerOff = setting.id === 18;
+    if (isReset) row.classList.add('setting-reset');
     if (setting.id === 13 || isReset) row.classList.add('setting-danger');
     if (isPowerOff) {
       row.classList.add('setting-action-warning', 'setting-power-actions');
@@ -7492,13 +7495,51 @@ elements.rateChart.addEventListener('pointerleave', () => {
   drawRateChart();
 });
 elements.rateChart.addEventListener('pointerdown', (event) => {
+  rateChartPointers.set(event.pointerId, {x: event.clientX, y: event.clientY});
+  elements.rateChart.setPointerCapture?.(event.pointerId);
+  hideRateChartTooltip();
+  if (rateChartPointers.size >= 2) {
+    const points = [...rateChartPointers.values()].slice(0, 2);
+    const midpointX = (points[0].x + points[1].x) / 2;
+    const rect = elements.rateChart.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (midpointX - rect.left) / rect.width));
+    rateChartPinchStart = {
+      distance: Math.max(1, Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y)),
+      zoom: rateChartZoomSeconds,
+      ageAtMidpoint: rateChartScrollSeconds + (1 - ratio) * rateChartZoomSeconds,
+    };
+    rateChartDragging = false;
+    return;
+  }
   rateChartDragging = true;
   rateChartDragStartX = event.clientX;
   rateChartDragStartScroll = rateChartScrollSeconds;
-  elements.rateChart.setPointerCapture?.(event.pointerId);
-  hideRateChartTooltip();
 });
 elements.rateChart.addEventListener('pointermove', (event) => {
+  const pointer = rateChartPointers.get(event.pointerId);
+  if (pointer) {
+    pointer.x = event.clientX;
+    pointer.y = event.clientY;
+  }
+  if (rateChartPointers.size >= 2 && rateChartPinchStart) {
+    const points = [...rateChartPointers.values()].slice(0, 2);
+    const distance = Math.max(1, Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y));
+    const midpointX = (points[0].x + points[1].x) / 2;
+    const rect = elements.rateChart.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (midpointX - rect.left) / rect.width));
+    const previousZoom = rateChartZoomSeconds;
+    rateChartZoomSeconds = rateChartPinchStart.zoom * rateChartPinchStart.distance / distance;
+    rateChartScrollSeconds = rateChartPinchStart.ageAtMidpoint - (1 - ratio) * rateChartZoomSeconds;
+    clampRateChartViewport();
+    if (Math.abs(rateChartZoomSeconds - previousZoom) >= 0.01) {
+      const zoomingIn = rateChartZoomSeconds < previousZoom;
+      showRateChartActionHint(zoomingIn ? 'zoom-in' : 'zoom-out',
+        zoomingIn ? 'Zoom in' : 'Zoom out', event);
+    }
+    hideRateChartTooltip();
+    drawRateChart();
+    return;
+  }
   if (!rateChartDragging) return;
   const rect = elements.rateChart.getBoundingClientRect();
   // The plotted content follows the pointer: dragging right reveals older
@@ -7508,11 +7549,21 @@ elements.rateChart.addEventListener('pointermove', (event) => {
   clampRateChartViewport();
   drawRateChart();
 });
-elements.rateChart.addEventListener('pointerup', (event) => {
-  rateChartDragging = false;
+const finishRateChartPointer = (event) => {
+  rateChartPointers.delete(event.pointerId);
   elements.rateChart.releasePointerCapture?.(event.pointerId);
-});
-elements.rateChart.addEventListener('pointercancel', () => { rateChartDragging = false; });
+  rateChartPinchStart = null;
+  const remaining = rateChartPointers.values().next().value;
+  if (remaining) {
+    rateChartDragging = true;
+    rateChartDragStartX = remaining.x;
+    rateChartDragStartScroll = rateChartScrollSeconds;
+  } else {
+    rateChartDragging = false;
+  }
+};
+elements.rateChart.addEventListener('pointerup', finishRateChartPointer);
+elements.rateChart.addEventListener('pointercancel', finishRateChartPointer);
 elements.rateChart.addEventListener('wheel', (event) => {
   event.preventDefault();
   const rect = elements.rateChart.getBoundingClientRect();
