@@ -44,7 +44,7 @@ def prerelease_section(group: str, title: str, rows: list[str]) -> str:
         return ""
     return (f'<section id="{group}-section" '
             f'aria-labelledby="{group}-heading">'
-            f'<h2 id="{group}-heading">{html.escape(title)}</h2>'
+            f'<h2 id="{group}-heading">{html.escape(title)} ({len(rows)})</h2>'
             f'<ul class="release-list" id="{group}">{"".join(rows)}</ul></section>')
 
 
@@ -57,7 +57,8 @@ def stable_history(rows: list[str]) -> str:
              '<span class="show-less">Show less</span></label>' if toggle else "")
     entries = "".join(rows) or '<li class="empty">No published app versions yet.</li>'
     return ('<section class="release-history" id="stable-history">'
-            f'<h2>RELEASES</h2>{toggle}<ul id="stable-releases">{entries}</ul>{label}</section>')
+            f'<h2>RELEASES ({len(rows)})</h2>{toggle}'
+            f'<ul id="stable-releases">{entries}</ul>{label}</section>')
 
 
 def prerelease_history(recent: list[str], older: list[str]) -> str:
