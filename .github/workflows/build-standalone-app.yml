@@ -262,11 +262,13 @@ jobs:
           - The companion app polls device status every 100 ms and keeps graph history in one-second buckets, accumulating pulse counts in each point. Touchscreens support two-finger pinch zoom around the gesture center and one-finger drag scrolling.
           - Live log refresh preserves row order and rereads the preceding live record from the device at a period boundary so its final values replace the in-progress record, including when it is on a later page.
           - Updated mobile layouts for settings, display themes, and navigation. On Android, Connect USB is the green primary action; Firefox for Android offers Open in Chrome for USB access and hides its unsupported Install button.
+          - The Logs table now adapts to screen width without a separate horizontal scrollbar. Its column header and TOTAL row stay pinned while the page scrolls; fullscreen logs retain their own scrolling area. Controls wrap at intermediate widths and stay on one row on wide screens.
           - Updated the release portal to show the three newest stable releases and the first newer pre-release initially, with separate stable history and shared pre-release history controls.
           - Refreshed the manual's large screen digits to match the current Anonymous Pro Bold device font.
+          - Battery percentage now only decreases unless USB or a strong solar input is detected; it may increase when either source is present. Removed the 90-second confirmation delay while retaining the ADC hysteresis. These inputs indicate a possible power source, not measured charging current; verify the estimate on hardware.
 
           ### Known issue
-          Battery percentage can jump while discharging; this remains under investigation.
+          Battery percentage is still a voltage-based estimate. USB and solar input detection do not confirm charging current, so the new behavior needs hardware verification.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded; used for app compatibility checks): ${canonical_sha256}

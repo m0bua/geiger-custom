@@ -289,21 +289,12 @@ jobs:
           The HTML and Windows apps identify themselves as Version: ${RELEASE_VERSION}. This build is for testing and may change without notice.
 
           ## Changes
-          **Changes since 202611121527-dev-339c8fb:**
-          - NORMAL rate decreases now ease down smoothly on the device using elapsed time; rising readings respond faster. Measured CPM, logs, alarms, and the SEARCH estimator remain unchanged.
-          - Rate refresh follows priority: SEARCH or USB every 100 ms, screen on every 500 ms, NORMAL with screen off every second, and INVISIBLE with screen off and no USB every 5 seconds. In the three economical states, each pulse refreshes immediately and resets the timer.
-          - The companion app reads device status every 100 ms while connected and keeps chart history on one-second buckets, accumulating all pulse counts in each point.
-          - The rate chart supports two-finger pinch zoom on touchscreens, anchored around the gesture midpoint; one-finger dragging scrolls the history.
-          - At wide widths, Display theme places Interface and Rate levels on separate rows, with four controls across each. At intermediate widths, Interface is left and Rate levels right, with each color on its own row inside the group; narrow screens stack the groups. Tablet device settings use two columns, labels above controls, and Reset and Power actions below the settings.
-          - On narrow screens, connection status and controls have a separate row above the wrapping page tabs.
-          - On Android, Connect USB is the green primary button at the right of the toolbar.
-          - Firefox for Android shows Open in Chrome for USB access and hides the unsupported Install button.
-          - Refreshed the manual's large screen digits to match the current Anonymous Pro Bold device font.
-          - Live log refresh preserves the selected row order and rereads the previous live record from the device when a new period begins, including across paginated responses.
-          - Updated the release portal: initially show three stable releases and the first newer pre-release. Stable history has its own Show more control; one shared pre-release control reveals all remaining pre-releases and older pre-releases.
+          **Changes since 202611131439-dev-7581c0f:**
+          - The log table now adapts to the screen without a separate horizontal scrollbar. The column header and TOTAL row stay pinned while the page scrolls; fullscreen logs retain their own scrolling area. Controls wrap on intermediate screens and stay on one row on wide screens.
+          - Battery percentage now only decreases unless USB or a strong solar input is detected; it may increase when either source is present. Removed the 90-second confirmation delay while retaining the ADC hysteresis. These inputs indicate a possible power source, not measured charging current; verify the estimate on hardware.
 
           ### Known issue
-          Battery percentage jumps while discharging remain under investigation.
+          Battery percentage is still a voltage-based estimate. USB and solar input detection do not confirm charging current, so the new behavior needs hardware verification.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded): ${canonical_sha256}
