@@ -49,7 +49,6 @@ static uint32_t lcd_search_mode_started;
 #define DETECTOR_PIN       BOARD_DETECTOR_PIN
 #define DETECTOR_EXTI_MASK (1u << DETECTOR_PIN)
 #define FLASHLIGHT_PIN     8u
-#define LCD_BATTERY_PERCENT_STABLE_MS 90000u
 #define LCD_SOLAR_BRIGHTNESS_SAMPLE_COUNT 34u
 #define LCD_BACKLIGHT_RAMP_INTERVAL_MS 200u
 #define LCD_BACKLIGHT_FADE_INTERVAL_MS 50u
@@ -281,8 +280,6 @@ static char lcd_cpm_text[LCD_CPM_TEXT_LENGTH + 1u] = "   0 CPM   ";
 static char lcd_adc_glyphs[LCD_ADC_TEXT_LENGTH + 1u] =
     "      \x01  0% \x02  0% ";
 static uint16_t lcd_displayed_battery_percent;
-static uint16_t lcd_battery_percent_candidate;
-static uint32_t lcd_battery_percent_candidate_since_ms;
 static bool lcd_battery_percent_initialized;
 static uint16_t lcd_battery_start_percent;
 static uint16_t lcd_displayed_solar_percent;
@@ -5998,21 +5995,19 @@ void board_display_set_adc(uint16_t channel2, uint16_t channel8,
             lcd_adc_battery_start_raw = channel2;
             lcd_battery_start_percent = battery_percent;
             lcd_displayed_battery_percent = battery_percent;
-            lcd_battery_percent_candidate = battery_percent;
-            lcd_battery_percent_candidate_since_ms = board_millis;
             lcd_battery_percent_initialized = true;
             lcd_format_percent(battery_percent, 13u);
             changed = true;
         } else {
             const uint16_t candidate = lcd_battery_percent_hysteresis(
-                lcd_battery_percent_candidate, channel2);
-            if (candidate != lcd_battery_percent_candidate) {
-                lcd_battery_percent_candidate = candidate;
-                lcd_battery_percent_candidate_since_ms = board_millis;
-            } else if (candidate != lcd_displayed_battery_percent &&
-                       (uint32_t)(board_millis -
-                           lcd_battery_percent_candidate_since_ms) >=
-                               LCD_BATTERY_PERCENT_STABLE_MS) {
+                lcd_displayed_battery_percent, channel2);
+            /* USB and strong solar input indicate a possible charge source;
+             * neither ADC is a direct measurement of charging current. */
+            const bool charge_source_present = lcd_adc_usb_raw > 100u ||
+                lcd_adc_sun_raw > 2800u;
+            if (candidate < lcd_displayed_battery_percent ||
+                (charge_source_present &&
+                 candidate > lcd_displayed_battery_percent)) {
                 lcd_displayed_battery_percent = candidate;
                 lcd_format_percent(candidate, 13u);
                 changed = true;
@@ -6057,8 +6052,7 @@ void board_display_set_adc(uint16_t channel2, uint16_t channel8,
 bool board_display_battery_below_3_percent(void)
 {
     return lcd_battery_percent_initialized &&
-        (lcd_displayed_battery_percent < 3u ||
-         lcd_battery_percent_candidate < 3u);
+        lcd_displayed_battery_percent < 3u;
 }
 
 static void lcd_text_render_service(void)
