@@ -1543,7 +1543,6 @@ function selectPage(page, updateUrl = true) {
   if (page === 'instructions') page = 'manual';
   const pages = ['overview', 'debug', 'settings', 'logs', 'firmware', 'manual', 'about'];
   if (!pages.includes(page)) return;
-  document.body.classList.toggle('logs-page-active', page === 'logs');
   if (page !== 'logs') setLogsFullscreen(false);
   for (const name of pages) {
     const active = name === page;
@@ -1578,6 +1577,11 @@ function setLogsFullscreen(enabled) {
   const label = active ? 'Exit full screen' : 'Expand logs to full screen';
   elements.toggleLogsFullscreen.setAttribute('aria-label', label);
   elements.toggleLogsFullscreen.title = label;
+}
+
+function resetLogScrollPosition() {
+  elements.logContent.scrollTop = 0;
+  elements.logContent.scrollLeft = 0;
 }
 
 function toggleLogsFullscreen() {
@@ -2171,7 +2175,7 @@ function makeLogHeaderButton(label, key) {
     if (logSortKey === key) logSortDirection = logSortDirection === 'asc' ? 'desc' : 'asc';
     else { logSortKey = key; logSortDirection = 'desc'; }
     logDisplayPage = 0;
-    elements.logContent.scrollTop = 0;
+    resetLogScrollPosition();
     renderLogSummary();
   });
   return button;
@@ -2242,7 +2246,7 @@ async function drillDownLogRecord(record) {
   logRangeEnd = end;
   logSelectedDate = `${start}:${end}`;
   clearLogView();
-  elements.logContent.scrollTop = 0;
+  resetLogScrollPosition();
   renderLogSummary();
   await loadLogPage(false);
 }
@@ -4283,6 +4287,9 @@ function renderOfflinePreview() {
       cell.textContent = text;
       header.append(cell);
     });
+    const headerActionSpace = document.createElement('span');
+    headerActionSpace.className = 'log-row-action';
+    header.append(headerActionSpace);
     const record = document.createElement('div');
     record.className = 'log-grid log-record';
     const demoType = logTypes.find((item) => item.id === type);
@@ -4300,6 +4307,22 @@ function renderOfflinePreview() {
       cell.textContent = text;
       record.append(cell);
     });
+    const drillDownType = type === 'days' ? 'hours' :
+      type === 'hours' || type === 'alerts' ? 'minutes' : null;
+    if (drillDownType) {
+      const drillDown = document.createElement('button');
+      drillDown.type = 'button';
+      drillDown.className = 'log-drilldown-button';
+      drillDown.textContent = '↓';
+      drillDown.title = `Open illustrative ${drillDownType} records`;
+      drillDown.setAttribute('aria-label', `Open illustrative ${drillDownType} records`);
+      drillDown.addEventListener('click', () => renderDemoLog(drillDownType));
+      record.append(drillDown);
+    } else {
+      const actionSpace = document.createElement('span');
+      actionSpace.className = 'log-row-action';
+      record.append(actionSpace);
+    }
     const total = document.createElement('div');
     total.className = 'log-grid log-record log-total';
     const totalValues = alert ?
@@ -4313,6 +4336,9 @@ function renderOfflinePreview() {
       cell.textContent = text;
       total.append(cell);
     });
+    const totalActionSpace = document.createElement('span');
+    totalActionSpace.className = 'log-row-action';
+    total.append(totalActionSpace);
     elements.logContent.append(header, total, record);
     elements.logsStatus.textContent = `DEMO DATA · 1 illustrative ${type} record`;
   };
@@ -4938,22 +4964,22 @@ elements.copyDiagnostics.addEventListener('click', async () => {
 elements.logRangeMode.addEventListener('change', updateLogRangeControls);
 elements.logPageSize.addEventListener('change', () => {
   logDisplayPage = 0;
-  elements.logContent.scrollTop = 0;
+  resetLogScrollPosition();
   renderLogSummary();
 });
 elements.logPagePrevious.addEventListener('click', () => {
   logDisplayPage = Math.max(0, logDisplayPage - 1);
-  elements.logContent.scrollTop = 0;
+  resetLogScrollPosition();
   renderLogSummary();
 });
 elements.logPageNext.addEventListener('click', () => {
   ++logDisplayPage;
-  elements.logContent.scrollTop = 0;
+  resetLogScrollPosition();
   renderLogSummary();
 });
 elements.logPageNumber.addEventListener('change', () => {
   logDisplayPage = Number(elements.logPageNumber.value) || 0;
-  elements.logContent.scrollTop = 0;
+  resetLogScrollPosition();
   renderLogSummary();
 });
 elements.logFillMetric.addEventListener('change', () => {

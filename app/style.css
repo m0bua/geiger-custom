@@ -257,24 +257,18 @@ button { font: inherit; }
 .settings-clock > p[data-level="error"] { color: #ff7474; }
 .clock-stability-hint { color: #899397; font: 10px "DM Mono", Consolas, monospace; white-space: nowrap; }
 .logs-panel { padding: 18px; border: 1px solid var(--line); border-radius: 11px; background: rgba(17,26,31,.8); }
-body.logs-page-active { overflow: hidden; }
-body.logs-page-active .shell { display: flex; height: 100dvh; min-height: 0; flex-direction: column; }
-body.logs-page-active .logs-panel { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; overflow: hidden; margin-bottom: 12px; }
-body.logs-page-active .logs-panel > .logs-tabs-row,
-body.logs-page-active .logs-panel > .logs-tools { flex: 0 0 auto; }
-body.logs-page-active .log-content { height: auto; min-height: 0; max-height: none; flex: 1 1 auto; resize: none; }
 .logs-tabs-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 0; border-bottom: 1px solid var(--line); }
 .logs-heading-actions { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
 .logs-heading-actions > #logs-status { min-width: 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .logs-fullscreen-button { min-width: 36px; min-height: 32px; padding: 0 8px; font-size: 18px; line-height: 1; }
 .logs-panel.is-fullscreen { position: fixed; z-index: 1000; inset: 0; display: flex; width: 100%; height: 100vh; height: 100dvh; max-height: none; flex-direction: column; overflow: hidden; padding: 12px 18px 0; border: 0; border-radius: 0; background: #0b1115; }
 .logs-panel.is-fullscreen > .logs-tabs-row { display: none; }
-.logs-panel.is-fullscreen .log-content { height: auto; min-height: 0; max-height: none; flex: 1 1 auto; resize: none; }
+.logs-panel.is-fullscreen .log-content { min-height: 0; flex: 1 1 auto; overflow: auto; }
 .logs-panel.is-fullscreen #exit-logs-fullscreen { display: inline-flex; }
 .log-tabs { display: flex; flex: 0 1 auto; gap: 5px; min-width: 0; padding: 12px 0; border: 0; }
 .log-tab { padding: 7px 11px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; cursor: pointer; }
 .log-tab.active { color: var(--green); background: rgba(0,229,139,.09); }
-.log-content { height: 470px; min-height: 180px; max-height: 85vh; resize: vertical; overflow: auto; overscroll-behavior: contain; padding: 0 0 14px; color: var(--muted); font: 11px "DM Mono", Consolas, monospace; }
+.log-content { padding: 0 0 14px; color: var(--muted); font: 11px "DM Mono", Consolas, monospace; }
 .logs-tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0 2px; }
 .logs-left-tools { display: flex; align-items: center; flex: 0 0 auto; gap: 10px; color: var(--muted); font-size: 11px; }
 .logs-left-tools label { display: inline-flex; align-items: center; gap: 7px; }
@@ -298,19 +292,19 @@ body.logs-page-active .log-content { height: auto; min-height: 0; max-height: no
 .log-pagination #log-page-number { min-width: 58px; }
 .log-pagination label[hidden] { display: none; }
 .log-pagination .button { min-height: 28px; padding: 0 9px; font-size: 10px; }
-.log-grid { min-width: 660px; display: grid; grid-template-columns: 1.1fr repeat(4, minmax(90px, 1fr)) 32px; gap: 8px; align-items: center; }
+.log-grid { width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(130px, 1.3fr) repeat(3, minmax(90px, 1fr)) minmax(180px, 1.5fr) 32px; gap: 8px; align-items: center; }
 .log-grid-header { position: sticky; z-index: 3; top: 0; box-sizing: border-box; min-height: 32px; padding: 8px 10px; color: var(--muted); background: #111a1f; font-size: 10px; text-transform: uppercase; }
-.log-grid-header .log-sort-button { width: 100%; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; text-align: right; text-transform: inherit; cursor: pointer; }
+.log-grid-header .log-sort-button { width: 100%; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; text-align: right; text-transform: inherit; overflow-wrap: anywhere; cursor: pointer; }
 .log-grid-header .log-sort-button:first-child { text-align: left; }
 .log-grid-header .log-sort-button:hover, .log-grid-header .log-sort-button:focus-visible { color: #e3ecee; }
 .log-record { position: relative; isolation: isolate; min-height: 38px; padding: 7px 10px; border-bottom: 1px solid rgba(160,186,194,.08); color: #d8e2e4; font: 500 11px/1.4 "DM Mono", Consolas, monospace; }
 .log-record::before { position: absolute; z-index: -1; inset: 0 auto 0 0; width: var(--bar-width); content: ""; background: rgba(194,207,211,.12); }
 .log-record::after { position: absolute; z-index: 0; inset: 0; content: ""; background: transparent; pointer-events: none; transition: background-color .12s ease; }
 .log-record:hover::after, .log-record:focus-within::after { background: rgba(81,157,185,.17); }
-.log-record span { position: relative; z-index: 1; text-align: right; white-space: nowrap; }
+.log-record span { position: relative; z-index: 1; min-width: 0; overflow-wrap: anywhere; text-align: right; white-space: normal; }
 .log-record span:first-child { color: #aab8bd; text-align: left; }
-.log-row-action { justify-self: center; width: 28px; }
-.log-record .log-drilldown-button { position: relative; z-index: 1; width: 28px; min-height: 26px; padding: 0; border: 1px solid rgba(0,229,139,.24); border-radius: 6px; color: var(--green); background: rgba(0,229,139,.06); font: 15px/1 "DM Mono", Consolas, monospace; cursor: pointer; }
+.log-row-action { justify-self: center; width: 24px; }
+.log-record .log-drilldown-button { position: relative; z-index: 1; width: 24px; min-height: 24px; padding: 0; border: 1px solid rgba(0,229,139,.24); border-radius: 6px; color: var(--green); background: rgba(0,229,139,.06); font: 15px/1 "DM Mono", Consolas, monospace; cursor: pointer; }
 .log-record .log-drilldown-button:hover, .log-record .log-drilldown-button:focus-visible { border-color: var(--green); background: rgba(0,229,139,.14); }
 .log-record .log-drilldown-button:disabled { opacity: .28; cursor: not-allowed; }
 .log-record .log-metric { color: #aab8bd; }
@@ -321,7 +315,7 @@ body.logs-page-active .log-content { height: auto; min-height: 0; max-height: no
 .log-record .coverage-red { color: #ff6666; }
 .log-record .coverage-yellow { color: #f0d35e; }
 .log-record .coverage-green { color: var(--green); }
-.log-record.log-total { position: sticky; z-index: 2; top: 32px; border-top: 1px solid rgba(0,232,159,.28); border-bottom-color: rgba(0,232,159,.2); color: #eef8f5; background: #111a1f; font-weight: 700; }
+.log-record.log-total { position: sticky; z-index: 2; top: var(--log-header-sticky-offset, 32px); border-top: 1px solid rgba(0,232,159,.28); border-bottom-color: rgba(0,232,159,.2); color: #eef8f5; background: #111a1f; font-weight: 700; }
 .log-record.log-total::before { width: 100%; background: rgba(0,232,159,.07); }
 .log-record.log-total span:first-child { color: var(--green); }
 .diagnostics-panel { margin-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
@@ -506,4 +500,34 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .toolbar .connection { order: 1; margin-left: auto; font-size: 12px; gap: 8px; }
   .toolbar .actions { order: 2; }
   .toolbar .tabs { order: 3; flex: 0 0 100%; width: 100%; min-width: 0; flex-wrap: wrap; overflow: visible; }
+}
+@media (min-width: 1180px) {
+  .logs-tools { gap: 8px; }
+  .logs-left-tools { gap: 6px; font-size: 10px; }
+  .logs-device-clock { font-size: 9px; }
+  .log-date-tools { min-width: 0; gap: 5px; }
+  .log-date-tools #log-range-extra { gap: 4px; }
+  .log-date-tools #log-range-extra label, .log-date-tools > label { gap: 4px; }
+  .log-date-tools input, .log-date-tools select, .logs-left-tools select { min-height: 30px; padding-inline: 5px; font-size: 10px; }
+  .logs-tools .button { min-height: 30px; padding-inline: 8px; }
+}
+@media (max-width: 1179px) {
+  .logs-tools { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .logs-left-tools, .log-date-tools { width: 100%; min-width: 0; justify-content: flex-start; flex-wrap: wrap; }
+}
+@media (max-width: 860px) {
+  .logs-panel { padding: 14px; }
+  .log-grid { grid-template-columns: minmax(90px, 1.2fr) repeat(3, minmax(60px, 1fr)) minmax(90px, 1.4fr) 24px; gap: 4px; }
+  .log-record { padding-inline: 7px; font-size: 10px; }
+}
+@media (max-width: 650px) {
+  .logs-panel { padding: 10px; }
+  .log-grid { --log-header-sticky-offset: 40px; grid-template-columns: minmax(0, 1.25fr) repeat(3, minmax(0, 1fr)) minmax(0, 1.5fr) 20px; gap: 3px; }
+  .log-grid-header { padding: 6px 4px; font-size: 8px; }
+  .log-record { padding: 6px 4px; font-size: 9px; }
+  .log-row-action, .log-record .log-drilldown-button { width: 20px; }
+}
+@media (max-width: 360px) {
+  .log-grid { grid-template-columns: minmax(0, 1.15fr) repeat(3, minmax(0, .9fr)) minmax(0, 1.4fr) 18px; gap: 2px; }
+  .log-row-action, .log-record .log-drilldown-button { width: 18px; }
 }
