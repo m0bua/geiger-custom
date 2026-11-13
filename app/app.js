@@ -2432,7 +2432,7 @@ function renderLogTotal(type) {
   }
   if (!row.isConnected) elements.logContent.append(row);
 }
-function renderLogSummary(preserveRows = false, prependNewRows = true) {
+function renderLogSummary(preserveRows = false) {
   if (preserveRows && (logSortKey !== 'date' || logSortDirection !== 'desc')) preserveRows = false;
   if (preserveRows && !elements.logContent.querySelector('.log-grid-header')) {
     preserveRows = false;
@@ -2459,6 +2459,7 @@ function renderLogSummary(preserveRows = false, prependNewRows = true) {
   const existingRows = preserveRows ? new Map(
     [...elements.logContent.querySelectorAll('.log-record:not(.log-total)')]
       .map((row) => [row.dataset.logKey, row])) : null;
+  let nextRow = preserveRows ? elements.logContent.querySelector('.log-record:not(.log-total)') : null;
   for (const record of visibleLogRecords(sortedLogRecords(type))) {
     const key = logRecordKey(record);
     let row = null;
@@ -2515,11 +2516,10 @@ function renderLogSummary(preserveRows = false, prependNewRows = true) {
         else row.append(spacer);
       }
     }
-    if (!row.isConnected) {
-      const firstRecord = elements.logContent.querySelector('.log-record:not(.log-total)');
-      if (preserveRows && prependNewRows && firstRecord) elements.logContent.insertBefore(row, firstRecord);
-      else elements.logContent.append(row);
-    }
+    // Reuse rows, but place both new and existing nodes in the sorted order.
+    // Repeatedly prepending new rows reverses a multi-record live response.
+    if (row !== nextRow) elements.logContent.insertBefore(row, nextRow);
+    nextRow = row.nextElementSibling;
   }
   if (preserveRows) {
     for (const row of existingRows.values()) row.remove();
@@ -3270,7 +3270,7 @@ async function loadLogPage(reset = false) {
         logDiagnostic(`loadLogPage batch records=${page.records.length} total=${logRecords.length}`);
         logCursor = page.cursor;
         logHasMore = page.more && page.records.length > 0 && !crossedRangeStart;
-        renderLogSummary(true, false);
+        renderLogSummary(true);
         saveLogView();
         await new Promise((resolve) => requestAnimationFrame(resolve));
       }
@@ -3318,11 +3318,11 @@ async function loadNewerLogRecords(catchUp = true) {
         if (generation !== logPageGeneration || elements.logsPage.hidden) return;
         for (const record of page.records) { fresh.push(record); if (known.has(logRecordKey(record))) boundary = true; }
         batch += page.records.length; cursor = page.cursor; more = page.more && page.records.length > 0;
-        if (!catchUp) boundary = true;
+        // Even a live refresh must reach a known record: the formerly live
+        // period needs its final device values, possibly on a later page.
       }
       const replacements = new Map(fresh.map((record) => [logRecordKey(record), record]));
-      const older = logRecords.filter((record) => !(type.id === 'alerts' && record.live) && !replacements.has(logRecordKey(record)))
-        .map((record) => ({...record, live: false}));
+      const older = logRecords.filter((record) => !(type.id === 'alerts' && record.live) && !replacements.has(logRecordKey(record)));
       logRecords = [...replacements.values(), ...older].filter(logRecordInRange);
       renderLogSummary(!catchUp); saveLogView();
     }
