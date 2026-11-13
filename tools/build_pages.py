@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from datetime import datetime, timezone
 import html
 import json
 import os
@@ -17,6 +18,62 @@ from urllib.parse import quote
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "dist/gh-pages"
 DEFAULT_SPI_MINI = ROOT / ".pio/build/geiger2_spi_mini/firmware.bin"
+
+
+def release_time(release: dict) -> datetime:
+    """Compare publication times, including releases promoted from older tags."""
+    published = release.get("published_at")
+    if published:
+        try:
+            timestamp = datetime.fromisoformat(str(published).replace("Z", "+00:00"))
+            return timestamp.replace(tzinfo=timezone.utc) if timestamp.tzinfo is None else timestamp
+        except ValueError:
+            pass
+    # Legacy entries may omit published_at. Our tags carry a UTC build time.
+    match = re.match(r"^(\d{12})(?:-|$)", str(release.get("tag_name", "")))
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def prerelease_section(group: str, title: str, rows: list[str]) -> str:
+    if not rows:
+        return ""
+    return (f'<section id="{group}-section" '
+            f'aria-labelledby="{group}-heading">'
+            f'<h2 id="{group}-heading">{html.escape(title)}</h2>'
+            f'<ul class="release-list" id="{group}">{"".join(rows)}</ul></section>')
+
+
+def stable_history(rows: list[str]) -> str:
+    toggle = ('<input type="checkbox" class="release-history-toggle-input" '
+              'id="releases-toggle" aria-controls="stable-releases" '
+              'aria-label="Show all releases">' if len(rows) > 3 else "")
+    label = ('<label class="release-history-toggle" for="releases-toggle">'
+             '<span class="show-more">Show more</span>'
+             '<span class="show-less">Show less</span></label>' if toggle else "")
+    entries = "".join(rows) or '<li class="empty">No published app versions yet.</li>'
+    return ('<section class="release-history" id="stable-history">'
+            f'<h2>RELEASES</h2>{toggle}<ul id="stable-releases">{entries}</ul>{label}</section>')
+
+
+def prerelease_history(recent: list[str], older: list[str]) -> str:
+    if not (recent or older):
+        return ""
+    groups = [("recent-prereleases", "PRE-RELEASES", recent),
+              ("older-prereleases", "OLDER PRE-RELEASES", older)]
+    controls = " ".join(group for group, _, rows in groups if rows)
+    toggle = ('<input type="checkbox" class="release-history-toggle-input" '
+              f'id="prereleases-toggle" aria-controls="{controls}" '
+              'aria-label="Show all pre-releases">' if len(recent) > 1 or older else "")
+    label = ('<label class="release-history-toggle" for="prereleases-toggle">'
+             '<span class="show-more">Show more</span>'
+             '<span class="show-less">Show less</span></label>' if toggle else "")
+    sections = "".join(prerelease_section(group, title, rows) for group, title, rows in groups)
+    return f'<div class="release-history">{toggle}{sections}{label}</div>'
 
 
 def main() -> int:
@@ -55,7 +112,8 @@ def main() -> int:
                     output / "docs/renders/screens", dirs_exist_ok=True)
     template = (ROOT / "tools/pages-index.html").read_text(encoding="utf-8")
     stable_rows: list[str] = []
-    prerelease_rows: list[str] = []
+    recent_prerelease_rows: list[str] = []
+    older_prerelease_rows: list[str] = []
     releases: list[dict] = []
     if args.releases_json:
         releases = json.loads(args.releases_json.read_text(encoding="utf-8"))
@@ -63,6 +121,13 @@ def main() -> int:
             raise ValueError("GitHub releases response must be a JSON array")
         if not releases:
             raise ValueError("GitHub returned no releases; refusing to publish an empty release portal")
+    releases = [release for release in releases if not release.get("draft") and
+                re.fullmatch(r"[a-zA-Z0-9._-]+", str(release.get("tag_name", "")))]
+    if args.releases_json and not releases:
+        raise ValueError("No published releases had valid tags; refusing to publish an empty release portal")
+    releases.sort(key=release_time, reverse=True)
+    latest_stable = next((release for release in releases if not release.get("prerelease")), None)
+    stable_time = release_time(latest_stable) if latest_stable else None
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     archived_apps = 0
     for release in releases:
@@ -146,18 +211,21 @@ def main() -> int:
         downloads.append(f'<a href="{notes_url}">notes</a>')
         release_target = url if html_asset else notes_url
         row = (f'<li><div class="version"><a href="{release_target}">{title}</a>'
-               f'<span class="meta">{published} · {html.escape(tag)} · '
+               f'<span class="meta"><span class="release-date">{published} · {html.escape(tag)}</span>'
                f'<span class="downloads">{" · ".join(downloads)}</span></span></div></li>')
-        (prerelease_rows if release.get("prerelease") else stable_rows).append(row)
+        if not release.get("prerelease"):
+            stable_rows.append(row)
+        elif stable_time is None or release_time(release) > stable_time:
+            recent_prerelease_rows.append(row)
+        else:
+            older_prerelease_rows.append(row)
 
-    if releases and not (stable_rows or prerelease_rows):
+    if releases and not (stable_rows or recent_prerelease_rows or older_prerelease_rows):
         raise ValueError("GitHub releases were returned, but none had valid tags; refusing to publish an empty release portal")
 
-    empty = '<li class="empty">No published app versions yet.</li>'
-    template = template.replace("<!-- STABLE_RELEASES -->", "".join(stable_rows) or empty)
-    template = template.replace("<!-- PRERELEASES -->", "".join(prerelease_rows) or empty)
-    template = template.replace('id="prerelease-count">0</span>',
-                                f'id="prerelease-count">{len(prerelease_rows)}</span>')
+    template = template.replace("<!-- STABLE_RELEASES -->", stable_history(stable_rows))
+    template = template.replace("<!-- PRERELEASE_HISTORY -->",
+                                prerelease_history(recent_prerelease_rows, older_prerelease_rows))
     # Each archived app is standalone; give it a scoped manifest and an offline cache worker.
     for release in releases:
         tag = str(release.get("tag_name", ""))
@@ -173,7 +241,9 @@ def main() -> int:
             app_html = app_html.replace("<head>", '<head><link rel="icon" href="app-icon.svg" type="image/svg+xml">', 1)
         (version_dir / "index.html").write_text(app_html, encoding="utf-8")
     (output / "index.html").write_text(template, encoding="utf-8")
-    print(f"GitHub Pages site: {output} ({len(stable_rows)} stable, {len(prerelease_rows)} pre-releases, {archived_apps} app snapshots)")
+    print(f"GitHub Pages site: {output} ({len(stable_rows)} stable, "
+          f"{len(recent_prerelease_rows)} newer and {len(older_prerelease_rows)} previous "
+          f"pre-releases, {archived_apps} app snapshots)")
     return 0
 
 
