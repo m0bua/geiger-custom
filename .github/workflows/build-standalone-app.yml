@@ -254,10 +254,19 @@ jobs:
 
           ## Changes
           **Changes since 202611112101:**
-          - Companion app changes only; firmware behavior is unchanged.
+          - Earlier changes after the previous stable release were companion-app only; this release also includes the device-rate changes below.
           - Added offline log import for app-exported CSV files and complete EEPROM/SPI BIN dumps. CSV imports merge into the archive; BIN imports replace it. Imported records can be browsed and exported without a device connection.
           - Added Export All for records already loaded across log types. It skips types with no loaded records and does not fetch additional data.
           - Added pagination for large log tables, shown above 100 loaded records, with page-size choices from 10 through 5,000 or All; the default is 1,000.
+          - The device now eases falling NORMAL rate readings down smoothly using elapsed time while responding quickly to increases. Rate refresh priority is SEARCH or USB every 100 ms, screen on every 500 ms, NORMAL with screen off every second, and INVISIBLE with screen off and no USB every 5 seconds. In the economical states, a pulse triggers an immediate refresh and resets the timer; measurement, logs, and alarms retain their existing one-second cadence.
+          - The companion app polls device status every 100 ms and keeps graph history in one-second buckets, accumulating pulse counts in each point. Touchscreens support two-finger pinch zoom around the gesture center and one-finger drag scrolling.
+          - Live log refresh preserves row order and rereads the preceding live record from the device at a period boundary so its final values replace the in-progress record, including when it is on a later page.
+          - Updated mobile layouts for settings, display themes, and navigation. On Android, Connect USB is the green primary action; Firefox for Android offers Open in Chrome for USB access and hides its unsupported Install button.
+          - Updated the release portal to show the three newest stable releases and the first newer pre-release initially, with separate stable history and shared pre-release history controls.
+          - Refreshed the manual's large screen digits to match the current Anonymous Pro Bold device font.
+
+          ### Known issue
+          Battery percentage can jump while discharging; this remains under investigation.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded; used for app compatibility checks): ${canonical_sha256}
