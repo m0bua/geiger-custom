@@ -82,7 +82,9 @@ def main():
                 encoding='utf-8').replace('LENGTH = 64K', 'LENGTH = 72K'),
             encoding='utf-8')
     test_symbols = [
-        'test_feed_seconds', 'second_log_get', 'log_record_encode',
+        'test_feed_seconds', 'second_log_get', 'rate_display_step',
+        'rate_display_interval', 'rate_display_ticks', 'rate_display_update',
+        'log_record_encode',
         'log_record_decode', 'log_record_time', 'log_record_location',
         'log_eeprom_init', 'log_eeprom_append', 'log_eeprom_read',
         'log_eeprom_count', 'log_eeprom_active_epoch',

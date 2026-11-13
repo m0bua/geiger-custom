@@ -4,6 +4,7 @@
 #include "dose_reconcile.h"
 #include "log_writer.h"
 #include "protocol_v1.h"
+#include "rate_display.h"
 #include "second_log.h"
 
 #include <stdbool.h>
@@ -94,11 +95,10 @@ int main(void)
     uint16_t calendar_day_key = UINT16_MAX;
     bool calendar_day_valid = false;
     uint32_t next_minute_tick;
-    uint32_t next_rate_display_tick;
     uint32_t next_cpm_history_tick;
     uint32_t latest_cpm = 23u;
     uint32_t latest_display_cpm = 23u;
-    uint32_t display_rate_cpm_tenths = 230u;
+    rate_display_state_t display_rate = {.value = 230u};
     uint16_t battery_adc_raw = 0u;
     uint16_t solar_adc_raw = 0u;
     uint16_t usb_adc_raw = 0u;
@@ -114,7 +114,6 @@ int main(void)
     bool screen_alarm_active = false;
     bool light_alarm_active = false;
     bool sound_alarm_active = false;
-    bool rate_click_pending = false;
     bool alarms_acknowledged = false;
     bool light_alarm_on = false;
     bool event_led_on = false;
@@ -189,7 +188,7 @@ int main(void)
     if (!hv_enabled) {
         latest_cpm = 0u;
         latest_display_cpm = 0u;
-        display_rate_cpm_tenths = 0u;
+        display_rate.value = 0u;
     }
     /* Ignore startup transients accumulated while RTC/display were coming up. */
     event_count = board_detector_count();
@@ -200,7 +199,8 @@ int main(void)
     next_battery_sample = board_millis;
     next_usb_sample = board_millis;
     next_minute_tick = board_millis + 1000u;
-    next_rate_display_tick = board_millis + 500u;
+    display_rate.clocks[0] = board_millis;
+    display_rate.clocks[1] = display_rate.clocks[0];
     next_cpm_history_tick = board_millis + 150u;
     next_total_checkpoint = board_millis + TOTAL_PULSE_CHECKPOINT_MS;
     cpm_history_init();
@@ -460,7 +460,7 @@ int main(void)
                         pulses_since_start = 0u;
                         latest_cpm = 23u;
                         latest_display_cpm = 23u;
-                        display_rate_cpm_tenths = 230u;
+                        display_rate.value = 230u;
                         board_display_set_count(0u);
                         board_display_set_rate_alarm(0u, 0u, false);
                         board_display_set_rate(0u, 0u, 0u, false);
@@ -468,7 +468,7 @@ int main(void)
                         log_writer_hv_disabled();
                         latest_cpm = 0u;
                         latest_display_cpm = 0u;
-                        display_rate_cpm_tenths = 0u;
+                        display_rate.value = 0u;
                         board_display_set_rate_alarm(0u, 0u, false);
                     }
                     next_minute_tick = now + 1000u;
@@ -536,15 +536,13 @@ int main(void)
             }
 
             if (detected_pulses != event_count) {
+                display_rate.pulse = true;
                 const uint32_t pulse_delta = detected_pulses - event_count;
                 event_count = detected_pulses;
                 if (board_display_search_mode()) {
-                    display_rate_cpm_tenths += pulse_delta * 10u;
+                    display_rate.value += pulse_delta * 10u;
                 }
                 board_display_set_count(detected_pulses);
-                if (!backlight_on || board_display_invisible_mode()) {
-                    rate_click_pending = true;
-                }
                 if (!sound_alarm_active &&
                     board_display_click_sound_enabled(backlight_on)) {
                     board_click_sound_start();
@@ -675,49 +673,26 @@ int main(void)
                 board_display_set_rate_alarm(measured_rate_thousandths,
                     latest_cpm, pulses_since_start >= 30u);
                 if (board_display_search_mode()) {
-                    display_rate_cpm_tenths =
-                        (display_rate_cpm_tenths * 63u) >> 6u;
+                    display_rate.value =
+                        (display_rate.value * 63u) >> 6u;
                 }
                 next_minute_tick += 1000u;
             }
 
             {
-                const bool per_click = !backlight_on ||
-                    board_display_invisible_mode();
-                const uint32_t interval_ms =
-                    board_display_search_mode() ? 100u : 500u;
                 const bool search_mode = board_display_search_mode();
-                const bool due = per_click ? rate_click_pending :
-                    (int32_t)(now - next_rate_display_tick) >= 0;
-                if (due) {
-                    const uint32_t target_cpm_tenths = latest_display_cpm * 10u;
-                    if (per_click) {
-                        display_rate_cpm_tenths = target_cpm_tenths;
-                    } else if (!search_mode) {
-                        const int32_t difference =
-                            (int32_t)target_cpm_tenths -
-                            (int32_t)display_rate_cpm_tenths;
-                        int32_t step = difference / 2;
-                        if (difference != 0 && step == 0)
-                            step = difference > 0 ? 1 : -1;
-                        display_rate_cpm_tenths = (uint32_t)(
-                            (int32_t)display_rate_cpm_tenths + step);
-                    }
-                    const uint32_t display_rate_100000ths = (uint32_t)(
-                        ((uint64_t)display_rate_cpm_tenths * 666u + 5u) /
-                        10u);
-                    const uint32_t display_cpm =
-                        (display_rate_cpm_tenths + 5u) / 10u;
-                    board_display_set_rate(display_rate_100000ths,
-                        display_cpm, pulses_since_start,
-                        pulses_since_start >= 30u);
-                    next_rate_display_tick = now + interval_ms;
-                    rate_click_pending = false;
+                const uint32_t interval_ms = rate_display_interval(
+                    search_mode || board_display_usb_connected(), backlight_on,
+                    board_display_invisible_mode());
+                if (rate_display_update(&display_rate, now,
+                        search_mode ? UINT32_MAX : latest_display_cpm * 10u,
+                        interval_ms)) {
+                    rate_display_render(display_rate.value, pulses_since_start);
                 }
             }
 
             if ((int32_t)(now - next_cpm_history_tick) >= 0) {
-                cpm_history_push((display_rate_cpm_tenths + 5u) / 10u);
+                cpm_history_push((display_rate.value + 5u) / 10u);
                 board_display_history_updated();
                 next_cpm_history_tick += 150u;
             }
@@ -892,7 +867,7 @@ int main(void)
             protocol_v1_status_t status;
             status.uptime_seconds = board_uptime_seconds_get();
             status.count_today = today_pulse_count;
-            status.rate_cpm_tenths = display_rate_cpm_tenths;
+            status.rate_cpm_tenths = display_rate.value;
             status.dose_nsv = dose_thousandths;
             status.battery_raw = battery_adc_raw;
             status.solar_raw = solar_adc_raw;

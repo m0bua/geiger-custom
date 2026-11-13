@@ -1098,6 +1098,7 @@ const rateHistory = [];
 const rateHistoryLevels = [];
 const rateHistoryPulses = [];
 const rateHistoryTimes = [];
+let rateHistorySampleSecond = null;
 const RATE_CHART_BUFFER_SECONDS = 1000;
 let rateChartZoomSeconds = RATE_CHART_BUFFER_SECONDS;
 let rateChartScrollSeconds = 0;
@@ -4388,16 +4389,16 @@ function setDeviceModeActive(mode) {
     control.dataset.active = mode !== null &&
       control.dataset.mode === String(mode) ? 'true' : 'false';
   });
-  if (mode === 2 && serial && !fastRatePollTimer) {
+  if (serial && !fastRatePollTimer) {
     fastRatePollTimer = setInterval(() => {
-      if (!serial || deviceIndicationMode !== 2) {
+      if (!serial) {
         clearInterval(fastRatePollTimer);
         fastRatePollTimer = 0;
       } else if (pollTimer) {
         refreshStatus(true);
       }
     }, 100);
-  } else if (mode !== 2 && fastRatePollTimer) {
+  } else if (!serial && fastRatePollTimer) {
     clearInterval(fastRatePollTimer);
     fastRatePollTimer = 0;
   }
@@ -4643,6 +4644,30 @@ function setMetricExpanded(button, expanded) {
   }
 }
 
+function recordRateHistory(value, level, pulses, timestamp, now = performance.now()) {
+  // Status can arrive at 10 Hz; chart duration and pulse totals use one-second
+  // buckets. Keep the newest bucket live without shortening the history.
+  const second = Math.floor(now / 1000);
+  const append = !rateHistory.length || second !== rateHistorySampleSecond;
+  if (append) {
+    rateHistory.push(value);
+    rateHistoryLevels.push(level);
+    rateHistoryPulses.push(pulses);
+    rateHistoryTimes.push(timestamp);
+    if (rateHistory.length > RATE_CHART_BUFFER_SECONDS) {
+      rateHistory.shift(); rateHistoryLevels.shift();
+      rateHistoryPulses.shift(); rateHistoryTimes.shift();
+    }
+  } else {
+    const index = rateHistory.length - 1;
+    rateHistory[index] = value;
+    rateHistoryLevels[index] = level;
+    rateHistoryPulses[index] += pulses;
+  }
+  rateHistorySampleSecond = second;
+  return append;
+}
+
 function handleStatus(payload) {
   if (![25, 29, 31, 35, 47].includes(payload.length) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
@@ -4746,19 +4771,13 @@ function handleStatus(payload) {
   const pulseDelta = previousRateCount === null || countTotal < previousRateCount ?
     0 : countTotal - previousRateCount;
   previousRateCount = countTotal;
-  rateHistory.push(unit === 1 ? displayedCpm : rateUsvh);
-  rateHistoryLevels.push(rateLevel);
-  rateHistoryPulses.push(pulseDelta);
-  rateHistoryTimes.push(logInfo?.calendarValid ? logInfo.calendarSeconds :
-    Math.floor((Date.now() - Date.UTC(2000, 0, 1)) / 1000));
-  if (rateChartIsHistorical) rateChartScrollSeconds += 1;
+  const appended = recordRateHistory(unit === 1 ? displayedCpm : rateUsvh,
+    rateLevel, pulseDelta, logInfo?.calendarValid ? logInfo.calendarSeconds :
+      Math.floor((Date.now() - Date.UTC(2000, 0, 1)) / 1000));
+  if (appended && rateChartIsHistorical) rateChartScrollSeconds += 1;
   rateHistoryUnit = unit === 1 ? 'CPM' :
     formatRadiation(rateUsvh, ratePrefix, unit === 2 ? 'R' : 'Sv', true).unit;
   elements.rateChart.setAttribute('aria-label', `Recent rate history (${RATE_CHART_BUFFER_SECONDS} seconds; zoom and scroll available)`);
-  if (rateHistory.length > RATE_CHART_BUFFER_SECONDS) rateHistory.shift();
-  if (rateHistoryLevels.length > RATE_CHART_BUFFER_SECONDS) rateHistoryLevels.shift();
-  if (rateHistoryPulses.length > RATE_CHART_BUFFER_SECONDS) rateHistoryPulses.shift();
-  if (rateHistoryTimes.length > RATE_CHART_BUFFER_SECONDS) rateHistoryTimes.shift();
   drawRateChart();
   const solarPercent = Math.min(100, Math.floor(solarRaw / 31));
   elements.solarPercent.textContent = `${solarPercent}%`;
@@ -4806,9 +4825,7 @@ async function refreshStatus(quiet = false) {
   try {
     const payload = await serial.request(OP_GET_STATUS);
     handleStatus(payload);
-    if (!quiet) showNotice(deviceIndicationMode === 2 ?
-      'Connected. Search readings update every 100 ms.' :
-      'Connected. Readings update once per second.', 'success');
+    if (!quiet) showNotice('Connected. Readings are requested every 100 ms.', 'success');
   } catch (error) {
     if (!quiet) showNotice(error.message, 'error');
   } finally {
@@ -7119,7 +7136,7 @@ async function connectDevice(portOverride = null, transport = null) {
     elements.debugModeBadge.textContent = 'DEVICE DATA';
     elements.debugModeBadge.dataset.mode = 'device';
     drawRateChart();
-    showNotice('Device connected. Readings update once per second.', 'success');
+    showNotice('Device connected. Readings are requested every 100 ms.', 'success');
     await loadSettings();
     await loadLogInfo();
     await refreshStatus();
