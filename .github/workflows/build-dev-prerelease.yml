@@ -297,6 +297,7 @@ jobs:
           - Display theme groups use one full-width row each on wide and narrow screens, and two side-by-side columns at intermediate widths. Tablet layouts stack labels above controls and place Reset and Power actions below the settings.
           - On narrow screens, connection status and controls have a separate row above the wrapping page tabs.
           - On Android, Connect USB is the green primary button at the right of the toolbar.
+          - Firefox for Android shows Open in Chrome for USB access and hides the unsupported Install button.
           - Live log refresh preserves the selected row order and rereads the previous live record from the device when a new period begins, including across paginated responses.
           - Updated the release portal: initially show three stable releases and the first newer pre-release. Stable history has its own Show more control; one shared pre-release control reveals all remaining pre-releases and older pre-releases.
 

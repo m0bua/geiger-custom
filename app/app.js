@@ -7590,15 +7590,29 @@ elements.rateChart.addEventListener('wheel', (event) => {
 }, {passive: false});
 elements.rateChart.addEventListener('dblclick', resetRateChartViewport);
 const installButton = document.querySelector('#install-app');
+const openChromeButton = document.querySelector('#open-chrome-button');
+const isAndroidFirefox = /Android/i.test(navigator.userAgent) && /Firefox/i.test(navigator.userAgent);
 const isIosBrowser = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandaloneApp = window.matchMedia('(display-mode: standalone)').matches ||
   navigator.standalone === true;
+if (isAndroidFirefox) {
+  openChromeButton.hidden = false;
+  elements.connect.hidden = true;
+}
+openChromeButton.addEventListener('click', () => {
+  const current = new URL(window.location.href);
+  const fallback = encodeURIComponent(current.href);
+  const intent = `intent://${current.host}${current.pathname}${current.search}` +
+    `#Intent;scheme=${current.protocol.slice(0, -1)};package=com.android.chrome;` +
+    `S.browser_fallback_url=${fallback};end`;
+  window.location.href = intent;
+});
 if (!isStandaloneApp && isIosBrowser) installButton.hidden = false;
 window.addEventListener('beforeinstallprompt', (event) => {
   event.preventDefault();
   installPromptEvent = event;
-  installButton.hidden = false;
+  installButton.hidden = isAndroidFirefox;
 });
 installButton.addEventListener('click', async () => {
   if (!installPromptEvent) {
@@ -7681,5 +7695,7 @@ if (!('serial' in navigator)) {
   elements.connect.disabled = true;
   showNotice(androidUsbAvailable ?
     'Connect using USB and select the CP210x adapter.' :
-    'Serial access is unavailable in this browser. Use desktop Chrome/Edge or Android Chrome with USB Connect.', 'error');
+    (isAndroidFirefox ?
+      'Firefox for Android does not support the USB connection. Use Open in Chrome, then connect the CP210x adapter there.' :
+      'Serial access is unavailable in this browser. Use desktop Chrome/Edge or Android Chrome with USB Connect.'), 'error');
 }
