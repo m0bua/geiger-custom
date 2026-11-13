@@ -28,6 +28,8 @@ button { font: inherit; }
 .windows-bridge-port { min-height: 36px; max-width: 118px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; color: #c8d3d6; background: #121c21; font: 11px "DM Mono", Consolas, monospace; }
 .windows-bridge-port[hidden] { display: none; }
 .windows-bridge-port:disabled { opacity: .45; }
+.android-usb #connect-button { order: 1; }
+.android-usb #connect-usb-button { order: 2; }
 .button:disabled { opacity: .4; cursor: not-allowed; }
 .button-primary { border-color: var(--green); color: #07120e; background: var(--green); }
 .button-danger { border-color: #dc555e; color: #ffe1e1; background: #562127; }

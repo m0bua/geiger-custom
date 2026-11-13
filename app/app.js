@@ -7670,6 +7670,13 @@ elements.bridgePort?.addEventListener('change', () => {
 refreshNativeBridgePorts();
 window.setInterval(refreshNativeBridgePorts, 3000);
 if (webUsbAvailable && elements.connectUsb) elements.connectUsb.hidden = false;
+if (androidUsbAvailable && elements.connectUsb) {
+  elements.connectUsb.classList.remove('button-quiet');
+  elements.connectUsb.classList.add('button-primary');
+  elements.connect.classList.remove('button-primary');
+  elements.connect.classList.add('button-quiet');
+  document.documentElement.classList.add('android-usb');
+}
 if (!('serial' in navigator)) {
   elements.connect.disabled = true;
   showNotice(androidUsbAvailable ?
