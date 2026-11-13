@@ -289,11 +289,15 @@ jobs:
           The HTML and Windows apps identify themselves as Version: ${RELEASE_VERSION}. This build is for testing and may change without notice.
 
           ## Changes
-          **Changes since 202611112101:**
-          - Companion app changes only; firmware behavior is unchanged.
-          - Added offline log import for app-exported CSV files and complete EEPROM/SPI BIN dumps. CSV imports merge into the archive; BIN imports replace it. Imported records can be browsed and exported without a device connection.
-          - Added Export All for records already loaded across log types. It skips types with no loaded records and does not fetch additional data.
-          - Added pagination for large log tables, shown above 100 loaded records, with page-size choices from 10 through 5,000 or All; the default is 1,000.
+          **Changes since 202611121527-dev-339c8fb:**
+          - NORMAL rate decreases now ease down smoothly on the device using elapsed time; rising readings respond faster. Measured CPM, logs, alarms, and the SEARCH estimator remain unchanged.
+          - Rate refresh follows priority: SEARCH or USB every 100 ms, screen on every 500 ms, NORMAL with screen off every second, and INVISIBLE with screen off and no USB every 5 seconds. In the three economical states, each pulse refreshes immediately and resets the timer.
+          - The companion app reads device status every 100 ms while connected and keeps chart history on one-second buckets, accumulating all pulse counts in each point.
+          - Live log refresh preserves the selected row order and rereads the previous live record from the device when a new period begins, including across paginated responses.
+          - Updated the release portal: initially show three stable releases and the first newer pre-release. Stable history has its own Show more control; one shared pre-release control reveals all remaining pre-releases and older pre-releases.
+
+          ### Known issue
+          Battery percentage jumps while discharging remain under investigation.
 
           Firmware BIN SHA-256: ${firmware_sha256}
           Canonical 64 KiB flash image SHA-256 (0xFF padded): ${canonical_sha256}
