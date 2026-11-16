@@ -3,7 +3,6 @@
 #include "button_input.h"
 #include "cpm_history.h"
 #include "daily_dose.h"
-#include "dose_reconcile.h"
 #include "font_large.h"
 #include "font_small.h"
 #include "protocol_v1.h"
@@ -188,8 +187,9 @@ static uint32_t lcd_search_mode_started;
 #define LCD_GRAPH_CHUNK_COUNT ((LCD_GRAPH_HEIGHT + \
     LCD_GRAPH_CHUNK_HEIGHT - 1u) / LCD_GRAPH_CHUNK_HEIGHT)
 #define LCD_RATE_MAX_VALUE 999999999u
-#define LCD_RATE_MAX_DIGITS 6u
+#define LCD_RATE_MAX_DIGITS 5u
 #define LCD_RATE_MAX_GLYPHS (LCD_RATE_MAX_DIGITS + 1u)
+#define LCD_RATE_GLYPH_BUFFER_SIZE 11u
 #define LCD_RATE_MASK_GLYPHS 6u
 #define LCD_CPM_MAX_DIGITS 4u
 #define LCD_RATE_FIELD_WIDTH (LCD_RATE_MASK_GLYPHS * FONT_LARGE_CELL_WIDTH)
@@ -267,7 +267,7 @@ static bool lcd_text_row_commands_queued;
 static uint8_t lcd_text_glyph_index;
 static uint8_t lcd_text_dma_glyph_advance;
 static uint16_t lcd_text_glyph_pixels;
-static char lcd_rate_glyphs[LCD_RATE_MAX_GLYPHS + 2u];
+static char lcd_rate_glyphs[LCD_RATE_GLYPH_BUFFER_SIZE];
 static uint8_t lcd_rate_glyph_count;
 static bool lcd_rate_has_measurement;
 static bool lcd_dose_has_measurement;
@@ -319,9 +319,6 @@ static uint32_t lcd_graph_log_bar_rates[LCD_GRAPH_VISIBLE_BARS];
 static bool lcd_graph_log_bar_live[LCD_GRAPH_VISIBLE_BARS];
 static log_point_t lcd_graph_selected_point;
 static bool lcd_graph_selected_point_valid;
-static uint32_t lcd_graph_first_day_start;
-static uint32_t lcd_graph_first_day_count;
-static bool lcd_graph_first_day_calendar_valid;
 static lcd_graph_log_cursor_t lcd_graph_log_record_cursors[
     LCD_GRAPH_LOG_MAX_RECORDS];
 static log_cursor_t lcd_graph_log_summary_cursor;
@@ -987,12 +984,11 @@ static void lcd_format_scaled_sv(uint64_t value_picosv_x18,
             ++integer_digits;
         }
         decimal_limit = dose_value ? 5u :
-            (lcd_indication_mode == 2u ? 6u :
             (unit == 0u ? 5u :
                 (unit == 1u ?
                     (lcd_settings_value_index[SETTING_UNIT] == 2u ? 1u : 3u) :
-                    (unit == 2u ? 0u : 5u))));
-        if (dose_value && whole == 0u &&
+                    (unit == 2u ? 0u : 5u)));
+        if (whole == 0u &&
             lcd_settings_value_index[SETTING_LEAD_ZERO] == 0u && decimal_limit > 4u) {
             /* Keep the visible leading zero plus decimal point within the
              * six-character large-font field. */
@@ -1133,6 +1129,9 @@ static void lcd_format_count_rate(uint32_t cpm)
             (char)('0' + ((fraction / 10u) % 10u));
         lcd_rate_glyphs[lcd_rate_glyph_count++] =
             (char)('0' + (fraction % 10u));
+        if (lcd_rate_glyph_count > LCD_RATE_MASK_GLYPHS) {
+            lcd_rate_glyph_count = LCD_RATE_MASK_GLYPHS;
+        }
         lcd_rate_glyphs[lcd_rate_glyph_count] = '\0';
     }
 }
@@ -3117,9 +3116,6 @@ static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
         lcd_graph_log_summary_coverage = 0u;
         lcd_graph_log_summary_max = 0u;
         lcd_graph_log_summary_bar_max = 0u;
-        lcd_graph_first_day_start = 0u;
-        lcd_graph_first_day_count = 0u;
-        lcd_graph_first_day_calendar_valid = false;
         lcd_graph_log_summary_memory = board_display_log_memory();
         if (lcd_graph_log_summary_memory == BOARD_LOG_MEMORY_OFF)
             lcd_graph_log_summary_memory = board_display_log_source();
@@ -3153,11 +3149,6 @@ static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
                 point.maximum_cpm : point.average_cpm;
             lcd_graph_log_bar_live[index] = point.live;
         }
-        if (all_days && index == 0u) {
-            lcd_graph_first_day_start = point.period_start;
-            lcd_graph_first_day_count = point.count;
-            lcd_graph_first_day_calendar_valid = point.calendar_valid;
-        }
         lcd_graph_log_summary_dose += point.count;
         lcd_graph_log_summary_coverage += point.covered_seconds;
         if (point.maximum_cpm > lcd_graph_log_summary_max)
@@ -3179,14 +3170,6 @@ static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
     lcd_graph_log_window_valid = lcd_graph_log_visible != 0u;
     lcd_graph_log_summary_valid = true;
     lcd_graph_selected_point_valid = false;
-    if (all_days && lcd_graph_log_visible != 0u &&
-        lcd_graph_first_day_calendar_valid) {
-        dose_reconcile_use_summary(lcd_graph_log_summary_memory,
-            (uint16_t)(lcd_graph_first_day_start / 86400u),
-            lcd_graph_first_day_count,
-            lcd_graph_log_summary_dose > UINT32_MAX ? UINT32_MAX :
-                (uint32_t)lcd_graph_log_summary_dose);
-    }
     return true;
 }
 
@@ -4005,41 +3988,22 @@ settings_line_draw:
 
         {
             const uint8_t digit_slot = (uint8_t)(lcd_text_glyph_index - 3u);
-            const bool extended_value =
-                lcd_rate_glyph_count > LCD_RATE_MASK_GLYPHS;
             const uint8_t digit_index = digit_slot;
-            const uint8_t first_digit = extended_value ? 0u :
+            const uint8_t first_digit =
                 (uint8_t)((LCD_RATE_MASK_GLYPHS -
                     lcd_rate_glyph_count + 1u) / 2u);
             const uint8_t content_end = (uint8_t)(first_digit +
                 lcd_rate_glyph_count);
-            uint16_t glyph_x;
-            uint16_t text_width = 0u;
             uint8_t glyph_width;
 
             glyph = digit_index < first_digit ||
-                (!extended_value && digit_index >= content_end) ? ' ' :
+                digit_index >= content_end ? ' ' :
                 lcd_rate_glyphs[digit_index - first_digit];
-            if (extended_value) {
-                for (uint8_t i = 0u; i < lcd_rate_glyph_count; ++i) {
-                    text_width = (uint16_t)(text_width +
-                        font_large_glyph_width(lcd_rate_glyphs[i]) - 2u);
-                }
-                glyph_x = (uint16_t)((LCD_WIDTH - text_width) / 2u);
-                for (uint8_t i = 0u; i < digit_index; ++i) {
-                    glyph_x = (uint16_t)(glyph_x +
-                        font_large_glyph_width(lcd_rate_glyphs[i]) - 2u);
-                }
-            } else {
-                glyph_x = (uint16_t)(LCD_RATE_FIELD_X +
-                    digit_index * FONT_LARGE_CELL_WIDTH);
-            }
-            x_start = (uint8_t)glyph_x;
+            x_start = (uint8_t)(LCD_RATE_FIELD_X +
+                digit_index * FONT_LARGE_CELL_WIDTH);
             glyph_width = (digit_index < first_digit ||
-                (!extended_value && digit_index >= content_end)) ?
-                FONT_LARGE_CELL_WIDTH :
-                (uint8_t)(font_large_glyph_width(glyph) -
-                    (extended_value ? 2u : 0u));
+                digit_index >= content_end) ? FONT_LARGE_CELL_WIDTH :
+                font_large_glyph_width(glyph);
 
             y_start = (uint8_t)((LCD_HEIGHT - FONT_LARGE_CELL_HEIGHT) / 2u);
             x_window[0] = 0u;
@@ -4058,8 +4022,7 @@ settings_line_draw:
             for (uint8_t y = 0u; y < FONT_LARGE_CELL_HEIGHT; ++y) {
                 for (uint8_t x = 0u; x < glyph_width; ++x) {
                     lcd_glyph_put((uint16_t)y * glyph_width + x,
-                        font_large_pixel(glyph,
-                            (uint8_t)(x + (extended_value ? 1u : 0u)), y) ?
+                        font_large_pixel(glyph, (uint8_t)x, y) ?
                             (lcd_screen_page == 0u ? lcd_rate_color :
                              LCD_TEXT_FOREGROUND) : LCD_TEXT_BACKGROUND);
                 }

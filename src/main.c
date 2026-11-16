@@ -1,7 +1,6 @@
 #include "board.h"
 #include "cpm_history.h"
 #include "daily_dose.h"
-#include "dose_reconcile.h"
 #include "log_writer.h"
 #include "protocol_v1.h"
 #include "rate_display.h"
@@ -212,7 +211,7 @@ int main(void)
     debug_usage_usb_was_on = board_display_usb_connected();
 
     for (;;) {
-        protocol_v1_service();
+        const bool data_transfer = protocol_v1_service();
         uint32_t now = board_millis;
         if (board_display_screen_connection_service()) {
             inactivity_deadline = now + screen_timeout_ms;
@@ -230,33 +229,6 @@ int main(void)
             backlight_on = true;
             inactivity_deadline = board_display_screen_always_on() ?
                 UINT32_MAX : now + screen_timeout_ms;
-        }
-        {
-            uint8_t memory = board_display_log_memory();
-            uint32_t reconciled_day;
-            uint32_t reconciled_total;
-            if (memory == BOARD_LOG_MEMORY_OFF) {
-                memory = board_display_log_source();
-            }
-            const dose_reconcile_result_t result = dose_reconcile_step(
-                memory, calendar_day_key,
-                &reconciled_day, &reconciled_total);
-            if (result == DOSE_RECONCILE_COMPLETE) {
-                daily_dose_set_count(reconciled_day);
-                today_pulse_count = daily_dose_count();
-                total_pulse_count = reconciled_total;
-                daily_dose_set_total(total_pulse_count);
-                if (daily_dose_checkpoint()) {
-                    total_pulse_saved = total_pulse_count;
-                }
-                dose_from_pulse_count(selected_dose_pulses(
-                        board_display_dose_period(), session_pulses_total,
-                        today_pulse_count, total_pulse_count),
-                    &dose_thousandths, &dose_fraction);
-                board_display_set_dose(dose_thousandths, dose_fraction,
-                    session_pulses_total, today_pulse_count,
-                    total_pulse_count, dose_measurement_seconds);
-            }
         }
         if ((int32_t)(now - next_total_checkpoint) >= 0) {
             if (total_pulse_count != total_pulse_saved &&
@@ -614,6 +586,8 @@ int main(void)
                 }
                 const uint32_t second_pulses =
                     detected_pulses - previous_minute_sample;
+                const uint32_t warmup_remaining = pulses_since_start < 30u ?
+                    30u - pulses_since_start : 0u;
 
                 previous_minute_sample = detected_pulses;
                 if (UINT32_MAX - pulses_since_start < second_pulses) {
@@ -622,26 +596,28 @@ int main(void)
                     pulses_since_start += second_pulses;
                 }
                 const bool cpm_valid = pulses_since_start >= 30u;
-                if (UINT32_MAX - session_pulses_total < second_pulses) {
+                const uint32_t dose_pulses = second_pulses > warmup_remaining ?
+                    second_pulses - warmup_remaining : 0u;
+                if (UINT32_MAX - session_pulses_total < dose_pulses) {
                     session_pulses_total = UINT32_MAX;
                 } else {
-                    session_pulses_total += second_pulses;
+                    session_pulses_total += dose_pulses;
                 }
-                if (UINT32_MAX - total_pulse_count < second_pulses) {
+                if (UINT32_MAX - total_pulse_count < dose_pulses) {
                     total_pulse_count = UINT32_MAX;
                 } else {
-                    total_pulse_count += second_pulses;
+                    total_pulse_count += dose_pulses;
                 }
                 const uint32_t cpm = second_log_add(second_pulses);
                 latest_cpm = cpm;
                 latest_display_cpm = second_log_rate_cpm();
                 board_display_set_dose_cpm(cpm);
-                daily_dose_add(second_pulses);
+                daily_dose_add(dose_pulses);
                 today_pulse_count = calendar_day_valid ?
                     daily_dose_count() : session_pulses_total;
                 /* Keep the live minute available to the app while excluding
                  * blue warm-up samples from persistent log records. */
-                log_writer_second(second_pulses, latest_display_cpm,
+                log_writer_second(dose_pulses, latest_display_cpm,
                     log_uptime_seconds,
                     log_calendar_seconds, log_calendar_valid, cpm_valid);
                 if (board_display_dose_period() == 1u) {
@@ -682,8 +658,8 @@ int main(void)
             {
                 const bool search_mode = board_display_search_mode();
                 const uint32_t interval_ms = rate_display_interval(
-                    search_mode || board_display_usb_connected(), backlight_on,
-                    board_display_invisible_mode());
+                    search_mode || data_transfer,
+                    backlight_on);
                 if (rate_display_update(&display_rate, now,
                         search_mode ? UINT32_MAX : latest_display_cpm * 10u,
                         interval_ms)) {
@@ -884,8 +860,6 @@ int main(void)
             status.usb_seconds = debug_usb_seconds;
             protocol_v1_set_status(&status);
         }
-        protocol_v1_service();
-
         /* Keep clocks and interrupt-driven pulse counting alive while the CPU
          * waits for the next SysTick, detector, RTC, DMA, or button interrupt. */
         __asm volatile ("dsb\n\twfi" ::: "memory");

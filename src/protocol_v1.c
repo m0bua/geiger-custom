@@ -438,9 +438,11 @@ void protocol_v1_set_status(const protocol_v1_status_t *status)
     current_status = *status;
 }
 
-void protocol_v1_service(void)
+bool protocol_v1_service(void)
 {
+    bool received = false;
     while (rx_tail != rx_head) {
+        received = true;
         const uint8_t value = rx_ring[rx_tail];
         rx_tail = (uint8_t)((rx_tail + 1u) & (RX_RING_SIZE - 1u));
         if (value == 0u) {
@@ -462,6 +464,7 @@ void protocol_v1_service(void)
             }
         }
     }
+    return received;
 }
 void USART1_IRQHandler(void)
 {

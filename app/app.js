@@ -1199,10 +1199,8 @@ function formatRadiation(valueUsv, prefixSetting, symbol, perHour, digitLimit = 
   const selected = prefixes[Math.min(prefix, prefixes.length - 1)];
   const value = valueUsv * selected.factor;
   const integerDigits = Math.max(0, Math.floor(Math.log10(Math.abs(value))) + 1);
-  const searchRate = perHour && deviceIndicationMode === 2;
-  const maxDecimals = searchRate ? 6 :
-    (perHour ? (symbol === 'R' ? 1 : 3) : 5);
-  const precisionDigits = searchRate ? 6 : 5;
+  const maxDecimals = perHour ? (symbol === 'R' ? 1 : 3) : 5;
+  const precisionDigits = 5;
   const decimalsAvailable = digitLimit === null ?
     precisionDigits - integerDigits : digitLimit - Math.max(1, integerDigits);
   const digits = value === 0 ? 0 : Math.max(0,

@@ -1,6 +1,7 @@
 #include "log_writer.h"
 
 #include "board.h"
+#include "daily_dose.h"
 #include "log_eeprom.h"
 #include "log_eeprom_layout.h"
 #include "log_record.h"
@@ -592,9 +593,9 @@ void log_writer_second(uint32_t pulses, uint32_t rate_cpm,
                 (uint8_t)(minute_accumulator.warmup_count + pulses);
         }
     }
-    update_live_period(&hour_accumulator, 3600u, pulses,
+    update_live_period(&hour_accumulator, 3600u, persistent_allowed ? pulses : 0u,
         minute_accumulator.live_maximum_cpm);
-    update_live_period(&day_accumulator, 86400u, pulses,
+    update_live_period(&day_accumulator, 86400u, persistent_allowed ? pulses : 0u,
         minute_accumulator.live_maximum_cpm);
 
     alarm_level = current_led_level();
@@ -677,8 +678,15 @@ bool log_writer_live(log_record_kind_t kind, log_stored_t *item)
         (kind == LOG_RECORD_DAY && day_accumulator.active)) {
         const period_accumulator_t *period = kind == LOG_RECORD_HOUR ?
             &hour_accumulator : &day_accumulator;
+        uint32_t count = period->count;
+        if (kind == LOG_RECORD_DAY && previous_calendar_valid &&
+            (period->year_descriptor & LOG_YEAR_VALID) != 0u &&
+            period->period_start == previous_calendar -
+                previous_calendar % 86400u) {
+            count = daily_dose_count();
+        }
         *item = (log_stored_t){
-            .record = {period->period_index, period->count,
+            .record = {period->period_index, count,
                 period->maximum_cpm, 0u, period->segment_id,
                 period->covered_seconds},
             .time = period->period_start,

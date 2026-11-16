@@ -16,11 +16,12 @@ bool rate_display_update(rate_display_state_t *state, uint32_t now,
 
 void rate_display_render(uint32_t value, uint32_t pulses_since_start);
 
-/* First matching condition wins: fast, screen on, normal, invisible. */
-uint32_t rate_display_interval(bool fast, bool screen_on, bool invisible);
+/* Fast while searching/transferring, once per second with screen on,
+ * pulse-driven while screen off. */
+uint32_t rate_display_interval(bool fast, bool screen_on);
 
-/* Two clocks: refresh deadline and filter time. Returns consumed 100-ms ticks,
- * or UINT32_MAX when no refresh is due. Pulses restart economical deadlines. */
+/* Two clocks: refresh deadline and filter time. Interval 0 is pulse-driven.
+ * Returns consumed 100-ms ticks, or UINT32_MAX when no refresh is due. */
 uint32_t rate_display_ticks(uint32_t clocks[2], uint32_t now,
     uint32_t interval_ms, bool pulse);
 

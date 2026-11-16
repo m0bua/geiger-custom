@@ -1,6 +1,7 @@
 #ifndef PROTOCOL_V1_H
 #define PROTOCOL_V1_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #define PROTOCOL_V1_VERSION 1u
@@ -51,7 +52,7 @@ enum {
 
 void protocol_v1_transport_init(void);
 void protocol_v1_set_status(const protocol_v1_status_t *status);
-void protocol_v1_service(void);
+bool protocol_v1_service(void);
 
 /* USART1 RX interrupt, routed from the startup vector table. */
 void USART1_IRQHandler(void);

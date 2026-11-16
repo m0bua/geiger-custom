@@ -24,7 +24,8 @@ __attribute__((noinline)) bool rate_display_update(rate_display_state_t *state,
 uint32_t rate_display_ticks(uint32_t clocks[2],
     uint32_t now, uint32_t interval_ms, bool pulse)
 {
-    if (now - clocks[0] < interval_ms && !(pulse && interval_ms != 100u))
+    if ((interval_ms == 0u && !pulse) ||
+        (interval_ms != 0u && now - clocks[0] < interval_ms))
         return UINT32_MAX;
     clocks[0] = now;
     const uint32_t ticks = (now - clocks[1]) / 100u;
@@ -32,11 +33,10 @@ uint32_t rate_display_ticks(uint32_t clocks[2],
     return ticks;
 }
 
-__attribute__((noinline)) uint32_t rate_display_interval(bool fast, bool screen_on, bool invisible)
+__attribute__((noinline)) uint32_t rate_display_interval(bool fast, bool screen_on)
 {
     if (fast) return 100u;
-    if (screen_on) return 500u;
-    return invisible ? 5000u : 1000u;
+    return screen_on ? 1000u : 0u;
 }
 
 __attribute__((noinline)) uint32_t rate_display_step(uint32_t current,
