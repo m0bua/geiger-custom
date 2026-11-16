@@ -81,9 +81,9 @@ static uint8_t missing_coverage_code(log_record_kind_t kind,
     const uint32_t period = log_record_period_seconds(kind);
     if (period == 0u || covered_seconds >= period) return 0u;
     if (covered_seconds == 0u) covered_seconds = 1u;
-    const uint64_t missing = (uint64_t)(period - covered_seconds) * 256u;
-    uint32_t code = (uint32_t)((missing + period - 1u) / period);
-    return code > 255u ? 255u : (uint8_t)code;
+    const uint32_t coverage = (covered_seconds * 256u + period / 2u) / period;
+    if (coverage == 0u) return 255u;
+    return coverage >= 256u ? 0u : (uint8_t)(256u - coverage);
 }
 
 static uint32_t coverage_from_missing_code(log_record_kind_t kind,
@@ -91,7 +91,7 @@ static uint32_t coverage_from_missing_code(log_record_kind_t kind,
 {
     const uint32_t period = log_record_period_seconds(kind);
     if (code == 0u) return period;
-    uint32_t covered = (uint32_t)(((uint64_t)period * (256u - code) + 128u) / 256u);
+    uint32_t covered = (period * (256u - code) + 128u) / 256u;
     return covered == 0u ? 1u : covered;
 }
 
