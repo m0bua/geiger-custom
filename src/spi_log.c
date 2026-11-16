@@ -148,21 +148,12 @@ static void write_u32_le(uint8_t *data, uint32_t value)
 
 static uint8_t stream_index(log_record_kind_t kind)
 {
-    switch (kind) {
-    case LOG_RECORD_MINUTE: return 0u;
-    case LOG_RECORD_HOUR: return 1u;
-    case LOG_RECORD_DAY: return 2u;
-    case LOG_RECORD_ALERT: return 3u;
-    default: return 0xFFu;
-    }
+    return (uint8_t)kind < 4u ? (uint8_t)kind : 0xFFu;
 }
 
 static uint8_t stream_kind(uint8_t index)
 {
-    static const uint8_t kinds[4] = {
-        LOG_RECORD_MINUTE, LOG_RECORD_HOUR, LOG_RECORD_DAY, LOG_RECORD_ALERT
-    };
-    return index < 4u ? kinds[index] : 0xFFu;
+    return index < 4u ? index : 0xFFu;
 }
 
 static uint16_t slot_size(log_record_kind_t kind, uint8_t version)
@@ -901,27 +892,37 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
                    uint32_t date_limit, uint32_t reference, log_stored_t *item)
 {
     uint8_t index = stream_index(kind);
+    spi_log_stream_t *stream;
     uint32_t ceiling_generation = UINT32_MAX;
     uint16_t ceiling_slot = UINT16_MAX;
     if (!log_ready || index == 0xFFu || item == NULL) return false;
-
+    stream = &streams[index];
+    const bool newest = before_epoch == UINT16_MAX && before_time == UINT32_MAX &&
+        skip == 0u && !inclusive && !date_limit && stream->has_active &&
+        stream->next_slot != 0u;
     /* History is read newest-first. For alerts, the slot before the cached
      * one also preserves distinct events with the same minute timestamp. */
     bool alert_cache_step = kind == LOG_RECORD_ALERT && inclusive && skip != 0u;
+    bool cache_after = !alert_cache_step && before_time > find_cache.time &&
+        find_cache.address == stream->active_address &&
+        find_cache.slot + 1u == stream->next_slot;
     if (((skip == 0u && !inclusive) || alert_cache_step) && find_cache.valid &&
         find_cache.kind == (uint8_t)kind &&
         find_cache.revision == query_revision &&
         find_cache.epoch == before_epoch &&
         find_cache.date_limit == date_limit &&
         (alert_cache_step ? before_time == find_cache.time :
-            before_time <= find_cache.time)) {
+            (before_time <= find_cache.time || cache_after))) {
         spi_find_cache_t *cache = &find_cache;
         spi_log_header_t header;
         if (read_header(cache->address, &header) == 1 &&
             header.kind == kind && header.epoch == cache->epoch &&
             header.generation == cache->generation && cache->slot != 0u) {
-            uint16_t low = alert_cache_step ? cache->slot : 0u;
-            uint16_t high = cache->slot;
+            uint16_t low = cache_after ? (uint16_t)(cache->slot + 1u) :
+                (alert_cache_step ? cache->slot :
+                    (kind == LOG_RECORD_ALERT ? 0u :
+                        (uint16_t)(cache->slot - 1u)));
+            uint16_t high = cache_after ? low : cache->slot;
             while (low < high) {
                 const uint16_t mid = (uint16_t)(low + (high - low) / 2u);
                 log_record_t record;
@@ -965,16 +966,20 @@ bool spi_log_find(log_record_kind_t kind, uint16_t before_epoch,
         uint32_t chosen_address = 0u;
         uint16_t chosen_slot = 0u;
         log_stored_t best = {0};
-        for (uint16_t sector = 0u; sector < streams[index].sector_count; ++sector) {
+        uint16_t sector = newest ?
+            (uint16_t)((stream->active_address - stream->base_address) >> 12u) : 0u;
+        for (; sector < stream->sector_count; ++sector) {
             spi_log_header_t header;
-            uint32_t address = sector_address(&streams[index], sector);
+            uint32_t address = sector_address(stream, sector);
             int8_t status = read_header(address, &header);
+            if (newest) sector = stream->sector_count;
             if (status == -3) continue;
             if (status != 1 || header.kind != kind ||
                 header.epoch > before_epoch || (found && header.epoch < best.epoch)) continue;
-            uint16_t high = count_sector_records(kind, &header, address);
+            uint16_t high = newest ? stream->next_slot :
+                count_sector_records(kind, &header, address);
             if (high == UINT16_MAX) continue;
-            uint16_t low = 0u;
+            uint16_t low = newest ? high : 0u;
             /* Monotonic dates within a calendar epoch; find the newest eligible slot. */
             while (low < high) {
                 uint16_t mid = (uint16_t)(low + (high - low) / 2u);
