@@ -7591,14 +7591,37 @@ elements.rateChart.addEventListener('pointercancel', finishRateChartPointer);
 elements.rateChart.addEventListener('wheel', (event) => {
   event.preventDefault();
   const rect = elements.rateChart.getBoundingClientRect();
+  if (event.shiftKey || event.altKey) {
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ?
+      event.deltaX : event.deltaY;
+    const unit = event.deltaMode === 1 ? 16 :
+      event.deltaMode === 2 ? rect.width : 1;
+    const previousScroll = rateChartScrollSeconds;
+    rateChartScrollSeconds += delta * unit * rateChartZoomSeconds /
+      Math.max(1, rect.width);
+    clampRateChartViewport();
+    const scrollDelta = rateChartScrollSeconds - previousScroll;
+    if (Math.abs(scrollDelta) >= 0.01) {
+      showRateChartActionHint(scrollDelta > 0 ? 'older' : 'newer',
+        scrollDelta > 0 ? 'Browse older history' : 'Browse newer history', event);
+    }
+    hideRateChartTooltip();
+    drawRateChart();
+    return;
+  }
   const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
   const previousZoom = rateChartZoomSeconds;
   const previousScroll = rateChartScrollSeconds;
   const ageAtPointer = rateChartScrollSeconds + (1 - ratio) * rateChartZoomSeconds;
   // Keep the usual wheel convention: wheel up zooms in, wheel down zooms out.
   // The sample below the pointer stays fixed while the viewport has room;
-  // clamping only takes effect at either edge.
-  rateChartZoomSeconds *= event.deltaY < 0 ? 0.8 : 1.25;
+  // at a zoom limit, ignore extra wheel input instead of turning it into a pan.
+  rateChartZoomSeconds = Math.max(10, Math.min(RATE_CHART_BUFFER_SECONDS,
+    previousZoom * (event.deltaY < 0 ? 0.8 : 1.25)));
+  if (rateChartZoomSeconds === previousZoom) {
+    hideRateChartTooltip();
+    return;
+  }
   rateChartScrollSeconds = ageAtPointer - (1 - ratio) * rateChartZoomSeconds;
   clampRateChartViewport();
   const scrollDelta = rateChartScrollSeconds - previousScroll;
