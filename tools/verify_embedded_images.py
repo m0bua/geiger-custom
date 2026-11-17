@@ -59,6 +59,14 @@ def main() -> int:
     args = parser.parse_args()
 
     document = args.html.read_text(encoding="utf-8")
+    if "../docs/renders/" in document:
+        raise ValueError("Standalone HTML contains an unembedded manual image path.")
+    infographic = (Path(__file__).resolve().parents[1] /
+                   "docs/renders/device-navigation.svg").read_bytes()
+    infographic_data_uri = "data:image/svg+xml;base64," + base64.b64encode(infographic).decode("ascii")
+    if infographic_data_uri not in document:
+        raise ValueError("The device navigation infographic is missing from standalone HTML.")
+    print("Verified embedded device navigation infographic.")
     for variable, path in (
         ("EMBEDDED_FIRMWARE_B64", args.firmware_bin),
         ("EMBEDDED_SPI_MINI_B64", args.spi_mini_bin),

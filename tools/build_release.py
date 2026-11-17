@@ -171,10 +171,10 @@ def minify_html(source: str) -> str:
 
 
 def inline_manual_images(document: str) -> str:
-    pattern = re.compile(r'src="\.\./docs/renders/screens/([^"]+\.svg)"')
+    pattern = re.compile(r'src="\.\./docs/renders/([^"]+\.svg)"')
 
     def replace(match: re.Match[str]) -> str:
-        image_path = ROOT / "docs/renders/screens" / match.group(1)
+        image_path = ROOT / "docs/renders" / match.group(1)
         if not image_path.is_file():
             raise FileNotFoundError(f"Manual illustration is missing: {image_path}")
         encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
@@ -306,7 +306,7 @@ def main() -> int:
     )
     if "src=\"app.js" in document or "href=\"style.css" in document:
         raise ValueError("Could not inline the app's CSS and JavaScript")
-    if "../docs/renders/screens/" in document:
+    if "../docs/renders/" in document:
         raise ValueError("At least one manual image was not embedded")
 
     output = args.output if args.output.is_absolute() else ROOT / args.output
