@@ -435,7 +435,7 @@
 
         <section class="manual-chapter">
         <h3>1.0 - Rate</h3>
-        <p>In NORMAL, the large value is the current rate in the selected UNIT and RATE PREFIX, based on a rolling 60-second measurement. The top row shows device time when set, otherwise hours and minutes since startup, plus solar input and battery status. RATE ROW 2 selects the smaller second row. During startup, the rate is blue and the progress bar fills to 30 CNT; the estimate starts at 23 CPM and settles toward the measured rate. With HV off, Rate shows red DISABLED; counting and rate/dose updates stop, and turning HV back on restarts the rate warm-up from zero. Rate colors and alarms follow their configured thresholds.</p>
+        <p>In NORMAL, the large value is the current rate in the selected UNIT and RATE PREFIX, based on a rolling 60-second measurement. The top row shows device time when set, otherwise hours and minutes since startup, plus solar input and battery status. RATE ROW 2 selects the smaller second row. During startup, the rate is blue and the progress bar fills to 30 CNT; the estimate starts at 23 CPM and settles toward the measured rate. The first 30 startup pulses establish the rate but do not add to accumulated dose or persistent log records. With HV off, Rate shows red DISABLED; counting and rate/dose updates stop, and turning HV back on restarts the rate warm-up from zero. Rate colors and alarms follow their configured thresholds.</p>
         <p><strong>SEARCH</strong> keeps the display on and flashes the LED on detector pulses. The rate display rises when a pulse arrives, then eases down between pulses; it shows no more than six large symbols including the decimal point and uses a brighter LED. This responsive display estimate is separate from the measured CPM written to logs and used for alarms. In NORMAL, the estimate reacts quickly to increases and eases down over several seconds when the measured rate falls. Smoothing accounts for elapsed time so changing the refresh interval does not change the decay speed. <strong>INVISIBLE</strong> suppresses detector indications and alarms and turns the display off after one second; measurements continue. Short Left exits Invisible even while the display is asleep.</p>
         <p><strong>Rate refresh priority, first match wins:</strong> SEARCH or active data transfer: 100 ms; screen on: 1 second; screen off: on each detector pulse. Charging alone does not count as data transfer. The connected app requests status every 100 ms and keeps graph history in one-second buckets. Pulses are counted immediately; measurement, logs and alarm checks retain their one-second cadence.</p>
         <div class="manual-screen-grid">
@@ -607,12 +607,27 @@
           <div class="release-history-content">
         <ul class="release-list">
           <li>
+            <time datetime="2026-11-17">2026-11-17</time> — Updated Device manual and renders:
+            <ul>
+              <li>Added a full-screen, zoomable navigation infographic and current Debug renders. The Device manual now numbers Rate, Debug, and Settings as 1.0, 1.1, and 1.2; selected DAY/ALERT columns and the cursor below them are green.</li>
+            </ul>
+          </li>
+          <li>
+            <time datetime="2026-11-16">2026-11-16</time> — Startup measurement, faster logs, and chart navigation:
+            <ul>
+              <li><strong>Device startup:</strong> the first 30 pulses establish the rate but no longer add to accumulated dose or log records. Rate display refreshes every 100 ms during SEARCH or active serial transfers, every second while the screen is on, and on each pulse while the screen is off. Falling NORMAL readings ease down smoothly; measurement, logs, and alarms retain their one-second cadence.</li>
+              <li><strong>Logs:</strong> faster newest-first MINUTES reads from SPI; coverage values now round to the nearest representable fraction.</li>
+              <li><strong>Overview chart:</strong> hold Shift or Alt while scrolling the mouse wheel to browse history; regular wheel and touch pinch still zoom the range.</li>
+            </ul>
+          </li>
+          <li>
             <time datetime="2026-11-13">2026-11-13</time> — Smoother rate, live logs, and release portal:
             <ul>
-              <li><strong>Device rate:</strong> NORMAL readings rise quickly and ease down smoothly over time. Refresh priority is SEARCH or USB every 100 ms, screen on every 500 ms, NORMAL screen off every second, and INVISIBLE screen off without USB every 5 seconds. In the three economical states, a pulse refreshes immediately and resets the timer.</li>
+              <li><strong>Device rate:</strong> NORMAL readings rise quickly and ease down smoothly over time.</li>
               <li><strong>App chart:</strong> status refreshes every 100 ms while connected; the chart keeps one-second history points and accumulates pulse counts.</li>
               <li><strong>Touchscreen chart:</strong> pinch with two fingers to zoom around the center of the gesture; after pinching, drag with one finger to scroll.</li>
               <li><strong>Settings layout:</strong> at wide widths, Interface and Rate levels each occupy a full row with four controls across. At intermediate widths, Interface is on the left and Rate levels on the right, with each color on its own row inside the group. Narrow screens stack the groups. Tablet device settings use two columns, with labels above controls and Reset and Power actions below the settings.</li>
+              <li><strong>Release portal:</strong> show the three newest stable releases initially, with controls for older stable releases and pre-releases.</li>
               <li><strong>Navigation:</strong> on narrow screens, connection status and controls occupy their own row above the wrapping page tabs.</li>
               <li><strong>Android USB:</strong> the USB connection button is now the green primary action at the right of the toolbar.</li>
               <li><strong>Firefox for Android:</strong> added an Open in Chrome action for USB connection and hid the unsupported Install button.</li>

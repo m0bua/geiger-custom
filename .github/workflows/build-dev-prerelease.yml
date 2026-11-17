@@ -289,9 +289,12 @@ jobs:
           The HTML and Windows apps identify themselves as Version: ${RELEASE_VERSION}. This build is for testing and may change without notice.
 
           ## Changes
-          **Changes since 202611131439-dev-7581c0f:**
-          - The log table now adapts to the screen without a separate horizontal scrollbar. The column header and TOTAL row stay pinned while the page scrolls; fullscreen logs retain their own scrolling area. Controls wrap on intermediate screens and stay on one row on wide screens.
-          - Battery percentage now only decreases unless USB or a strong solar input is detected; it may increase when either source is present. Removed the 90-second confirmation delay while retaining the ADC hysteresis. These inputs indicate a possible power source, not measured charging current; verify the estimate on hardware.
+          **Changes since 202611131551-dev-44e643c:**
+          - The first 30 startup pulses establish the rate but no longer add to accumulated dose or log records. Rate refreshes every 100 ms in SEARCH or during active serial transfers, once per second while the screen is on, and on detector pulses while the screen is off; falling NORMAL readings still ease down smoothly.
+          - Newest-first MINUTES reads from SPI now use the active stream and cached position to avoid rescanning older sectors. Log coverage encoding now rounds to the nearest representable fraction.
+          - The Overview chart supports timeline scrolling with Shift or Alt plus the mouse wheel while retaining wheel and touch pinch zoom.
+          - The release portal now limits its initial stable-release list and provides a separate way to reveal older releases.
+          - Refreshed the Device manual and render set: added the navigation infographic and three Debug screens, aligned Rate/Debug/Settings numbering, updated the lower Settings render, and highlighted the selected DAY/ALERT column and cursor in green.
 
           ### Known issue
           Battery percentage is still a voltage-based estimate. USB and solar input detection do not confirm charging current, so the new behavior needs hardware verification.
