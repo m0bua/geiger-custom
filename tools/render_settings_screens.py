@@ -8,21 +8,33 @@ from xml.sax.saxutils import escape
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "docs" / "renders" / "screens"
 FONT = (ROOT / "src" / "font_small.c").read_text(encoding="utf-8")
-THEME = (ROOT / "src" / "lcd_theme.h").read_text(encoding="utf-8")
-GLYPHS = "0123456789:. %+-/<>?ABCDEFGHIJKLMNOPQRSTUVWXYZdhmnpsv"
-FONT_ROWS = re.search(r"small_rows\[.*?\]\[7\]\s*=\s*\{(.*?)\n\};", FONT, re.S).group(1)
-ROWS = re.findall(r"\{\s*((?:\d+\s*,\s*){6}\d+)\s*\}", FONT_ROWS)
-BITMAPS = {glyph: tuple(map(int, row.split(','))) for glyph, row in zip(GLYPHS, ROWS)}
+BOARD = (ROOT / "src" / "board_stm32l051.c").read_text(encoding="utf-8")
+GLYPHS = "0123456789:. %-/<>?ABCDEFGHIKLMNOPRSTUVWXYZdhmnpsv"
+FONT_COLUMNS = re.search(
+    r"small_columns\[SMALL_GLYPH_COUNT\]\[5\]\s*=\s*\{(.*?)\n\};",
+    FONT, re.S,
+).group(1)
+COLUMNS = [
+    [int(value) for value in re.findall(r"\d+", body)]
+    for body in re.findall(r"\{([^{}]+)\}", FONT_COLUMNS)
+]
+BITMAPS = dict(zip(GLYPHS, COLUMNS))
 
 
 def theme_color(name):
-    value = int(re.search(rf"#define LCD_COLOR_{name} 0x([0-9A-Fa-f]+)u", THEME).group(1), 16)
+    palette = re.search(
+        r"uint16_t lcd_theme_palette\[LCD_THEME_COLOR_COUNT\]\s*=\s*\{(.*?)\};",
+        BOARD, re.S,
+    ).group(1)
+    values = [int(value, 16) for value in re.findall(r"0x([0-9A-Fa-f]+)u", palette)]
+    index = {"BACKGROUND": 0, "TEXT": 1, "ACCENT": 2, "GREEN": 4, "YELLOW": 5, "RED": 6}[name]
+    value = values[index]
     r, g, b = (value >> 11) & 31, (value >> 5) & 63, value & 31
     return f"#{(r << 3) | (r >> 2):02X}{(g << 2) | (g >> 4):02X}{(b << 3) | (b >> 2):02X}"
 
 
-BACKGROUND, TEXT, ACCENT, RED, YELLOW = (
-    theme_color(name) for name in ("BACKGROUND", "TEXT", "ACCENT", "RED", "YELLOW")
+BACKGROUND, TEXT, ACCENT, RED, YELLOW, GREEN = (
+    theme_color(name) for name in ("BACKGROUND", "TEXT", "ACCENT", "RED", "YELLOW", "GREEN")
 )
 
 
@@ -57,10 +69,10 @@ def render(filename, title, description, lines, colors):
         assert len(line) <= 20
         for column, glyph in enumerate(line):
             color = colors[row][column] if isinstance(colors[row], list) else colors[row]
-            for y, bits in enumerate(BITMAPS[glyph]):
-                for x in range(5):
-                    if bits & (1 << (4 - x)):
-                        px, py = column * 8 + x + 1, 3 + row * 12 + y + 1
+            for x, bits in enumerate(BITMAPS[glyph]):
+                for y in range(1, 9):
+                    if bits & (1 << (y - 1)):
+                        px, py = column * 8 + x + 1, 3 + row * 12 + y
                         if px < 159:
                             paths[color].append(f"M{px} {py}h1v1h-1z")
     content = [
@@ -75,24 +87,24 @@ def render(filename, title, description, lines, colors):
     (OUTPUT / filename).write_text("\n".join(content) + "\n", encoding="utf-8", newline="\n")
 
 
-render("1.2.1-settings-simple.svg", "Settings - DOSE PERIOD selected",
-       "The settings list starts with DOSE PERIOD, selected in the accent color, followed by LED, CLICKS and the rate alarm settings.",
-       [settings_line("DOSE PERIOD", "DAY", True), settings_line("LED", "ALWAYS"),
+render("1.2.1-settings-simple.svg", "Settings - LED selected",
+       "The settings list shows LED selected in the accent color, with its current value ALWAYS, followed by CLICKS and the rate alarm settings.",
+       [settings_line("DOSE PERIOD", "DAY"), settings_line("LED", "ALWAYS", True),
         settings_line("CLICKS", "OFF"), settings_line("RATE SCREEN", "OFF"),
         settings_line("RATE LIGHT", "OFF"), settings_line("RATE SOUND", "OFF")],
-       [ACCENT, TEXT, TEXT, TEXT, TEXT, TEXT])
+       [TEXT, ACCENT, TEXT, TEXT, TEXT, TEXT])
 
-option_colors = [TEXT] * 20
-option_colors[:9] = [ACCENT] * 9
-render("1.2.2-settings-many-options.svg", "Settings - LED TIME options",
-       "LED TIME opens a separate screen with options in two columns, ordered down the left column and then down the right. AUTO is selected in the accent color.",
-       ["LED TIME", option_line("AUTO", "25ms", 0), option_line("1ms", "50ms"),
-        option_line("3ms", "80ms"), option_line("5ms", "100ms"), option_line("10ms")],
-       [TEXT, option_colors, TEXT, TEXT, TEXT, TEXT])
+option_colors = [[TEXT] * 20 for _ in range(3)]
+option_colors[2][:9] = [GREEN] * 9
+render("1.2.2-settings-many-options.svg", "Settings - LED options",
+       "The LED setting opens its six choices in two columns, ordered down the left column and then down the right. The cursor and selected ALWAYS option are green.",
+       ["LED", option_line("OFF", "YELLOW"), option_line("ON", "RED"),
+        option_line("ALWAYS", "CUSTOM", 0)],
+       [TEXT, *option_colors])
 
-render("1.2.3-settings-actions.svg", "Settings - bottom of list",
-       "Example with hidden settings enabled: RESET is selected in the accent color, LOG MEMORY is red, and POWER OFF and REBOOT are yellow.",
-       [settings_line("LEAD ZERO", "SHOW"), settings_line("HV", "ON"),
-        settings_line("LOG MEMORY", "EEPROM"), settings_line("RESET", "SETTINGS", True),
-        settings_line("POWER OFF"), settings_line("REBOOT")],
-       [TEXT, TEXT, RED, ACCENT, YELLOW, YELLOW])
+render("1.2.3-settings-actions.svg", "Settings - lower list",
+       "Lower settings list with UNIT, RATE PREFIX, DOSE PREFIX, LEAD ZERO, and HV before POWER OFF. LEAD ZERO is selected.",
+       [settings_line("UNIT", "SV"), settings_line("RATE PREFIX", "m"),
+        settings_line("DOSE PREF", "m"), settings_line("LEAD ZERO", "SHOW", True),
+        settings_line("HV", "ON"), settings_line("POWER OFF")],
+       [TEXT, TEXT, TEXT, ACCENT, TEXT, YELLOW])

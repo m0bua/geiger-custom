@@ -2967,11 +2967,10 @@ static uint16_t lcd_graph_rate_value_color(uint32_t cpm, bool dose)
 
 static uint16_t lcd_graph_log_bar_color(uint8_t bar, uint32_t packed)
 {
-    /* Keep the live/current column white and color historical columns like
-     * their dose value. Dim every incomplete column, including the live one. */
+    /* Keep low-rate columns white, then use yellow/red threshold colors.
+     * Dim every incomplete column, including the live one. */
     const uint16_t color = lcd_graph_log_bar_live[bar] ? LCD_GRAPH_COLOR :
-        lcd_graph_rate_value_color(lcd_graph_log_bar_rates[bar],
-            lcd_graph_log_type != 4u);
+        lcd_graph_rate_value_color(lcd_graph_log_bar_rates[bar], true);
     return (packed & 0x80000000u) != 0u ?
         lcd_theme_dim(color, lcd_theme_graph_dimming_percent) : color;
 }

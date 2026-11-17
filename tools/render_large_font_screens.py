@@ -43,7 +43,7 @@ def pixel(glyph: str, x: int, y: int) -> bool:
     return False
 
 
-def refresh(filename: str, text: str, color: str) -> None:
+def refresh(filename: str, text: str, color: str, start_x: int = 32) -> None:
     path = SCREEN_DIR / filename
     svg = path.read_text(encoding="utf-8")
     existing_pixels = re.compile(r"M(\d+) (\d+)h1v1h-1z")
@@ -52,7 +52,7 @@ def refresh(filename: str, text: str, color: str) -> None:
     def remove_old_large_pixels(match: re.Match[str]) -> str:
         d = match.group("d")
         d = existing_pixels.sub(
-            lambda p: "" if 8 <= int(p.group(1)) < 152 and 25 <= int(p.group(2)) <= 55 else p.group(0),
+            lambda p: "" if 8 <= int(p.group(1)) < 160 and 25 <= int(p.group(2)) <= 55 else p.group(0),
             d,
         )
         if not d:
@@ -60,8 +60,8 @@ def refresh(filename: str, text: str, color: str) -> None:
         return f'<{match.group("tag")} fill="{match.group("fill")}" d="{d}"/>'
 
     svg = tag_pattern.sub(remove_old_large_pixels, svg)
-    # The six-cell fixed rate field is centered at x=8; five glyphs use slots 1–5.
-    start_x = 8 + 24
+    # Both fields use six fixed-width cells. A four-decimal dose value uses all
+    # six cells (including the decimal point), so it starts at the field edge.
     start_y = 23
     pixels = []
     for index, glyph in enumerate(text):
@@ -77,4 +77,4 @@ def refresh(filename: str, text: str, color: str) -> None:
 
 refresh("1.0.1-rate-blue-cnt.svg", "0.153", "#0000FF")
 refresh("1.0.2-rate-green-cpm.svg", "0.153", "#00FF00")
-refresh("2-dose.svg", "1.234", "#D6D6D6")
+refresh("2-dose.svg", "1.2345", "#D6D6D6", start_x=8)

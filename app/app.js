@@ -5060,6 +5060,127 @@ elements.spiImageFile.addEventListener('change', loadSpiImage);
 elements.clearSpiImage.addEventListener('click', clearSpiImageSelection);
 elements.writeSpiImage.addEventListener('click', writeSpiImage);
 elements.manualTab.addEventListener('click', () => selectPage('manual'));
+const manualImageDialog = document.querySelector('#manual-image-dialog');
+const manualImageDialogImage = manualImageDialog?.querySelector('img');
+let manualImageScale = 1;
+let manualImageOffsetX = 0;
+let manualImageOffsetY = 0;
+const manualImagePointers = new Map();
+let manualImageGesture = null;
+const clampManualImageScale = (scale) => Math.max(1, Math.min(8, scale));
+const applyManualImageTransform = () => {
+  if (!manualImageDialogImage) return;
+  manualImageDialogImage.style.transform = `translate(${manualImageOffsetX}px, ${manualImageOffsetY}px) scale(${manualImageScale})`;
+};
+const zoomManualImageAt = (clientX, clientY, nextScale) => {
+  if (!manualImageDialog || !manualImageDialogImage) return;
+  const rect = manualImageDialog.getBoundingClientRect();
+  const x = clientX - (rect.left + rect.width / 2);
+  const y = clientY - (rect.top + rect.height / 2);
+  const scale = clampManualImageScale(nextScale);
+  const ratio = scale / manualImageScale;
+  manualImageOffsetX = x - (x - manualImageOffsetX) * ratio;
+  manualImageOffsetY = y - (y - manualImageOffsetY) * ratio;
+  manualImageScale = scale;
+  if (scale === 1) {
+    manualImageOffsetX = 0;
+    manualImageOffsetY = 0;
+  }
+  applyManualImageTransform();
+};
+document.querySelector('.manual-image-zoom')?.addEventListener('click', (event) => {
+  const image = event.currentTarget.querySelector('img');
+  if (!manualImageDialog || !manualImageDialogImage || !image) return;
+  manualImageScale = 1;
+  manualImageOffsetX = 0;
+  manualImageOffsetY = 0;
+  manualImagePointers.clear();
+  manualImageGesture = null;
+  applyManualImageTransform();
+  manualImageDialogImage.src = image.currentSrc || image.src;
+  manualImageDialogImage.alt = image.alt;
+  manualImageDialog.showModal();
+});
+manualImageDialogImage?.addEventListener('wheel', (event) => {
+  event.preventDefault();
+  zoomManualImageAt(event.clientX, event.clientY, manualImageScale * Math.exp(-event.deltaY * 0.002));
+}, { passive: false });
+manualImageDialogImage?.addEventListener('pointerdown', (event) => {
+  event.preventDefault();
+  manualImageDialogImage.setPointerCapture(event.pointerId);
+  manualImagePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (manualImagePointers.size >= 2) {
+    const [first, second] = [...manualImagePointers.values()];
+    const centerX = (first.x + second.x) / 2;
+    const centerY = (first.y + second.y) / 2;
+    manualImageGesture = {
+      type: 'pinch',
+      distance: Math.hypot(second.x - first.x, second.y - first.y),
+      scale: manualImageScale,
+      offsetX: manualImageOffsetX,
+      offsetY: manualImageOffsetY,
+      centerX,
+      centerY,
+    };
+  } else {
+    manualImageGesture = {
+      type: 'pan',
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      offsetX: manualImageOffsetX,
+      offsetY: manualImageOffsetY,
+    };
+  }
+});
+manualImageDialogImage?.addEventListener('pointermove', (event) => {
+  if (!manualImagePointers.has(event.pointerId)) return;
+  manualImagePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (manualImageGesture?.type === 'pinch' && manualImagePointers.size >= 2) {
+    const [first, second] = [...manualImagePointers.values()];
+    const distance = Math.hypot(second.x - first.x, second.y - first.y);
+    const rect = manualImageDialog.getBoundingClientRect();
+    const centerX = (first.x + second.x) / 2 - (rect.left + rect.width / 2);
+    const centerY = (first.y + second.y) / 2 - (rect.top + rect.height / 2);
+    const scale = clampManualImageScale(manualImageGesture.scale * distance / Math.max(1, manualImageGesture.distance));
+    const ratio = scale / manualImageGesture.scale;
+    manualImageOffsetX = centerX - (manualImageGesture.centerX - manualImageGesture.offsetX) * ratio;
+    manualImageOffsetY = centerY - (manualImageGesture.centerY - manualImageGesture.offsetY) * ratio;
+    manualImageScale = scale;
+    applyManualImageTransform();
+  } else if (manualImageScale > 1 && manualImageGesture?.type === 'pan' && manualImageGesture.pointerId === event.pointerId) {
+    manualImageOffsetX = manualImageGesture.offsetX + event.clientX - manualImageGesture.x;
+    manualImageOffsetY = manualImageGesture.offsetY + event.clientY - manualImageGesture.y;
+    manualImageDialogImage.classList.add('is-dragging');
+    applyManualImageTransform();
+  }
+});
+const finishManualImagePointer = (event) => {
+  if (!manualImagePointers.has(event.pointerId)) return;
+  manualImagePointers.delete(event.pointerId);
+  manualImageDialogImage.classList.remove('is-dragging');
+  if (manualImagePointers.size === 1) {
+    const [pointerId, pointer] = [...manualImagePointers.entries()][0];
+    manualImageGesture = {
+      type: 'pan', pointerId, x: pointer.x, y: pointer.y,
+      offsetX: manualImageOffsetX, offsetY: manualImageOffsetY,
+    };
+  } else {
+    manualImageGesture = null;
+  }
+};
+manualImageDialogImage?.addEventListener('pointerup', finishManualImagePointer);
+manualImageDialogImage?.addEventListener('pointercancel', finishManualImagePointer);
+manualImageDialog?.querySelector('.manual-image-dialog-close')?.addEventListener('click', () =>
+  manualImageDialog.close());
+manualImageDialog?.addEventListener('click', (event) => {
+  if (event.target === manualImageDialog) manualImageDialog.close();
+});
+manualImageDialog?.addEventListener('close', () => {
+  manualImagePointers.clear();
+  manualImageGesture = null;
+  manualImageDialogImage?.classList.remove('is-dragging');
+});
 elements.aboutTab.addEventListener('click', () => selectPage('about'));
 elements.clearFirmwareLog.addEventListener('click', () => {
   elements.firmwareLog.replaceChildren();
