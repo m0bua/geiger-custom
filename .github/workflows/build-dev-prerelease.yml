@@ -289,12 +289,9 @@ jobs:
           The HTML and Windows apps identify themselves as Version: ${RELEASE_VERSION}. This build is for testing and may change without notice.
 
           ## Changes
-          **Changes since 202611131551-dev-44e643c:**
-          - The first 30 startup pulses establish the rate but no longer add to accumulated dose or log records. Rate refreshes every 100 ms in SEARCH or during active serial transfers, once per second while the screen is on, and on detector pulses while the screen is off; falling NORMAL readings still ease down smoothly.
-          - Newest-first MINUTES reads from SPI now use the active stream and cached position to avoid rescanning older sectors. Log coverage encoding now rounds to the nearest representable fraction.
-          - The Overview chart supports timeline scrolling with Shift or Alt plus the mouse wheel while retaining wheel and touch pinch zoom.
-          - The release portal now limits its initial stable-release list and provides a separate way to reveal older releases.
-          - Refreshed the Device manual and render set: added the navigation infographic and three Debug screens, aligned Rate/Debug/Settings numbering, updated the lower Settings render, and highlighted the selected DAY/ALERT column and cursor in green.
+          **Changes since 202611171311-dev-84a6ef4:**
+          - Added selectable rate-uncertainty targets of 30%, 25%, 20%, 15%, 10%, and 5% (about 12, 16, 25, 45, 100, and 400 pulses). The device shows uncertainty in blue until its target, then gray; RATE ROW 2 can keep ACCURACY visible. The app continuously shows total HV-on pulses and estimated uncertainty.
+          - HV OFF now pauses dose and persistent-log accumulation while the displayed rate decays. The app shows an HV OFF indicator and preserves the selected secondary rows. Re-enabling HV resumes measurement; after more than a minute without pulses, the rate sample starts fresh.
 
           ### Known issue
           Battery percentage is still a voltage-based estimate. USB and solar input detection do not confirm charging current, so the new behavior needs hardware verification.
