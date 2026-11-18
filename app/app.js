@@ -400,6 +400,7 @@ const elements = {
   spiConfirmAccept: document.querySelector('#spi-confirm-accept'),
   rateFoot: document.querySelector('#rate-foot'),
   rateFootMain: document.querySelector('#rate-foot-main'),
+  hvStatus: document.querySelector('#overview-hv-status'),
   rateFootCount: document.querySelector('#rate-foot-count'),
   rateExpand: document.querySelector('#rate-expand'),
   rateDetails: document.querySelector('#rate-details'),
@@ -1016,6 +1017,8 @@ let serial = null;
 let offlinePreview = true;
 let installPromptEvent = null;
 let rateHoverIndex = null;
+let rateHoverAgeSeconds = 0;
+let rateHoverAgeStartedAt = 0;
 let selectedSerialPort = null;
 let selectedUsbPort = null;
 let selectedNativePort = null;
@@ -1098,6 +1101,7 @@ const rateHistory = [];
 const rateHistoryLevels = [];
 const rateHistoryPulses = [];
 const rateHistoryTimes = [];
+const rateHistoryHvEvents = [];
 let rateHistorySampleSecond = null;
 const RATE_CHART_BUFFER_SECONDS = 1000;
 let rateChartZoomSeconds = RATE_CHART_BUFFER_SECONDS;
@@ -1109,6 +1113,7 @@ let rateChartDragStartX = 0;
 let rateChartDragStartScroll = 0;
 let rateChartActionHintTimer = 0;
 let previousRateCount = null;
+let previousHvEnabled = null;
 let deviceIndicationMode = null;
 const demoSettings = Array.from({ length: 31 }, () => 0);
 const demoHiddenSettings = new Set([
@@ -1219,6 +1224,7 @@ function rateChartData() {
     return {values: Array.from({length: end - start}, (_, index) =>
       (start + index) / (RATE_CHART_BUFFER_SECONDS - 1) *
         (unit === 1 ? 1 / 0.00666 : unit === 2 ? 100 : 1)), pulses: [], levels: [],
+      hvEvents: [],
       startAge: RATE_CHART_BUFFER_SECONDS - start, endAge: RATE_CHART_BUFFER_SECONDS - end};
   }
   const total = rateHistory.length;
@@ -1226,6 +1232,7 @@ function rateChartData() {
   const start = Math.max(0, end - rateChartZoomSeconds);
   return {values: rateHistory.slice(start, end), pulses: rateHistoryPulses.slice(start, end),
     levels: rateHistoryLevels.slice(start, end), times: rateHistoryTimes.slice(start, end),
+    hvEvents: rateHistoryHvEvents.slice(start, end),
     startAge: total - start, endAge: total - end};
 }
 
@@ -1372,7 +1379,7 @@ function drawRateChart() {
   const left = 48, right = 10, top = 20, bottom = 24;
   const plotWidth = Math.max(1, w - left - right);
   const plotHeight = Math.max(1, h - top - bottom);
-  const {values, pulses, levels, startAge, endAge} = rateChartData();
+  const {values, pulses, levels, hvEvents, startAge, endAge} = rateChartData();
   if (offlinePreview) {
     const unit = demoSettings[9] ?? 0;
     rateHistoryUnit = unit === 1 ? 'CPM' :
@@ -1461,6 +1468,37 @@ function drawRateChart() {
     context.fill();
     context.lineWidth = 1; context.strokeStyle = '#0b1115'; context.stroke();
   });
+  hvEvents.forEach((event, index) => {
+    if (!event) return;
+    const point = points[index];
+    const y = Math.max(top + 5, Math.min(top + plotHeight - 5, point.y));
+    const drawMarker = (x, enabled) => {
+      context.beginPath();
+      if (enabled) {
+        context.moveTo(x, y - 6);
+        context.lineTo(x + 5, y + 4);
+        context.lineTo(x - 5, y + 4);
+      } else {
+        context.moveTo(x, y + 6);
+        context.lineTo(x + 5, y - 4);
+        context.lineTo(x - 5, y - 4);
+      }
+      context.closePath();
+      context.fillStyle = '#d36cff';
+      context.fill();
+      context.lineWidth = 1;
+      context.strokeStyle = '#0b1115';
+      context.stroke();
+    };
+    const hasOn = (event & 1) !== 0;
+    const hasOff = (event & 2) !== 0;
+    if (hasOn && hasOff) {
+      drawMarker(point.x - 4, true);
+      drawMarker(point.x + 4, false);
+    } else {
+      drawMarker(point.x, hasOn);
+    }
+  });
   if (!offlinePreview && rateHoverIndex !== null && points[rateHoverIndex]) {
     const point = points[rateHoverIndex];
     context.beginPath(); context.arc(point.x, point.y, 5, 0, Math.PI * 2);
@@ -1473,6 +1511,22 @@ function hideRateChartTooltip() {
   rateHoverIndex = null;
   elements.rateTooltip.hidden = true;
 }
+
+function updateRateChartTooltipAge() {
+  if (elements.rateTooltip.hidden || rateHoverIndex === null) return;
+  const age = rateHoverAgeSeconds + Math.floor(
+    (performance.now() - rateHoverAgeStartedAt) / 1000);
+  const lines = elements.rateTooltip.textContent.split('\n');
+  if (lines.length < 4) return;
+  const ageLine = `-${age}s`;
+  const ageIndex = lines.length - 1;
+  if (lines[ageIndex] !== ageLine) {
+    lines[ageIndex] = ageLine;
+    elements.rateTooltip.textContent = lines.join('\n');
+  }
+}
+
+window.setInterval(updateRateChartTooltipAge, 1000);
 
 function showRateChartTooltip(event) {
   if (rateChartDragging) return;
@@ -1496,7 +1550,15 @@ function showRateChartTooltip(event) {
     { value: formatGroupedNumber(Math.round(value)), unit: 'CPM' } :
     formatRadiation(value, deviceSettings?.[10] ?? 1,
       unit === 2 ? 'R' : 'Sv', true);
-  elements.rateTooltip.textContent = `${display.value} ${display.unit}\n${formatGroupedNumber(chart.pulses[rateHoverIndex] || 0)} CNT\n${formatRateChartTime(chart.times[rateHoverIndex])}`;
+  const ageSeconds = Math.max(0, Math.round(chart.endAge +
+    chart.values.length - 1 - rateHoverIndex));
+  rateHoverAgeSeconds = ageSeconds;
+  rateHoverAgeStartedAt = performance.now();
+  const hvEvent = chart.hvEvents?.[rateHoverIndex] || 0;
+  const hvEventLabel = (hvEvent & 3) === 3 ? 'HV ON + OFF' :
+    (hvEvent & 1) ? 'HV ON' : (hvEvent & 2) ? 'HV OFF' : '';
+  const hvEventLine = hvEventLabel ? `${hvEventLabel}\n` : '';
+  elements.rateTooltip.textContent = `${display.value} ${display.unit}\n${formatGroupedNumber(chart.pulses[rateHoverIndex] || 0)} CNT\n${formatRateChartTime(chart.times[rateHoverIndex])}\n${hvEventLine}-${ageSeconds}s`;
   elements.rateTooltip.hidden = false;
   drawRateChart();
 
@@ -4225,6 +4287,7 @@ function renderOfflinePreview() {
   elements.rateFootCount.textContent = '';
   elements.rateFootCount.hidden = true;
   elements.rateFoot.hidden = false;
+  elements.hvStatus.hidden = true;
   updateOverviewMetricDetails(0, 0, 0, 0, deviceSettings?.[10] ?? 1, 0);
   elements.rateWarmup.hidden = true;
   elements.doseWarmupSpacer.hidden = true;
@@ -4492,6 +4555,7 @@ async function writeSetting(settingId, value, control) {
       rateHistoryLevels.length = 0;
       rateHistoryPulses.length = 0;
       rateHistoryTimes.length = 0;
+      rateHistoryHvEvents.length = 0;
       previousRateCount = null;
       drawRateChart();
     }
@@ -4671,7 +4735,7 @@ function setMetricExpanded(button, expanded) {
   }
 }
 
-function recordRateHistory(value, level, pulses, timestamp, now = performance.now()) {
+function recordRateHistory(value, level, pulses, timestamp, now = performance.now(), hvEvent = 0) {
   // Status can arrive at 10 Hz; chart duration and pulse totals use one-second
   // buckets. Keep the newest bucket live without shortening the history.
   const second = Math.floor(now / 1000);
@@ -4681,22 +4745,24 @@ function recordRateHistory(value, level, pulses, timestamp, now = performance.no
     rateHistoryLevels.push(level);
     rateHistoryPulses.push(pulses);
     rateHistoryTimes.push(timestamp);
+    rateHistoryHvEvents.push(hvEvent);
     if (rateHistory.length > RATE_CHART_BUFFER_SECONDS) {
       rateHistory.shift(); rateHistoryLevels.shift();
-      rateHistoryPulses.shift(); rateHistoryTimes.shift();
+      rateHistoryPulses.shift(); rateHistoryTimes.shift(); rateHistoryHvEvents.shift();
     }
   } else {
     const index = rateHistory.length - 1;
     rateHistory[index] = value;
     rateHistoryLevels[index] = level;
     rateHistoryPulses[index] += pulses;
+    rateHistoryHvEvents[index] |= hvEvent;
   }
   rateHistorySampleSecond = second;
   return append;
 }
 
 function handleStatus(payload) {
-  if (![25, 29, 31, 35, 47].includes(payload.length) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
+  if (![25, 29, 31, 35, 47, 48].includes(payload.length) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const uptimeSeconds = view.getUint32(1, true);
   const count = view.getUint32(5, true);
@@ -4719,6 +4785,13 @@ function handleStatus(payload) {
   const sleepSeconds = payload.length >= 47 ? view.getUint32(39, true) : null;
   const usbSeconds = payload.length >= 47 ? view.getUint32(43, true) : null;
   const statusFlags = view.getUint16(23, true);
+  const hvEnabled = (statusFlags & 1) !== 0;
+  const hvEvent = previousHvEnabled === null || previousHvEnabled === hvEnabled ?
+    0 : hvEnabled ? 1 : 2;
+  previousHvEnabled = hvEnabled;
+  const pulseDelta = previousRateCount === null || countTotal < previousRateCount ?
+    0 : countTotal - previousRateCount;
+  previousRateCount = countTotal;
   if (hasTenthsRate) {
     const indicationMode = (statusFlags >>> 2) & 0x03;
     setDeviceModeActive(indicationMode <= 2 ? indicationMode : null);
@@ -4734,13 +4807,14 @@ function handleStatus(payload) {
   const dosePulseCount = payload.length >= 35 ?
     (dosePeriod === 0 ? uptimePulses : dosePeriod === 1 ? dayPulses : lifetimePulses) :
     derivedDosePulses;
-  rateLevel = countTotal < 30 ? 'blue' :
+  const warmupPulses = payload.length >= 48 ? Math.min(payload[47], 30) :
+    Math.min(countTotal, 30);
+  rateLevel = warmupPulses < 30 ? 'blue' :
     (displayedCpm * 666 > 90000 ? 'red' :
       (displayedCpm * 666 >= 40000 ? 'yellow' : 'green'));
   const levelClass = `level-${rateLevel}`;
   elements.rateDose.classList.remove('level-blue', 'level-green', 'level-yellow', 'level-red');
   elements.rateDose.classList.add(levelClass);
-  const warmupPulses = Math.min(countTotal, 30);
   elements.rateWarmup.hidden = rateLevel !== 'blue';
   elements.doseWarmupSpacer.hidden = rateLevel !== 'blue';
   elements.rateWarmup.setAttribute('aria-valuenow', String(warmupPulses));
@@ -4780,6 +4854,7 @@ function handleStatus(payload) {
   const rateRowMode = deviceSettings?.[12] ?? 0;
   const rateRow = rateRowText(rateRowMode, unit, displayedCpm, rateUsvh,
     deviceSettings?.[10] ?? 1);
+  elements.hvStatus.hidden = hvEnabled;
   elements.rateFootMain.textContent = rateRow;
   elements.rateFootCount.textContent = rateLevel === 'blue' ? `${formatGroupedNumber(warmupPulses)} CNT` : '';
   elements.rateFootCount.hidden = rateLevel !== 'blue';
@@ -4795,12 +4870,10 @@ function handleStatus(payload) {
   // count_total is the detector counter used by the device while HV is on.
   // It follows the actual LED flashes and does not depend on the selected
   // dose period or on the calendar day boundary.
-  const pulseDelta = previousRateCount === null || countTotal < previousRateCount ?
-    0 : countTotal - previousRateCount;
-  previousRateCount = countTotal;
   const appended = recordRateHistory(unit === 1 ? displayedCpm : rateUsvh,
     rateLevel, pulseDelta, logInfo?.calendarValid ? logInfo.calendarSeconds :
-      Math.floor((Date.now() - Date.UTC(2000, 0, 1)) / 1000));
+      Math.floor((Date.now() - Date.UTC(2000, 0, 1)) / 1000),
+    performance.now(), hvEvent);
   if (appended && rateChartIsHistorical) rateChartScrollSeconds += 1;
   rateHistoryUnit = unit === 1 ? 'CPM' :
     formatRadiation(rateUsvh, ratePrefix, unit === 2 ? 'R' : 'Sv', true).unit;
@@ -7236,7 +7309,9 @@ async function connectDevice(portOverride = null, transport = null) {
   rateHistoryLevels.length = 0;
   rateHistoryPulses.length = 0;
   rateHistoryTimes.length = 0;
+  rateHistoryHvEvents.length = 0;
   previousRateCount = null;
+  previousHvEnabled = null;
   logInfo = null;
   logRecords = [];
   logRefreshRetryAt = 0;

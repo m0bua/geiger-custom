@@ -59,6 +59,7 @@ button { font: inherit; }
 .metric-primary { border-color: rgba(0,229,139,.22); background: radial-gradient(ellipse at 10% 0%, rgba(0,229,139,.07), transparent 65%), var(--panel); }
 .metric-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .metric-label { color: #91a1a6; font: 500 10px "DM Mono", Consolas, monospace; letter-spacing: .11em; }
+.hv-status { color: #ff6666; font: 600 10px "DM Mono", Consolas, monospace; letter-spacing: .08em; }
 .metric-expand { width: 24px; height: 24px; flex: 0 0 auto; padding: 0; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: transparent; font: 15px/1 "DM Mono", Consolas, monospace; cursor: pointer; }
 .metric-expand:hover, .metric-expand[aria-expanded="true"] { border-color: rgba(0,229,139,.4); color: var(--green); }
 .metric-value { display: grid; grid-template-columns: 1fr auto 1fr; align-items: baseline; margin-top: 22px; font: 500 40px/1 "DM Mono", Consolas, monospace; letter-spacing: -.06em; }

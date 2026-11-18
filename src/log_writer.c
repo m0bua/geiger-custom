@@ -711,12 +711,13 @@ bool log_writer_live(log_record_kind_t kind, log_stored_t *item)
 
 void log_writer_hv_disabled(void)
 {
+    /* Preserve the hour/day live aggregates and clock relationship.  On HV
+     * resume, update_period_tracker() can then continue in RAM; it only needs
+     * to roll up if the actual hour/day key changed while HV was off. */
+    close_minute();
+    close_alert();
     minute_accumulator.active = false;
-    hour_accumulator.active = false;
-    day_accumulator.active = false;
     alert_accumulator.active = false;
-    have_clock_sample = false;
-    have_calendar_uptime_offset = false;
     live_rate_cpm = 0u;
 }
 

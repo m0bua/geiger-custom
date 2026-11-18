@@ -81,6 +81,8 @@ int main(void)
     uint32_t event_count = 0u;
     uint32_t previous_minute_sample = 0u;
     uint32_t pulses_since_start = 0u;
+    uint32_t rate_warmup_pulses = 0u;
+    uint32_t rate_last_pulse_at = 0u;
     uint32_t session_pulses_total = 0u;
     uint32_t session_elapsed_seconds = 0u;
     uint32_t dose_thousandths = 0u;
@@ -124,6 +126,8 @@ int main(void)
     bool debug_usage_sleep_was_on;
     bool debug_usage_usb_was_on;
     bool hv_enabled;
+    bool rate_pulse_seen = false;
+    uint32_t hv_off_started_at;
     bool left_long_repeat_navigation = false;
     bool right_long_repeat_navigation = false;
     bool left_long_seen = false;
@@ -184,11 +188,8 @@ int main(void)
     /* Keep the detector HV off until log recovery and startup state loading finish. */
     board_display_apply_hv_setting();
     hv_enabled = board_hv_is_enabled();
-    if (!hv_enabled) {
-        latest_cpm = 0u;
-        latest_display_cpm = 0u;
-        display_rate.value = 0u;
-    }
+    hv_off_started_at = board_millis;
+    if (!hv_enabled) log_writer_hv_disabled();
     /* Ignore startup transients accumulated while RTC/display were coming up. */
     event_count = board_detector_count();
     previous_minute_sample = event_count;
@@ -213,6 +214,33 @@ int main(void)
     for (;;) {
         const bool data_transfer = protocol_v1_service();
         uint32_t now = board_millis;
+        {
+            const bool new_hv_enabled = board_hv_is_enabled();
+            if (new_hv_enabled != hv_enabled) {
+                hv_enabled = new_hv_enabled;
+                if (!hv_enabled) {
+                    hv_off_started_at = now;
+                    log_writer_hv_disabled();
+                } else if ((uint32_t)(now - hv_off_started_at) > 60000u) {
+                    const uint32_t current_pulses = board_detector_count();
+                    event_count = current_pulses;
+                    previous_minute_sample = current_pulses;
+                    rate_warmup_pulses = 0u;
+                    rate_pulse_seen = false;
+                    rate_last_pulse_at = now;
+                    second_log_reset_rate_window();
+                    latest_cpm = 0u;
+                    latest_display_cpm = 23u;
+                    display_rate.value = 230u;
+                    display_rate.clocks[0] = now;
+                    display_rate.clocks[1] = now;
+                    display_rate.pulse = false;
+                    board_display_set_dose_cpm(0u);
+                    board_display_set_rate_alarm(0u, 0u, false);
+                    rate_display_render(display_rate.value, 0u);
+                }
+            }
+        }
         if (board_display_screen_connection_service()) {
             inactivity_deadline = now + screen_timeout_ms;
         }
@@ -421,33 +449,6 @@ int main(void)
             }
 
             {
-                const bool new_hv_enabled = board_hv_is_enabled();
-                if (new_hv_enabled != hv_enabled) {
-                    hv_enabled = new_hv_enabled;
-                    detected_pulses = board_detector_count();
-                    event_count = detected_pulses;
-                    previous_minute_sample = detected_pulses;
-                    second_log_reset_rate_window();
-                    if (hv_enabled) {
-                        pulses_since_start = 0u;
-                        latest_cpm = 23u;
-                        latest_display_cpm = 23u;
-                        display_rate.value = 230u;
-                        board_display_set_count(0u);
-                        board_display_set_rate_alarm(0u, 0u, false);
-                        board_display_set_rate(0u, 0u, 0u, false);
-                    } else {
-                        log_writer_hv_disabled();
-                        latest_cpm = 0u;
-                        latest_display_cpm = 0u;
-                        display_rate.value = 0u;
-                        board_display_set_rate_alarm(0u, 0u, false);
-                    }
-                    next_minute_tick = now + 1000u;
-                }
-            }
-
-            {
                 const bool alarm_active =
                     board_display_screen_alarm_active() &&
                     !alarms_acknowledged;
@@ -508,18 +509,40 @@ int main(void)
             }
 
             if (detected_pulses != event_count) {
-                display_rate.pulse = true;
                 const uint32_t pulse_delta = detected_pulses - event_count;
                 event_count = detected_pulses;
-                if (board_display_search_mode()) {
-                    display_rate.value += pulse_delta * 10u;
+                if (hv_enabled) {
+                    if (rate_pulse_seen &&
+                        (uint32_t)(now - rate_last_pulse_at) > 60000u) {
+                        rate_warmup_pulses = 0u;
+                        second_log_reset_rate_window();
+                        latest_cpm = 0u;
+                        latest_display_cpm = 23u;
+                        display_rate.value = 230u;
+                        display_rate.clocks[0] = now;
+                        display_rate.clocks[1] = now;
+                        board_display_set_dose_cpm(0u);
+                        board_display_set_rate_alarm(0u, 0u, false);
+                        rate_display_render(display_rate.value, 0u);
+                    }
+                    rate_pulse_seen = true;
+                    rate_last_pulse_at = now;
+                    if (UINT32_MAX - rate_warmup_pulses < pulse_delta) {
+                        rate_warmup_pulses = UINT32_MAX;
+                    } else {
+                        rate_warmup_pulses += pulse_delta;
+                    }
+                    display_rate.pulse = true;
+                    if (board_display_search_mode()) {
+                        display_rate.value += pulse_delta * 10u;
+                    }
                 }
                 board_display_set_count(detected_pulses);
-                if (!sound_alarm_active &&
+                if (hv_enabled && !sound_alarm_active &&
                     board_display_click_sound_enabled(backlight_on)) {
                     board_click_sound_start();
                 }
-                if (!startup_led_active &&
+                if (hv_enabled && !startup_led_active &&
                     board_display_led_flash_enabled(backlight_on)) {
                     led_blink_deadline = now + board_rgb_begin_flash();
                     board_display_set_rate_led();
@@ -580,12 +603,13 @@ int main(void)
                         }
                     }
                 }
-                if (hv_enabled) {
-                if (session_elapsed_seconds < UINT32_MAX) {
+                if (hv_enabled && session_elapsed_seconds < UINT32_MAX) {
                     ++session_elapsed_seconds;
                 }
-                const uint32_t second_pulses =
+                const uint32_t sampled_pulses =
                     detected_pulses - previous_minute_sample;
+                const uint32_t second_pulses = hv_enabled ?
+                    sampled_pulses : 0u;
                 const uint32_t warmup_remaining = pulses_since_start < 30u ?
                     30u - pulses_since_start : 0u;
 
@@ -595,7 +619,7 @@ int main(void)
                 } else {
                     pulses_since_start += second_pulses;
                 }
-                const bool cpm_valid = pulses_since_start >= 30u;
+                const bool cpm_valid = rate_warmup_pulses >= 30u;
                 const uint32_t dose_pulses = second_pulses > warmup_remaining ?
                     second_pulses - warmup_remaining : 0u;
                 if (UINT32_MAX - session_pulses_total < dose_pulses) {
@@ -612,22 +636,26 @@ int main(void)
                 latest_cpm = cpm;
                 latest_display_cpm = second_log_rate_cpm();
                 board_display_set_dose_cpm(cpm);
-                daily_dose_add(dose_pulses);
+                if (hv_enabled) daily_dose_add(dose_pulses);
                 today_pulse_count = calendar_day_valid ?
                     daily_dose_count() : session_pulses_total;
                 /* Keep the live minute available to the app while excluding
                  * blue warm-up samples from persistent log records. */
-                log_writer_second(dose_pulses, latest_display_cpm,
-                    log_uptime_seconds,
-                    log_calendar_seconds, log_calendar_valid, cpm_valid);
-                if (board_display_dose_period() == 1u) {
-                    if (dose_measurement_seconds < UINT32_MAX) {
-                        ++dose_measurement_seconds;
+                if (hv_enabled) {
+                    log_writer_second(dose_pulses, latest_display_cpm,
+                        log_uptime_seconds,
+                        log_calendar_seconds, log_calendar_valid, cpm_valid);
+                }
+                if (hv_enabled) {
+                    if (board_display_dose_period() == 1u) {
+                        if (dose_measurement_seconds < UINT32_MAX) {
+                            ++dose_measurement_seconds;
+                        }
+                    } else if (board_display_dose_period() == 0u) {
+                        dose_measurement_seconds = board_uptime_seconds_get();
+                    } else {
+                        dose_measurement_seconds = session_elapsed_seconds;
                     }
-                } else if (board_display_dose_period() == 0u) {
-                    dose_measurement_seconds = board_uptime_seconds_get();
-                } else {
-                    dose_measurement_seconds = session_elapsed_seconds;
                 }
                 dose_from_pulse_count(selected_dose_pulses(
                         board_display_dose_period(), session_pulses_total,
@@ -638,16 +666,10 @@ int main(void)
                                        today_pulse_count,
                                        total_pulse_count,
                                        dose_measurement_seconds);
-                } else {
-                    (void)second_log_add(0u);
-                    latest_cpm = 0u;
-                    latest_display_cpm = 0u;
-                    board_display_set_dose_cpm(0u);
-                }
                 const uint32_t measured_rate_thousandths = (uint32_t)(
                     ((uint64_t)latest_cpm * 666u + 50u) / 100u);
                 board_display_set_rate_alarm(measured_rate_thousandths,
-                    latest_cpm, pulses_since_start >= 30u);
+                    latest_cpm, rate_warmup_pulses >= 30u);
                 if (board_display_search_mode()) {
                     display_rate.value =
                         (display_rate.value * 63u) >> 6u;
@@ -663,7 +685,8 @@ int main(void)
                 if (rate_display_update(&display_rate, now,
                         search_mode ? UINT32_MAX : latest_display_cpm * 10u,
                         interval_ms)) {
-                    rate_display_render(display_rate.value, pulses_since_start);
+                    rate_display_render(display_rate.value,
+                                        rate_warmup_pulses);
                 }
             }
 
@@ -858,6 +881,8 @@ int main(void)
             status.screen_seconds = debug_screen_seconds;
             status.sleep_seconds = debug_sleep_seconds;
             status.usb_seconds = debug_usb_seconds;
+            status.rate_warmup_pulses = rate_warmup_pulses > 30u ? 30u :
+                (uint8_t)rate_warmup_pulses;
             protocol_v1_set_status(&status);
         }
         /* Keep clocks and interrupt-driven pulse counting alive while the CPU

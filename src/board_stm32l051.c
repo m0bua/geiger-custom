@@ -3708,25 +3708,29 @@ settings_line_draw:
     {
         const uint8_t rate_label_glyph = (uint8_t)(LCD_RATE_MAX_GLYPHS + 3u);
         const uint8_t cpm_glyph = (uint8_t)(LCD_RATE_MAX_GLYPHS + 4u);
+        const bool show_hv_off_row = lcd_screen_page < 2u &&
+            lcd_settings_value_index[SETTING_HV] != 0u;
         const bool warmup_active = lcd_screen_page == 0u &&
-            lcd_settings_value_index[SETTING_HV] == 0u && !lcd_rate_window_ready;
+            !lcd_rate_window_ready && !show_hv_off_row;
         const bool show_cpm_row = lcd_screen_page == 0u &&
             lcd_settings_value_index[SETTING_RATE_ROW_2] != 2u &&
-            lcd_settings_value_index[SETTING_HV] == 0u;
+            !show_hv_off_row;
         const uint8_t dose_row_choice = lcd_dose_row_option(
             lcd_settings_value_index[SETTING_DOSE_ROW_2]);
         const bool show_dose_uptime_row = lcd_screen_page == 1u &&
-            dose_row_choice == LCD_DOSE_ROW_TIME && !lcd_dose_row_hidden;
+            dose_row_choice == LCD_DOSE_ROW_TIME && !lcd_dose_row_hidden &&
+            !show_hv_off_row;
         const bool show_dose_second_row = lcd_screen_page == 1u &&
             !lcd_dose_row_hidden &&
             dose_row_choice != LCD_DOSE_ROW_OFF &&
-            dose_row_choice != LCD_DOSE_ROW_TIME;
+            dose_row_choice != LCD_DOSE_ROW_TIME && !show_hv_off_row;
         const bool clear_dose_row = lcd_screen_page == 1u &&
-            !show_dose_second_row && !show_dose_uptime_row;
+            !show_dose_second_row && !show_dose_uptime_row &&
+            !show_hv_off_row;
         const bool clear_warmup_box = lcd_screen_page == 0u &&
             lcd_warmup_box_visible && !warmup_active && !show_cpm_row;
         const uint8_t last_glyph = (warmup_active || show_cpm_row ||
-            clear_warmup_box || show_dose_second_row ||
+            clear_warmup_box || show_hv_off_row || show_dose_second_row ||
             show_dose_uptime_row || clear_dose_row) ? cpm_glyph :
                 rate_label_glyph;
         uint8_t x_start;
@@ -3783,34 +3787,6 @@ settings_line_draw:
             return false;
         }
 
-        if (lcd_screen_page == 0u && lcd_settings_value_index[SETTING_HV] == 1u &&
-            lcd_text_glyph_index == 3u) {
-            static const char disabled_text[] = "DISABLED";
-            const uint8_t text_length = sizeof(disabled_text) - 1u;
-            const uint16_t text_width = (uint16_t)(text_length *
-                FONT_SMALL_CELL_WIDTH + (text_length - 1u) *
-                LCD_SMALL_TEXT_GAP);
-            const uint8_t text_x = (uint8_t)((LCD_WIDTH - text_width) / 2u);
-            const uint8_t text_y = (uint8_t)((LCD_HEIGHT -
-                FONT_SMALL_CELL_HEIGHT) / 2u);
-
-            x_window[0] = 0u;
-            x_window[1] = text_x;
-            x_window[2] = 0u;
-            x_window[3] = (uint8_t)(text_x + text_width - 1u);
-            y_window[0] = 0u;
-            y_window[1] = (uint8_t)(LCD_Y_OFFSET + text_y);
-            y_window[2] = 0u;
-            y_window[3] = (uint8_t)(y_window[1] +
-                FONT_SMALL_CELL_HEIGHT - 1u);
-            lcd_render_small_line(disabled_text, text_width, LCD_COUNTER_RED,
-                UINT8_MAX, 0u, UINT8_MAX, 0u, LCD_TEXT_FOREGROUND);
-            lcd_text_dma_glyph_advance =
-                (uint8_t)(rate_label_glyph - lcd_text_glyph_index);
-            lcd_submit_text_window(x_window, y_window);
-            return true;
-        }
-
         if (lcd_text_glyph_index == rate_label_glyph) {
             const char *label = lcd_rate_label;
             char dose_label[LCD_DOSE_LABEL_LENGTH + 1u] = {
@@ -3865,7 +3841,8 @@ settings_line_draw:
         }
 
         if (lcd_text_glyph_index == cpm_glyph &&
-            (warmup_active || show_cpm_row || show_dose_second_row ||
+            (warmup_active || show_cpm_row || show_hv_off_row ||
+                show_dose_second_row ||
                 show_dose_uptime_row || clear_dose_row ||
                 clear_warmup_box)) {
             const uint8_t text_length = warmup_active ?
@@ -3949,6 +3926,16 @@ settings_line_draw:
                         }
                     }
                     lcd_warmup_box_visible = true;
+                } else if (show_hv_off_row) {
+                    static const char hv_off_text[] = "HV OFF";
+                    for (uint8_t column = 0u;
+                         column < sizeof(hv_off_text) - 1u; ++column) {
+                        lcd_top_row_draw_glyph(hv_off_text[column],
+                            (uint16_t)(column * (FONT_SMALL_CELL_WIDTH +
+                                LCD_SMALL_TEXT_GAP)), text_width,
+                            LCD_COUNTER_RED);
+                    }
+                    lcd_warmup_box_visible = false;
                 } else if (show_cpm_row || show_dose_second_row ||
                            show_dose_uptime_row) {
                     if (show_dose_second_row) lcd_format_dose_row();
@@ -4881,14 +4868,6 @@ static void lcd_settings_apply_current(void)
     }
     if (lcd_settings_selected == 15u) {
         board_hv_set_enabled(lcd_settings_value_index[SETTING_HV] == 0u);
-        if (lcd_settings_value_index[SETTING_HV] == 0u) {
-            lcd_rate_value_100000ths = 0u;
-            lcd_current_cpm = 0u;
-            lcd_rate_has_measurement = false;
-            lcd_dose_has_measurement = false;
-            lcd_format_rate_display(0u);
-            lcd_format_cpm(0u);
-        }
         lcd_text_active = false;
         lcd_text_row_commands_queued = false;
         lcd_background_pending = true;
@@ -5398,8 +5377,7 @@ static bool dose_alarm_for_mode(uint8_t mode)
 
 static bool display_alarm_active(uint8_t rate_mode, uint8_t dose_mode)
 {
-    if (lcd_indication_mode == 0u || lcd_settings_value_index[SETTING_HV] != 0u)
-        return false;
+    if (lcd_indication_mode == 0u) return false;
     return rate_alarm_for_mode(rate_mode) || dose_alarm_for_mode(dose_mode);
 }
 
@@ -5435,8 +5413,7 @@ bool board_display_sound_alarm_stop_on_clear(void)
 {
     return lcd_indication_mode == 0u || lcd_settings_value_index[SETTING_ALARM_STOP] == 0u ||
         (lcd_settings_value_index[SETTING_RATE_SOUND] == 0u &&
-         lcd_settings_value_index[SETTING_DOSE_SOUND] == 0u) ||
-        lcd_settings_value_index[SETTING_HV] != 0u;
+         lcd_settings_value_index[SETTING_DOSE_SOUND] == 0u);
 }
 
 void board_display_settings_list_activate(void)
@@ -6443,15 +6420,11 @@ void board_hv_set_enabled(bool enabled)
 {
     if (enabled) {
         REG32(GPIOA_BASE + GPIO_BSRR) = 1u << 5u;
-        if (!board_hv_enabled) {
-            detector_pulse_count = 0u;
-        }
         EXTI_PR = DETECTOR_EXTI_MASK;
         board_hv_enabled = true;
     } else {
         board_hv_enabled = false;
         REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 5u);
-        detector_pulse_count = 0u;
         EXTI_PR = DETECTOR_EXTI_MASK;
     }
 }
@@ -6612,7 +6585,7 @@ void EXTI4_15_IRQHandler(void)
 
     if ((pending & DETECTOR_EXTI_MASK) != 0u) {
         EXTI_PR = DETECTOR_EXTI_MASK;
-        if (board_hv_enabled && detector_pulse_count < UINT32_MAX) {
+        if (detector_pulse_count < UINT32_MAX) {
             ++detector_pulse_count;
         }
     }
