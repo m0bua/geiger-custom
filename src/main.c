@@ -80,9 +80,7 @@ int main(void)
     uint32_t screen_timeout_ms;
     uint32_t event_count = 0u;
     uint32_t previous_minute_sample = 0u;
-    uint32_t pulses_since_start = 0u;
-    uint32_t rate_warmup_pulses = 0u;
-    uint32_t rate_last_pulse_at = 0u;
+    uint32_t hv_pulses_since_on = 0u;
     uint32_t session_pulses_total = 0u;
     uint32_t session_elapsed_seconds = 0u;
     uint32_t dose_thousandths = 0u;
@@ -126,7 +124,6 @@ int main(void)
     bool debug_usage_sleep_was_on;
     bool debug_usage_usb_was_on;
     bool hv_enabled;
-    bool rate_pulse_seen = false;
     uint32_t hv_off_started_at;
     bool left_long_repeat_navigation = false;
     bool right_long_repeat_navigation = false;
@@ -221,23 +218,24 @@ int main(void)
                 if (!hv_enabled) {
                     hv_off_started_at = now;
                     log_writer_hv_disabled();
-                } else if ((uint32_t)(now - hv_off_started_at) > 60000u) {
-                    const uint32_t current_pulses = board_detector_count();
-                    event_count = current_pulses;
-                    previous_minute_sample = current_pulses;
-                    rate_warmup_pulses = 0u;
-                    rate_pulse_seen = false;
-                    rate_last_pulse_at = now;
-                    second_log_reset_rate_window();
-                    latest_cpm = 0u;
-                    latest_display_cpm = 23u;
-                    display_rate.value = 230u;
-                    display_rate.clocks[0] = now;
-                    display_rate.clocks[1] = now;
-                    display_rate.pulse = false;
-                    board_display_set_dose_cpm(0u);
-                    board_display_set_rate_alarm(0u, 0u, false);
-                    rate_display_render(display_rate.value, 0u);
+                } else {
+                    hv_pulses_since_on = 0u;
+                    if ((uint32_t)(now - hv_off_started_at) > 60000u) {
+                        const uint32_t current_pulses = board_detector_count();
+                        event_count = current_pulses;
+                        previous_minute_sample = current_pulses;
+                        second_log_reset_rate_window();
+                        latest_cpm = 0u;
+                        latest_display_cpm = 23u;
+                        display_rate.value = 230u;
+                        display_rate.clocks[0] = now;
+                        display_rate.clocks[1] = now;
+                        display_rate.pulse = false;
+                        board_display_set_dose_cpm(0u);
+                        board_display_set_rate_alarm(0u, 0u);
+                    }
+                    rate_display_render(display_rate.value,
+                                        hv_pulses_since_on);
                 }
             }
         }
@@ -512,26 +510,13 @@ int main(void)
                 const uint32_t pulse_delta = detected_pulses - event_count;
                 event_count = detected_pulses;
                 if (hv_enabled) {
-                    if (rate_pulse_seen &&
-                        (uint32_t)(now - rate_last_pulse_at) > 60000u) {
-                        rate_warmup_pulses = 0u;
-                        second_log_reset_rate_window();
-                        latest_cpm = 0u;
-                        latest_display_cpm = 23u;
-                        display_rate.value = 230u;
-                        display_rate.clocks[0] = now;
-                        display_rate.clocks[1] = now;
-                        board_display_set_dose_cpm(0u);
-                        board_display_set_rate_alarm(0u, 0u, false);
-                        rate_display_render(display_rate.value, 0u);
-                    }
-                    rate_pulse_seen = true;
-                    rate_last_pulse_at = now;
-                    if (UINT32_MAX - rate_warmup_pulses < pulse_delta) {
-                        rate_warmup_pulses = UINT32_MAX;
+                    if (pulse_delta > UINT32_MAX - hv_pulses_since_on) {
+                        hv_pulses_since_on = UINT32_MAX;
                     } else {
-                        rate_warmup_pulses += pulse_delta;
+                        hv_pulses_since_on += pulse_delta;
                     }
+                    second_log_note_pulses(pulse_delta,
+                        now / 100u);
                     display_rate.pulse = true;
                     if (board_display_search_mode()) {
                         display_rate.value += pulse_delta * 10u;
@@ -610,18 +595,10 @@ int main(void)
                     detected_pulses - previous_minute_sample;
                 const uint32_t second_pulses = hv_enabled ?
                     sampled_pulses : 0u;
-                const uint32_t warmup_remaining = pulses_since_start < 30u ?
-                    30u - pulses_since_start : 0u;
-
                 previous_minute_sample = detected_pulses;
-                if (UINT32_MAX - pulses_since_start < second_pulses) {
-                    pulses_since_start = UINT32_MAX;
-                } else {
-                    pulses_since_start += second_pulses;
-                }
-                const bool cpm_valid = rate_warmup_pulses >= 30u;
-                const uint32_t dose_pulses = second_pulses > warmup_remaining ?
-                    second_pulses - warmup_remaining : 0u;
+                const uint16_t rate_target =
+                    board_display_rate_accuracy_pulses();
+                const uint32_t dose_pulses = second_pulses;
                 if (UINT32_MAX - session_pulses_total < dose_pulses) {
                     session_pulses_total = UINT32_MAX;
                 } else {
@@ -632,19 +609,20 @@ int main(void)
                 } else {
                     total_pulse_count += dose_pulses;
                 }
-                const uint32_t cpm = second_log_add(second_pulses);
-                latest_cpm = cpm;
-                latest_display_cpm = second_log_rate_cpm();
+                second_log_add(second_pulses);
+                latest_cpm = second_log_rate_cpm(now / 100u,
+                    rate_target, 0);
+                latest_display_cpm = latest_cpm;
+                const uint32_t cpm = latest_cpm;
                 board_display_set_dose_cpm(cpm);
                 if (hv_enabled) daily_dose_add(dose_pulses);
                 today_pulse_count = calendar_day_valid ?
                     daily_dose_count() : session_pulses_total;
-                /* Keep the live minute available to the app while excluding
-                 * blue warm-up samples from persistent log records. */
+                /* Count every detector pulse in live and persistent dose/logs. */
                 if (hv_enabled) {
                     log_writer_second(dose_pulses, latest_display_cpm,
                         log_uptime_seconds,
-                        log_calendar_seconds, log_calendar_valid, cpm_valid);
+                        log_calendar_seconds, log_calendar_valid);
                 }
                 if (hv_enabled) {
                     if (board_display_dose_period() == 1u) {
@@ -669,7 +647,7 @@ int main(void)
                 const uint32_t measured_rate_thousandths = (uint32_t)(
                     ((uint64_t)latest_cpm * 666u + 50u) / 100u);
                 board_display_set_rate_alarm(measured_rate_thousandths,
-                    latest_cpm, rate_warmup_pulses >= 30u);
+                    latest_cpm);
                 if (board_display_search_mode()) {
                     display_rate.value =
                         (display_rate.value * 63u) >> 6u;
@@ -686,7 +664,7 @@ int main(void)
                         search_mode ? UINT32_MAX : latest_display_cpm * 10u,
                         interval_ms)) {
                     rate_display_render(display_rate.value,
-                                        rate_warmup_pulses);
+                                        hv_pulses_since_on);
                 }
             }
 
@@ -881,8 +859,7 @@ int main(void)
             status.screen_seconds = debug_screen_seconds;
             status.sleep_seconds = debug_sleep_seconds;
             status.usb_seconds = debug_usb_seconds;
-            status.rate_warmup_pulses = rate_warmup_pulses > 30u ? 30u :
-                (uint8_t)rate_warmup_pulses;
+            status.rate_sample_pulses = hv_pulses_since_on;
             protocol_v1_set_status(&status);
         }
         /* Keep clocks and interrupt-driven pulse counting alive while the CPU

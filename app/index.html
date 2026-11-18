@@ -53,7 +53,6 @@
         <article class="metric metric-primary">
           <div class="metric-heading"><div class="metric-label" id="rate-label">RATE · CALCULATED</div><span id="overview-hv-status" class="hv-status" hidden>HV OFF</span><button id="rate-expand" class="metric-expand" type="button" aria-expanded="false" aria-controls="rate-details" aria-label="Expand rate details" title="Expand rate details">+</button></div>
           <div class="metric-value"><span id="rate-dose">—</span><small id="rate-unit">CPM</small></div>
-          <div id="rate-warmup" class="rate-warmup" role="progressbar" aria-label="Warm-up pulses" aria-valuemin="0" aria-valuemax="30" aria-valuenow="0" hidden><span id="rate-warmup-fill"></span></div>
           <p class="metric-foot" id="rate-foot" hidden><span id="rate-foot-main"></span><span id="rate-foot-count" hidden></span></p>
           <div id="rate-details" class="metric-details" hidden>
             <div class="metric-detail-row"><span id="overview-rate-sv-label">Sv/h</span><strong id="overview-rate-sv">—</strong></div>
@@ -66,7 +65,6 @@
           <div class="metric-heading"><div class="metric-label" id="dose-label">DOSE TODAY</div><button id="dose-expand" class="metric-expand" type="button" aria-expanded="false" aria-controls="dose-details" aria-label="Expand dose details" title="Expand dose details">+</button></div>
           <div class="metric-value"><span id="dose">—</span><small id="dose-unit">CNT</small></div>
           <p class="metric-foot" id="dose-foot" hidden></p>
-          <div id="dose-warmup-spacer" class="metric-warmup-spacer" hidden></div>
           <div id="dose-details" class="metric-details" hidden>
             <div class="metric-dose-table">
               <span></span><span>µSv</span><span>CNT</span><span>µR</span>
@@ -435,11 +433,10 @@
 
         <section class="manual-chapter">
         <h3>1.0 - Rate</h3>
-        <p>In NORMAL, the large value is the current rate in the selected UNIT and RATE PREFIX, based on a rolling 60-second measurement. The top row shows device time when set, otherwise hours and minutes since startup, plus solar input and battery status. RATE ROW 2 selects the smaller second row. During startup, the rate is blue and the progress bar fills to 30 CNT; the estimate starts at 23 CPM and settles toward the measured rate. The first 30 startup pulses establish the rate but do not add to accumulated dose or persistent log records. With HV off, Overview shows one red HV OFF indicator beside RATE; both cards keep their selected second rows. Dose and logs pause, while the displayed rate decays; after more than a minute without HV or detector pulses, the blue warm-up restarts. Rate colors and alarms follow their configured thresholds.</p>
+        <p>In NORMAL, the rate uses a rolling sample of detector pulses. RATE ACCURACY selects the target uncertainty (30%, 25%, 20%, 15%, 10%, or 5%), corresponding to about 12, 16, 25, 45, 100, or 400 pulses. Until the target is reached, the large rate number and uncertainty are blue; afterward the uncertainty is gray. The device temporarily shows uncertainty in the lower row, then returns to RATE ROW 2, unless ACCURACY is selected there to keep showing it. The app continuously shows total CNT and uncertainty since HV was enabled. Before the first pulse the estimate is INF, and uncertainty is limited to a minimum of 5%. The rate estimate starts near 23 CPM and follows the selected pulse sample, while dose and logs count every pulse immediately. The top row shows device time when set, otherwise hours and minutes since startup, plus solar input and battery status. With HV off, Overview shows one red HV OFF indicator beside RATE; both cards keep their selected second rows. Dose and logs pause while the displayed rate decays. Rate colors and alarms follow their configured thresholds.</p>
         <p><strong>SEARCH</strong> keeps the display on and flashes the LED on detector pulses. The rate display rises when a pulse arrives, then eases down between pulses; it shows no more than six large symbols including the decimal point and uses a brighter LED. This responsive display estimate is separate from the measured CPM written to logs and used for alarms. In NORMAL, the estimate reacts quickly to increases and eases down over several seconds when the measured rate falls. Smoothing accounts for elapsed time so changing the refresh interval does not change the decay speed. <strong>INVISIBLE</strong> suppresses detector indications and alarms and turns the display off after one second; measurements continue. Short Left exits Invisible even while the display is asleep.</p>
         <p><strong>Rate refresh priority, first match wins:</strong> SEARCH or active data transfer: 100 ms; screen on: 1 second; screen off: on each detector pulse. Charging alone does not count as data transfer. The connected app requests status every 100 ms and keeps graph history in one-second buckets. Pulses are counted immediately; measurement, logs and alarm checks retain their one-second cadence.</p>
         <div class="manual-screen-grid">
-          <figure><figcaption>1.0.1 · Rate warm-up with search and flashlight</figcaption><img src="../docs/renders/screens/1.0.1-rate-blue-cnt.svg" alt="Blue 0.153 µSv per hour rate, 15 CNT progress, Search S, and flashlight L" loading="lazy"></figure>
           <figure><figcaption>1.0.2 · Green rate display with CPM</figcaption><img src="../docs/renders/screens/1.0.2-rate-green-cpm.svg" alt="Rate screen with green counter and CPM row" loading="lazy"></figure>
         </div>
         </section>
@@ -467,6 +464,7 @@
         <section class="manual-chapter">
         <h3>2 · Dose</h3>
         <p>Shows accumulated dose in the selected UNIT and DOSE PREFIX for the DOSE PERIOD: UPTIME (this run), DAY (the current calendar day), or the saved lifetime counter. DAY and TOTAL accumulate as pulses arrive; loading the DAY graph corrects them from stored daily records. DOSE ROW 2 can show another unit or period, TIME, CPM, or OFF; changing the period selects TIME for UPTIME or the first alternative unit for DAY and TOTAL. Short Left changes the shared NORMAL/SEARCH/INVISIBLE indication mode; short Right returns to Rate; long Left toggles the flashlight; long Right opens Graphs.</p>
+        <p>Minute-log dose has greater statistical uncertainty because it covers a short interval with relatively few pulses. Hourly and daily doses sum actual pulse counts from their component records instead of averaging rounded minute-dose values, so longer intervals reduce statistical variation. Absolute dose accuracy still depends on the tube's calibration.</p>
         <figure class="manual-screen-single"><figcaption>2 · Accumulated dose</figcaption><img src="../docs/renders/screens/2-dose.svg" alt="Dose screen showing accumulated dose and a secondary row" loading="lazy"></figure>
         </section>
 
@@ -520,9 +518,10 @@
         <summary>Settings reference</summary>
         <p>Settings are listed below in device-menu order. In the app, supported changes are sent to the device immediately; unsupported settings remain visible but disabled. <strong>Show</strong> controls visibility in the device menu, where POWER OFF is always shown. Demo changes are temporary and return to defaults when the page is reloaded.</p>
         <p>On the device, long Right activates a setting. Most settings with up to three choices change immediately. LOG MEMORY and settings with more choices open a separate list: short Left/Right selects an option, long Right saves, and long Left cancels. Each entry into the settings list starts at the first visible item.</p>
-        <p>For rate indications and alarms, YELLOW covers the yellow and red levels, starting at 0.4 µSv/h; RED starts above 0.9 µSv/h. CUSTOM uses RATE CUSTOM. Rate-based triggers wait until the initial measurement window is ready. INVISIBLE suppresses indications and alarms; SEARCH keeps the screen on, flashes the LED on pulses, and updates the displayed rate more quickly.</p>
+        <p>For rate indications and alarms, YELLOW covers the yellow and red levels, starting at 0.4 µSv/h; RED starts above 0.9 µSv/h. CUSTOM uses RATE CUSTOM. Rate-based triggers use the current rate estimate; RATE ACCURACY controls the rolling pulse sample and its uncertainty. INVISIBLE suppresses indications and alarms; SEARCH keeps the screen on, flashes the LED on pulses, and updates the displayed rate more quickly.</p>
         <ul>
           <li><strong>DOSE PERIOD — UPTIME / DAY / TOTAL:</strong> shows dose since this run started, for the current calendar day, or the saved lifetime counter. DAY and TOTAL accumulate as pulses arrive. Loading the DAY graph corrects them from stored daily records; this is not done automatically each hour. Changing the period resets DOSE ROW 2 to TIME for UPTIME, or to the first alternative unit for DAY and TOTAL (CNT when UNIT is Sv).</li>
+          <li><strong>RATE ACCURACY — 30% / 25% / 20% / 15% / 10% / 5%:</strong> selects a rolling sample of about 12 / 16 / 25 / 45 / 100 / 400 pulses. The rate number and uncertainty are blue until the target is reached; afterward uncertainty is gray. On the device, it temporarily replaces RATE ROW 2, or remains there if ACCURACY is selected. The app shows total HV-on CNT and uncertainty continuously.</li>
           <li><strong>LED — OFF / ON / ALWAYS / YELLOW / RED / CUSTOM:</strong> controls pulse flashes. ON flashes while the display is on; ALWAYS also flashes while it is off. The remaining modes flash at the chosen rate level.</li>
           <li><strong>CLICKS — OFF / ON / ALWAYS / YELLOW / RED / CUSTOM:</strong> controls speaker clicks on pulses using the same trigger choices as LED.</li>
           <li><strong>RATE SCREEN — OFF / YELLOW / RED / CUSTOM:</strong> wakes and keeps the display on while the chosen rate condition is active. Acknowledging the alarm lets the display time out.</li>
@@ -547,7 +546,7 @@
           <li><strong>RATE PREFIX:</strong> for Sv/R, choose m, µ, n, or AUTO; for CNT, choose CPM or CPS.</li>
           <li><strong>DOSE PREFIX:</strong> for Sv/R, choose m, µ, n, or AUTO. It is unavailable for CNT.</li>
           <li><strong>LEAD ZERO — SHOW / HIDE:</strong> controls the zero before a decimal fraction.</li>
-          <li><strong>HV — ON / OFF:</strong> OFF disables detector counting and freezes dose updates. Turning it ON restarts the rate warm-up from zero.</li>
+          <li><strong>HV — ON / OFF:</strong> OFF disables detector counting and freezes dose updates. Turning it ON resumes measurement; after a pulse-free pause over a minute, the rate sample starts collecting again.</li>
           <li><strong>LOG MEMORY — EEPROM / SPI / OFF:</strong> selects where new logs are stored. OFF pauses logging. The device does not fall back to the other memory if the selected storage fails. See storage details below before switching.</li>
           <li><strong>RESET — SETTINGS / LOGS / OLD LOGS / EEPROM / SPI / ALL:</strong> selects a reset action; see the effects below. The device executes the selected action on long Right without another on-device confirmation. The app asks for confirmation.</li>
           <li><strong>POWER OFF:</strong> shuts down the device.</li>
@@ -568,7 +567,7 @@
         </ul>
         <p>Successful reset actions restart the device. Actions that clear SPI require the chip to be accessible and contain only recognizable log data; unrecognized sectors block the action and remain untouched.</p>
 
-        <p><strong>Factory defaults:</strong> LED ALWAYS; CLICKS and alarm outputs OFF; both brightness settings AUTO; SCREEN TIMER 10 seconds; TONE STOCK; LEAD ZERO SHOW; UNIT Sv; both prefixes µ; RATE ROW 2 CPM; DOSE PERIOD DAY with DOSE ROW 2 CNT; LONG PRESS 900 ms; BATT FORMAT %; HV ON; LOG MEMORY EEPROM; ALARM STOP CLEAR. RATE CUSTOM defaults to 0.9 µSv/h and DOSE CUSTOM to 5 µSv. RATE CUSTOM, DOSE CUSTOM, LONG PRESS, HV, LOG MEMORY, DOSE SCREEN, DOSE LIGHT, DOSE SOUND, ALARM STOP, TONE, LEAD ZERO, RATE PREFIX, DOSE PREFIX, RESET, and REBOOT are hidden from the device menu by default and can be shown from the app.</p>
+        <p><strong>Factory defaults:</strong> LED ALWAYS; CLICKS and alarm outputs OFF; both brightness settings AUTO; SCREEN TIMER 10 seconds; TONE STOCK; LEAD ZERO SHOW; UNIT Sv; both prefixes µ; RATE ROW 2 CPM; DOSE PERIOD DAY; RATE ACCURACY 30%; DOSE ROW 2 CNT; LONG PRESS 900 ms; BATT FORMAT %; HV ON; LOG MEMORY EEPROM; ALARM STOP CLEAR. RATE CUSTOM defaults to 0.9 µSv/h and DOSE CUSTOM to 5 µSv. RATE CUSTOM, DOSE CUSTOM, LONG PRESS, HV, LOG MEMORY, DOSE SCREEN, DOSE LIGHT, DOSE SOUND, ALARM STOP, TONE, LEAD ZERO, RATE PREFIX, DOSE PREFIX, RESET, and REBOOT are hidden from the device menu by default and can be shown from the app.</p>
       </details>
       <details class="information-card manual-card">
         <summary>Firmware maintenance</summary>
@@ -615,7 +614,7 @@
           <li>
             <time datetime="2026-11-16">2026-11-16</time> — Startup measurement, faster logs, and chart navigation:
             <ul>
-              <li><strong>Device startup:</strong> the first 30 pulses establish the rate but no longer add to accumulated dose or log records. Rate display refreshes every 100 ms during SEARCH or active serial transfers, every second while the screen is on, and on each pulse while the screen is off. Falling NORMAL readings ease down smoothly; measurement, logs, and alarms retain their one-second cadence.</li>
+              <li><strong>Device startup:</strong> rate accuracy is selectable at 30%, 25%, 20%, 15%, 10%, or 5% (about 12/16/25/45/100/400 detector pulses). The app shows total HV-on count and estimated uncertainty. Every pulse contributes to dose and logs immediately. Rate display refreshes every 100 ms during SEARCH or active serial transfers, every second while the screen is on, and on each pulse while the screen is off. Falling NORMAL readings ease down smoothly; measurement, logs, and alarms retain their one-second cadence.</li>
               <li><strong>Logs:</strong> faster newest-first MINUTES reads from SPI; coverage values now round to the nearest representable fraction.</li>
               <li><strong>Overview chart:</strong> hold Shift or Alt while scrolling the mouse wheel to browse history; regular wheel and touch pinch still zoom the range.</li>
             </ul>
@@ -713,8 +712,8 @@
           <li>
             <time datetime="2026-11-02">2026-11-02</time> — Release: search, graphs, logging, firmware safety, and app updates:
             <ul>
-              <li><strong>Search and display:</strong> SEARCH reacts immediately to pulses, eases down between pulses, shows up to six significant digits for Sv/R, and uses a brighter LED. Fixed rate/dose secondary-row rendering and kept warm-up CNT aligned with the dose row.</li>
-              <li><strong>Graphs and logs:</strong> added dedicated live histories for 3, 5, and 10 minutes and fixed cursor cleanup at graph edges. Minute coverage now follows elapsed time, avoiding false partial records when sampling is delayed. Persistent logs exclude the 30-pulse blue warm-up while RAM graph history, the app's live minute row, and live dose continue to include it. Automatic hourly dose resynchronization is disabled, with DAY/TOTAL correction available after loading the DAY graph.</li>
+              <li><strong>Search and display:</strong> SEARCH reacts immediately to pulses, eases down between pulses, shows up to six significant digits for Sv/R, and uses a brighter LED. Fixed rate/dose secondary-row rendering.</li>
+              <li><strong>Graphs and logs:</strong> added dedicated live histories for 3, 5, and 10 minutes and fixed cursor cleanup at graph edges. Minute coverage now follows elapsed time, avoiding false partial records when sampling is delayed. Automatic hourly dose resynchronization is disabled, with DAY/TOTAL correction available after loading the DAY graph.</li>
               <li><strong>Log viewer:</strong> expands to full screen; displays coverage as compact elapsed time and alert duration without unit suffixes, omitting zero leading fields. Requests up to ten records per device exchange and updates rows and totals as each response arrives. Stop finishes the current request before halting. More extends Latest by one period, Count by 100 records, or resumes All/Dates; it remains visible but disables when unavailable. Live refresh no longer rebuilds rows under the pointer.</li>
               <li><strong>Firmware and backups:</strong> The first firmware write saves a permanent full FLASH backup in browser storage. FLASH, EEPROM, and SPI dumps appear in Downloads and can be loaded into their matching write form. Restore original applies to the separately saved FLASH copy; a pending SPI recovery can be restored from Downloads. Actions are grouped in the persistent activity log; older actions collapse when a new one starts.</li>
               <li><strong>Windows and interface:</strong> added F5 page refresh to the desktop app, refined overview metrics and setting controls, and removed an unavailable demo clock status message.</li>

@@ -71,14 +71,11 @@ button { font: inherit; }
 .metric-value .level-yellow { color: #f0d35e; }
 .metric-value .level-red { color: #ff6666; }
 .metric-value small { color: #89999e; font: 500 12px "DM Mono", Consolas, monospace; letter-spacing: .04em; }
-.rate-warmup { height: 4px; margin-top: 15px; overflow: hidden; border-radius: 99px; background: rgba(40,123,255,.16); }
-.rate-warmup span { display: block; width: 0; height: 100%; border-radius: inherit; background: #287bff; transition: width .2s ease; }
-.metric-warmup-spacer { height: 4px; margin-top: 15px; }
-.metric-warmup-spacer[hidden] { display: none; }
 .metric-uptime { font-size: 25px; }
 .metric-foot { display: flex; justify-content: space-between; margin: 10px 0 0; color: #9aa9ae; font: 14px "DM Mono", Consolas, monospace; }
 .metric-foot > span:empty { display: none; }
-.metric-foot.align-with-rate-warmup { margin-top: 29px; }
+.rate-accuracy-blue { color: #287bff; }
+.rate-accuracy-gray { color: #9aa9ae; }
 .metric.is-expanded .metric-foot { display: none; }
 .metric-details { display: grid; gap: 5px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); color: #aebbc0; font: 14px/1.35 "DM Mono", Consolas, monospace; }
 .metric-details[hidden] { display: none; }
@@ -104,7 +101,6 @@ button { font: inherit; }
 .chart-summary > div { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 3px; padding-left: 8px; border-left: 1px solid var(--line); text-align: center; }
 .chart-summary > div:first-child { padding-left: 0; border-left: 0; }
 .chart-summary strong { max-width: 100%; overflow: hidden; color: #d8e2e4; font-size: 11px; font-weight: 500; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
-.chart-summary .level-blue { color: #287bff; }
 .chart-summary .level-green { color: #00e58b; }
 .chart-summary .level-yellow { color: #f0d35e; }
 .chart-summary .level-red { color: #ff6666; }
@@ -428,7 +424,7 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .release-history-content { max-height: 160px; }
 }
 @media (min-width: 860px) {
-  .settings-pair { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(10, auto); column-gap: 56px; }
+  .settings-pair { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(11, auto); column-gap: 56px; }
 }
 @media (min-width: 651px) and (max-width: 1179px) {
   .theme-colors { grid-template-columns: repeat(2, minmax(0, 1fr)); }

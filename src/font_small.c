@@ -2,10 +2,10 @@
 
 /* First 13 entries are shared with the large font; remaining printable
  * glyphs are kept in predictable ASCII order, followed by icon glyphs. */
-#define SMALL_GLYPH_COUNT 53u
+#define SMALL_GLYPH_COUNT 54u
 
 static const char small_glyphs[SMALL_GLYPH_COUNT + 1u] =
-    "0123456789:. %-/<>?ABCDEFGHIKLMNOPRSTUVWXYZdhmnpsv\x01\x02\xB5";
+    "0123456789:. %-/<>?ABCDEFGHIKLMNOPRSTUVWXYZdhmnpsv\x01\x02\x03\xB5";
 
 /* One byte per bitmap column; bit 0 is the top row. The micro sign
  * uses bit 7 for its descender, so it needs no separate bitmap. */
@@ -62,6 +62,7 @@ static const uint8_t small_columns[SMALL_GLYPH_COUNT][5] = {
     { 28, 32, 64, 32, 28 }, /* v */
     { 42, 28, 127, 28, 42 }, /* sun icon */
     { 126, 66, 67, 66, 126 }, /* battery icon */
+    { 72, 72, 126, 72, 72 }, /* plus-minus */
     { 252, 64, 64, 32, 124 }, /* micro sign; descender below */
 };
 

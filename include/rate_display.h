@@ -14,7 +14,7 @@ typedef struct {
 bool rate_display_update(rate_display_state_t *state, uint32_t now,
     uint32_t target, uint32_t interval_ms);
 
-void rate_display_render(uint32_t value, uint32_t pulses_since_start);
+void rate_display_render(uint32_t value, uint32_t sample_count);
 
 /* Fast while searching/transferring, once per second with screen on,
  * pulse-driven while screen off. */

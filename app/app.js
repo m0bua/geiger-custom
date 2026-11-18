@@ -407,8 +407,6 @@ const elements = {
   metrics: document.querySelector('.metrics'),
   rateLabel: document.querySelector('#rate-label'),
   rateDose: document.querySelector('#rate-dose'),
-  rateWarmup: document.querySelector('#rate-warmup'),
-  rateWarmupFill: document.querySelector('#rate-warmup-fill'),
   rateUnit: document.querySelector('#rate-unit'),
   doseLabel: document.querySelector('#dose-label'),
   dose: document.querySelector('#dose'),
@@ -416,7 +414,6 @@ const elements = {
   doseFoot: document.querySelector('#dose-foot'),
   doseExpand: document.querySelector('#dose-expand'),
   doseDetails: document.querySelector('#dose-details'),
-  doseWarmupSpacer: document.querySelector('#dose-warmup-spacer'),
   uptime: document.querySelector('#uptime'),
   debugBatteryPercent: document.querySelector('#debug-battery-percent'),
   debugBatteryDetail: document.querySelector('#debug-battery-detail'),
@@ -1066,7 +1063,7 @@ let offlineImportedLogStore = null;
 let offlineLogsImported = false;
 let logStartOffset = 0;
 let rateHistoryUnit = 'CPM';
-let rateLevel = 'blue';
+let rateLevel = 'green';
 let logPageTotal = 0;
 let logPageLoading = false;
 let logStopRequested = false;
@@ -1115,7 +1112,7 @@ let rateChartActionHintTimer = 0;
 let previousRateCount = null;
 let previousHvEnabled = null;
 let deviceIndicationMode = null;
-const demoSettings = Array.from({ length: 31 }, () => 0);
+const demoSettings = Array.from({ length: 32 }, () => 0);
 const demoHiddenSettings = new Set([
   8, 10, 11, 13, 14, 15, 16, 17, 19, 20, 21, 24, 25, 26, 27,
 ]);
@@ -1126,6 +1123,10 @@ Object.assign(demoSettings, {
 
 const remoteSettings = [
   { id: 23, label: 'DOSE PERIOD', options: ['UPTIME', 'DAY', 'TOTAL'] },
+  { id: 31, label: 'RATE ACCURACY', options: [
+    '30% · 12 CNT', '25% · 16 CNT', '20% · 25 CNT',
+    '15% · 45 CNT', '10% · 100 CNT', '5% · 400 CNT',
+  ] },
   { id: 0, label: 'LED', options: ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED', 'CUSTOM'] },
   { id: 1, label: 'CLICKS', options: ['OFF', 'ON', 'ALWAYS', 'YELLOW', 'RED', 'CUSTOM'] },
   { id: 2, label: 'RATE SCREEN', options: ['OFF', 'YELLOW', 'RED', 'CUSTOM'] },
@@ -1277,14 +1278,13 @@ function showRateChartActionHint(mode, label, pointerEvent) {
   }, 600);
 }
 
-function updateRateChartSummary(values, pulses, levels) {
-  const setRateSummary = (element, value, isWarmup) => {
+function updateRateChartSummary(values, pulses) {
+  const setRateSummary = (element, value) => {
     const settings = offlinePreview ? demoSettings : deviceSettings;
     const unit = settings?.[9] ?? 0;
     const rateUsvh = unit === 1 ? value * 0.00666 : unit === 2 ? value / 100 : value;
-    const level = isWarmup ? 'blue' :
-      (rateUsvh > 0.9 ? 'red' : (rateUsvh >= 0.4 ? 'yellow' : 'green'));
-    element.classList.remove('level-blue', 'level-green', 'level-yellow', 'level-red');
+    const level = rateUsvh > 0.9 ? 'red' : (rateUsvh >= 0.4 ? 'yellow' : 'green');
+    element.classList.remove('level-green', 'level-yellow', 'level-red');
     element.classList.add(`level-${level}`);
   };
   if (!values.length) {
@@ -1292,21 +1292,18 @@ function updateRateChartSummary(values, pulses, levels) {
     elements.chartRangeAvg.textContent = '—';
     elements.chartRangeMax.textContent = '—';
     for (const element of [elements.chartRangeMin, elements.chartRangeAvg, elements.chartRangeMax]) {
-      element.classList.remove('level-blue', 'level-green', 'level-yellow', 'level-red');
+      element.classList.remove('level-green', 'level-yellow', 'level-red');
     }
   } else {
     const minimum = Math.min(...values);
     const maximum = Math.max(...values);
     const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-    const minIndex = values.indexOf(minimum);
-    const maxIndex = values.indexOf(maximum);
     elements.chartRangeMin.textContent = `${formatRateChartValue(minimum)} ${rateHistoryUnit}`;
     elements.chartRangeAvg.textContent = `${formatRateChartValue(average)} ${rateHistoryUnit}`;
     elements.chartRangeMax.textContent = `${formatRateChartValue(maximum)} ${rateHistoryUnit}`;
-    setRateSummary(elements.chartRangeMin, minimum, levels[minIndex] === 'blue');
-    setRateSummary(elements.chartRangeAvg, average,
-      levels.length > 0 && levels.every((level) => level === 'blue'));
-    setRateSummary(elements.chartRangeMax, maximum, levels[maxIndex] === 'blue');
+    setRateSummary(elements.chartRangeMin, minimum);
+    setRateSummary(elements.chartRangeAvg, average);
+    setRateSummary(elements.chartRangeMax, maximum);
   }
   const pulseTotal = pulses.reduce((sum, count) => sum + count, 0);
   elements.chartRangeCnt.textContent = offlinePreview ? '—' : formatGroupedNumber(pulseTotal);
@@ -1326,7 +1323,7 @@ function rateChartThresholds() {
   const convert = (usvh) => unit === 1 ? usvh / 0.00666 :
     unit === 2 ? usvh * 100 : usvh;
   const settings = offlinePreview ? demoSettings : deviceSettings;
-  const customUsvh = [0.3, 0.4, 0.5, 0.7, 0.9, 1, 2, 5, 10][settings?.[16] ?? 0] ?? 0.3;
+  const customUsvh = [0.3, 0.4, 0.5, 0.7, 0.9, 1, 2, 5, 10][settings?.[16] ?? 4] ?? 0.9;
   const thresholds = [
     {key: 'yellow', label: 'Y', value: convert(0.4), color: '#f0d35e'},
     {key: 'red', label: 'R', value: convert(0.9), color: '#ff6666'},
@@ -1386,7 +1383,7 @@ function drawRateChart() {
       formatRadiation(0.14 * (unit === 2 ? 100 : 1), demoSettings[10] ?? 1,
         unit === 2 ? 'R' : 'Sv', true).unit;
   }
-  updateRateChartSummary(values, pulses, levels);
+  updateRateChartSummary(values, pulses);
   const thresholds = rateChartThresholds();
   const valuePeak = Math.max(...values, 0.01);
   const demoScaleMax = offlinePreview ? (() => {
@@ -3745,6 +3742,7 @@ function settingsOptions(setting, currentSettings = deviceSettings) {
         disabled: cntMode && mainCountRate === 'CPS'},
       {label: 'R/h', value: cntMode ? 1 : (unit === 2 ? 'duplicate-r' : 3), disabled: unit === 2},
       {label: 'OFF', value: 2, disabled: false},
+      {label: 'ACCURACY', value: cntMode ? 5 : 4, disabled: false},
     ];
   }
   if (setting.id === 22) {
@@ -3921,11 +3919,14 @@ function renderSettings() {
               ['EEPROM', 'SPI', 'OFF'][nextValue] || 'EEPROM';
           }
           if (setting.id === 23) demoSettings[22] = nextValue === 0 ? 3 : 1;
-          if (setting.id === 9 || setting.id === 10 || setting.id === 23) {
+          if (setting.id === 9 || setting.id === 10 || setting.id === 16 ||
+              setting.id === 23) {
             renderSettings();
             document.querySelector(`#setting-${setting.id}`)?.focus();
           }
-          if (setting.id === 9 || setting.id === 10) drawRateChart();
+          if (setting.id === 9 || setting.id === 10 || setting.id === 16) {
+            drawRateChart();
+          }
           return;
         }
         if (supported && !inactiveSetting) {
@@ -4279,19 +4280,16 @@ function renderOfflinePreview() {
   elements.overviewUptime.textContent = '00:00:00';
   elements.rateLabel.textContent = 'RATE';
   elements.rateDose.textContent = '0';
-  elements.rateDose.classList.remove('level-blue', 'level-yellow', 'level-red');
+  elements.rateDose.classList.remove('level-yellow', 'level-red');
   elements.rateDose.classList.add('level-green');
   rateLevel = 'green';
   elements.rateUnit.textContent = 'µSv/h';
   elements.rateFootMain.textContent = '0 CPM';
-  elements.rateFootCount.textContent = '';
-  elements.rateFootCount.hidden = true;
+  elements.rateFootCount.textContent = '0 CNT · ±INF';
+  elements.rateFootCount.hidden = false;
   elements.rateFoot.hidden = false;
   elements.hvStatus.hidden = true;
   updateOverviewMetricDetails(0, 0, 0, 0, deviceSettings?.[10] ?? 1, 0);
-  elements.rateWarmup.hidden = true;
-  elements.doseWarmupSpacer.hidden = true;
-  elements.rateWarmupFill.style.width = '0%';
   elements.loadMoreLogs.hidden = false;
   elements.loadMoreLogs.disabled = true;
   elements.doseLabel.textContent = 'DOSE TODAY';
@@ -4507,7 +4505,7 @@ async function loadSettings() {
   try {
     const payload = await serial.request(OP_GET_SETTINGS, Uint8Array.of(1));
     if (payload.length < 2 || payload[0] !== 0 ||
-        ![21, 22, 24, 28, 29, 30, 31].includes(payload[1]) ||
+        ![21, 22, 24, 28, 29, 30, 31, 32].includes(payload[1]) ||
         (payload.length !== payload[1] + 2 &&
          payload.length !== payload[1] + 6)) {
       throw new ProtocolError('Invalid settings response.');
@@ -4561,6 +4559,7 @@ async function writeSetting(settingId, value, control) {
     }
     deviceSettings = null;
     await loadSettings();
+    if (settingId === 16) drawRateChart();
     if (settingId === 13 && deviceSettings) {
       logInfo = null;
       logRecords = [];
@@ -4762,7 +4761,7 @@ function recordRateHistory(value, level, pulses, timestamp, now = performance.no
 }
 
 function handleStatus(payload) {
-  if (![25, 29, 31, 35, 47, 48].includes(payload.length) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
+  if (![25, 29, 31, 35, 47, 48, 49, 51].includes(payload.length) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const uptimeSeconds = view.getUint32(1, true);
   const count = view.getUint32(5, true);
@@ -4807,18 +4806,14 @@ function handleStatus(payload) {
   const dosePulseCount = payload.length >= 35 ?
     (dosePeriod === 0 ? uptimePulses : dosePeriod === 1 ? dayPulses : lifetimePulses) :
     derivedDosePulses;
-  const warmupPulses = payload.length >= 48 ? Math.min(payload[47], 30) :
-    Math.min(countTotal, 30);
-  rateLevel = warmupPulses < 30 ? 'blue' :
-    (displayedCpm * 666 > 90000 ? 'red' :
-      (displayedCpm * 666 >= 40000 ? 'yellow' : 'green'));
+  const rateSamplePulses = payload.length >= 51 ? view.getUint32(47, true) :
+    (payload.length >= 49 ? view.getUint16(47, true) :
+      (payload.length >= 48 ? payload[47] : countTotal));
+  rateLevel = displayedCpm * 666 > 90000 ? 'red' :
+    (displayedCpm * 666 >= 40000 ? 'yellow' : 'green');
   const levelClass = `level-${rateLevel}`;
   elements.rateDose.classList.remove('level-blue', 'level-green', 'level-yellow', 'level-red');
   elements.rateDose.classList.add(levelClass);
-  elements.rateWarmup.hidden = rateLevel !== 'blue';
-  elements.doseWarmupSpacer.hidden = rateLevel !== 'blue';
-  elements.rateWarmup.setAttribute('aria-valuenow', String(warmupPulses));
-  elements.rateWarmupFill.style.width = `${(warmupPulses / 30) * 100}%`;
   const uptime = formatUptime(uptimeSeconds);
   const unit = deviceSettings?.[9] ?? 0;
   const ratePrefix = deviceSettings?.[10] ?? 1;
@@ -4854,16 +4849,25 @@ function handleStatus(payload) {
   const rateRowMode = deviceSettings?.[12] ?? 0;
   const rateRow = rateRowText(rateRowMode, unit, displayedCpm, rateUsvh,
     deviceSettings?.[10] ?? 1);
+  const accuracy = [30, 25, 20, 15, 10, 5][deviceSettings?.[31] ?? 0] ?? 30;
+  const targetPulses = Math.ceil((100 / accuracy) ** 2);
+  const sampleCount = rateSamplePulses;
+  const rateAccuracyPending = sampleCount < targetPulses;
+  if (rateAccuracyPending) {
+    elements.rateDose.classList.remove(levelClass);
+    elements.rateDose.classList.add('level-blue');
+  }
+  const rateUncertainty = sampleCount === 0 ? 'INF' :
+    `${Math.max(5, Math.round(100 / Math.sqrt(sampleCount)))}%`;
   elements.hvStatus.hidden = hvEnabled;
   elements.rateFootMain.textContent = rateRow;
-  elements.rateFootCount.textContent = rateLevel === 'blue' ? `${formatGroupedNumber(warmupPulses)} CNT` : '';
-  elements.rateFootCount.hidden = rateLevel !== 'blue';
-  elements.rateFoot.hidden = rateRow.length === 0 && rateLevel !== 'blue';
+  elements.rateFootCount.innerHTML = `${formatGroupedNumber(sampleCount)} CNT · <span class="rate-accuracy-${rateAccuracyPending ? 'blue' : 'gray'}">±${rateUncertainty}</span>`;
+  elements.rateFootCount.hidden = false;
+  elements.rateFoot.hidden = false;
   let doseRow = doseRowText(unit, dosePeriod, doseRowMode, cpm, uptimeSeconds,
     uptimePulses, dayPulses, lifetimePulses, dosePrefix);
   elements.doseFoot.textContent = doseRow;
   elements.doseFoot.hidden = doseRow.length === 0;
-  elements.doseFoot.classList.toggle('align-with-rate-warmup', rateLevel === 'blue');
   elements.debugCount.textContent = formatGroupedNumber(countTotal);
   elements.uptime.textContent = `${uptime.days}D ${uptime.clock}`;
   updateDeviceDateTime(`${uptime.days}D ${uptime.clock}`);
@@ -4871,7 +4875,8 @@ function handleStatus(payload) {
   // It follows the actual LED flashes and does not depend on the selected
   // dose period or on the calendar day boundary.
   const appended = recordRateHistory(unit === 1 ? displayedCpm : rateUsvh,
-    rateLevel, pulseDelta, logInfo?.calendarValid ? logInfo.calendarSeconds :
+    rateAccuracyPending ? 'blue' : rateLevel, pulseDelta,
+    logInfo?.calendarValid ? logInfo.calendarSeconds :
       Math.floor((Date.now() - Date.UTC(2000, 0, 1)) / 1000),
     performance.now(), hvEvent);
   if (appended && rateChartIsHistorical) rateChartScrollSeconds += 1;

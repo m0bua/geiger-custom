@@ -99,9 +99,8 @@ void board_display_settings_list_exit(void);
 void board_reboot(void);
 void board_power_off(void);
 void board_display_set_rate(uint32_t rate_100000ths, uint32_t cpm,
-                            uint32_t pulses_since_start, bool window_ready);
-void board_display_set_rate_alarm(uint32_t rate_thousandths, uint32_t cpm,
-                                  bool window_ready);
+                            uint16_t sample_count);
+void board_display_set_rate_alarm(uint32_t rate_thousandths, uint32_t cpm);
 void board_display_history_updated(void);
 uint8_t board_display_rate_led_mask(void);
 void board_display_set_rate_led(void);
@@ -113,6 +112,7 @@ void board_display_set_dose(uint32_t dose_thousandths,
                             uint32_t measurement_seconds);
 void board_display_set_dose_cpm(uint32_t cpm);
 uint8_t board_display_dose_period(void);
+uint16_t board_display_rate_accuracy_pulses(void);
 uint16_t board_display_battery_start_raw(void);
 void board_display_set_count(uint32_t count);
 void board_display_set_debug_usage(uint32_t sleep_seconds);

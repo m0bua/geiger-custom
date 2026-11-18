@@ -214,8 +214,8 @@ static void handle_frame(uint8_t *frame, uint8_t length)
                 write_u32(&response[35u + (uint16_t)i * 4u], usage[i]);
             }
         }
-        response[47] = current_status.rate_warmup_pulses;
-        response_length = 48u;
+        write_u32(&response[47], current_status.rate_sample_pulses);
+        response_length = 51u;
     } else if (opcode == PROTOCOL_V1_OP_GET_SETTINGS &&
                (payload_length == 0u ||
                 (payload_length == 1u && frame[8] == 1u))) {

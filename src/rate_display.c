@@ -2,11 +2,12 @@
 #include "board.h"
 
 __attribute__((noinline)) void rate_display_render(uint32_t value,
-    uint32_t pulses_since_start)
+    uint32_t sample_count)
 {
     const uint32_t rate = (uint32_t)(((uint64_t)value * 666u + 5u) / 10u);
-    board_display_set_rate(rate, (value + 5u) / 10u, pulses_since_start,
-        pulses_since_start >= 30u);
+    const uint16_t accuracy_count = sample_count > UINT16_MAX ?
+        UINT16_MAX : (uint16_t)sample_count;
+    board_display_set_rate(rate, (value + 5u) / 10u, accuracy_count);
 }
 
 __attribute__((noinline)) bool rate_display_update(rate_display_state_t *state,
