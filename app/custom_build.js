@@ -348,27 +348,32 @@ function customBuildProfile() {
   };
 }
 
+let customBuildViewInitialized = false;
+
 function updateCustomBuildProfileView() {
   if (!elements.customFirmwareBuilder) return;
   const hasEmbeddedFirmware = typeof globalThis.EMBEDDED_FIRMWARE_B64 === 'string';
+  const previewOnly = !PORTAL_BUILD_API_URL;
+  const initializeDisclosure = !customBuildViewInitialized;
   const customSummary = elements.customFirmwareBuilder.querySelector(':scope > summary');
   if (elements.firmwareCurrentSection) {
-    const previewOnly = !hasEmbeddedFirmware && !PORTAL_BUILD_API_URL;
     elements.firmwareCurrentSection.classList.toggle('firmware-current-preview', previewOnly);
     if (!hasEmbeddedFirmware) {
       elements.firmwareCurrentSection.hidden = false;
-      elements.firmwareCurrentSection.open = false;
-      if (elements.firmwareTools) elements.firmwareTools.open = false;
+      if (initializeDisclosure) {
+        elements.firmwareCurrentSection.open = false;
+        if (elements.firmwareTools) elements.firmwareTools.open = false;
+      }
       if (elements.firmwareCurrentSummary) elements.firmwareCurrentSummary.hidden = false;
       if (elements.firmwareCurrentStaticTitle) elements.firmwareCurrentStaticTitle.hidden = true;
       if (elements.embeddedQuickFlash) elements.embeddedQuickFlash.hidden = !previewOnly;
       if (elements.quickFlashFirmware) elements.quickFlashFirmware.disabled = previewOnly;
       if (elements.stockFirmwareSection) {
         elements.stockFirmwareSection.hidden = false;
-        elements.stockFirmwareSection.open = false;
+        if (initializeDisclosure) elements.stockFirmwareSection.open = false;
       }
-      elements.customFirmwareBuilder.hidden = !PORTAL_BUILD_API_URL && !previewOnly;
-      elements.customFirmwareBuilder.open = false;
+      elements.customFirmwareBuilder.hidden = false;
+      if (initializeDisclosure) elements.customFirmwareBuilder.open = false;
       if (customSummary) customSummary.hidden = false;
     } else {
       elements.firmwareCurrentSection.hidden = false;
@@ -376,13 +381,12 @@ function updateCustomBuildProfileView() {
       if (elements.firmwareCurrentStaticTitle) elements.firmwareCurrentStaticTitle.hidden = true;
       if (elements.embeddedQuickFlash) elements.embeddedQuickFlash.hidden = false;
       if (elements.quickFlashFirmware) elements.quickFlashFirmware.disabled = false;
-      elements.customFirmwareBuilder.open = false;
+      elements.customFirmwareBuilder.hidden = false;
+      if (initializeDisclosure) elements.customFirmwareBuilder.open = false;
       if (customSummary) customSummary.hidden = false;
     }
   }
-  const previewOnly = typeof globalThis.EMBEDDED_FIRMWARE_B64 !== 'string' && !PORTAL_BUILD_API_URL;
-  elements.customFirmwareBuilder.hidden = !PORTAL_BUILD_API_URL && !previewOnly;
-  if (!PORTAL_BUILD_API_URL && !previewOnly) return;
+  elements.customFirmwareBuilder.hidden = false;
   elements.customBuildSignIn.disabled = !PORTAL_BUILD_CONFIGURED || customBuildAuthActive;
   renderCustomBuildConfiguration();
   updateCustomBuildEstimate();
@@ -392,11 +396,14 @@ function updateCustomBuildProfileView() {
   if (!PORTAL_BUILD_CONFIGURED) {
     elements.customBuildStart.disabled = true;
     elements.customBuildStatus.textContent =
-      previewOnly ? 'Preview only: settings are editable; flashing and build actions are disabled.' :
-        'Custom builds are not configured for this app build.';
+      !PORTAL_BUILD_API_URL ?
+        'Preview only: custom builds are unavailable because this app has no build API URL.' :
+        'Custom builds are unavailable because this app has no valid build source branch.';
+    customBuildViewInitialized = true;
     return;
   }
   elements.customBuildStart.disabled = !customBuildAccessToken || customBuildPollActive;
+  customBuildViewInitialized = true;
 }
 
 function updateCustomBuildEstimate() {

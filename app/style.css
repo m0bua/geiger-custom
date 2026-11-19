@@ -185,7 +185,8 @@ button { font: inherit; }
 .firmware-subsection[open] > summary { border-bottom: 1px solid var(--line); }
 .firmware-subsection > :not(summary) { margin-top: 10px; }
 .firmware-subsection > :last-child:not(summary) { margin-bottom: 12px; }
-.custom-firmware-builder { margin-top: 10px; }
+.custom-firmware-builder { margin-top: 14px; }
+.firmware-tools { margin-top: 16px; }
 .custom-firmware-builder > summary { color: #aebbc0; }
 .custom-firmware-builder > p, .custom-build-estimate { color: var(--muted); font-size: 12px; }
 .custom-build-auth, .custom-build-profile, .custom-build-features { margin-top: 12px; }
