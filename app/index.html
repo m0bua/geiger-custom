@@ -621,7 +621,8 @@
         <summary>Firmware maintenance</summary>
         <ul>
           <li><strong>Quick flash:</strong> programs the firmware embedded in the release app. In a local project build this action is available only when the app was built with the project firmware.</li>
-          <li><strong>Stock images:</strong> Quick → Stock contains validated stock HEX images. The list is ordered newest version first; English is preferred when versions match. Source links are listed below the buttons.</li>
+          <li><strong>Stock images:</strong> Current Firmware → Stock contains validated stock HEX images. Choose a version button to flash that image directly; no file selection is needed. The list is ordered newest version first; English is preferred when versions match. Source links are listed below the buttons.</li>
+          <li><strong>Custom builds:</strong> when available, open Current Firmware → Build custom firmware, sign in with an authorized GitHub account, select features and build-time settings, then start the build. Builds run on GitHub Actions and need internet access. The estimate is approximate; use the completed build's reported size. Export, apply, or copy a versioned JSON profile to reuse configuration. Pre-release apps build from <code>dev</code>; stable apps build from <code>main</code>.</li>
           <li><strong>Firmware backup:</strong> a firmware write first asks for confirmation. Only after confirmation does the app reuse an existing original FLASH backup or capture one before programming. If capture fails, programming stops before erase. Manual Dump FLASH creates a separate copy; use <strong>Restore original</strong> for that copy.</li>
           <li><strong>SPI operations:</strong> direct SPI reads are attempted first. If a read needs the temporary SPI service firmware, the app asks before restarting, saves a temporary recovery copy, and restores and verifies the original firmware afterward. Keep the device connected until the operation finishes.</li>
           <li><strong>Downloads:</strong> saved FLASH backups, manual FLASH dumps, EEPROM dumps, and SPI dumps appear in Downloads when available. Download an image again or use its action to load it into the matching FLASH, EEPROM, or SPI operation. EEPROM and SPI filenames include the byte range; FLASH filenames identify automatic copies and firmware type.</li>
@@ -654,8 +655,11 @@
           <div class="release-history-content">
         <ul class="release-list">
           <li>
-            <time datetime="2026-11-19">2026-11-19</time> — RATE ACCURACY and HV dose period:
+            <time datetime="2026-11-19">2026-11-19</time> — Custom firmware builds, firmware page, RATE ACCURACY, and HV dose period:
             <ul>
+              <li>Added custom firmware builds through GitHub Actions, with optional feature removal, configurable static settings and theme defaults, and an approximate Flash estimate.</li>
+              <li>Added versioned JSON build profiles with export, import, and copy actions. Building requires GitHub sign-in, internet access, and an app configured with the build API URL.</li>
+              <li>Grouped Quick flash, stock firmware, and custom builds under Current Firmware. Stock images can be flashed directly from their buttons.</li>
               <li>Restored the full RATE ACCURACY range from 30% to 5% in 5% steps in both the app and device settings.</li>
               <li>Set RATE ACCURACY to 10% by default. During the blue sampling phase, detector pulse flashes are blue; after the target is reached, LED color follows the configured rate level.</li>
               <li>Added HV as a dose period and DOSE ROW 2 option; it shows dose, pulse count, and elapsed time since HV was last enabled and resets on the next enable.</li>
