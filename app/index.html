@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b1115">
+  <meta name="portal-build-api" content="">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Dosimeter">
@@ -268,6 +269,41 @@
         <div class="actions">
           <button id="quick-flash-firmware" class="button button-primary" type="button">Quick flash</button>
         </div>
+        <details id="custom-firmware-builder" class="custom-firmware-builder" hidden>
+          <summary>Build custom firmware</summary>
+          <p>The default firmware above is always available. A custom build runs on GitHub Actions and needs an internet connection.</p>
+          <div class="custom-build-auth">
+            <button id="custom-build-sign-in" class="button button-quiet" type="button">Sign in with GitHub</button>
+            <a id="custom-build-auth-link" href="https://github.com/login/device" target="_blank" rel="noopener" hidden>Authorize device code</a>
+            <code id="custom-build-auth-code" hidden></code>
+          </div>
+          <div class="custom-build-features">
+            <label><input type="checkbox" data-build-feature="logs.enabled" checked> Logs</label>
+            <label><input type="checkbox" data-build-feature="device.graphs" checked> On-device graphs</label>
+            <label><input type="checkbox" data-build-feature="device.debug" checked> On-device Debug</label>
+            <label><input type="checkbox" data-build-feature="indication.flashlight" checked> Flashlight</label>
+            <label><input type="checkbox" data-build-feature="indication.modes" checked> Indication modes</label>
+            <label><input type="checkbox" data-build-feature="alarms.rate" checked> Rate alarms</label>
+            <label><input type="checkbox" data-build-feature="alarms.dose" checked> Dose alarms</label>
+            <label><input type="checkbox" data-build-feature="theme.editable" checked> Editable theme</label>
+            <label><input type="checkbox" data-build-feature="settings.mutable" checked> Mutable settings</label>
+          </div>
+          <p id="custom-build-estimate" class="custom-build-estimate"></p>
+          <div class="custom-build-profile">
+            <label for="custom-build-profile-json">Build profile JSON</label>
+            <textarea id="custom-build-profile-json" rows="5" spellcheck="false"></textarea>
+            <div class="actions">
+              <button id="custom-build-export-profile" class="button button-quiet" type="button">Export profile</button>
+              <button id="custom-build-import-profile" class="button button-quiet" type="button">Apply JSON</button>
+            </div>
+          </div>
+          <div class="actions">
+            <button id="custom-build-start" class="button button-primary" type="button" disabled>Start build</button>
+            <a id="custom-build-download" class="button button-quiet" hidden>Download custom firmware</a>
+            <a id="custom-build-run" target="_blank" rel="noopener" hidden>Open build on GitHub</a>
+          </div>
+          <p id="custom-build-status" role="status" aria-live="polite">Configure a profile or use the embedded default firmware.</p>
+        </details>
         <details id="stock-firmware-section" class="stock-firmware" hidden>
           <summary>Stock</summary>
           <p>Select a stock firmware version to flash. The app asks before capturing a permanent FLASH backup and programming the image.</p>
@@ -809,5 +845,6 @@
 
   </main>
   <script defer src="app.js?v=20261113-3"></script>
+  <script defer src="custom_build.js?v=20261119-1"></script>
 </body>
 </html>

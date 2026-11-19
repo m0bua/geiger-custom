@@ -1,0 +1,17 @@
+name = "geiger-custom-firmware-api"
+main = "worker.js"
+compatibility_date = "2026-11-19"
+workers_dev = true
+
+[vars]
+REPOSITORY_OWNER = "m0bua"
+REPOSITORY_NAME = "geiger-custom"
+GITHUB_OAUTH_CLIENT_ID = "configure-in-cloudflare-dashboard"
+GITHUB_APP_ID = "configure-in-cloudflare-dashboard"
+GITHUB_INSTALLATION_ID = "configure-in-cloudflare-dashboard"
+ALLOWED_GITHUB_USERS = "m0bua"
+PORTAL_ORIGIN = "https://m0bua.github.io"
+
+[[kv_namespaces]]
+binding = "BUILD_JOBS"
+id = "replace-with-production-kv-namespace-id"

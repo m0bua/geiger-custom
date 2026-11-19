@@ -127,6 +127,8 @@ jobs:
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      PORTAL_BUILD_API_URL: ${{ vars.PORTAL_BUILD_API_URL }}
     steps:
       - name: Check out release source
         uses: actions/checkout@v4
@@ -184,6 +186,8 @@ jobs:
     if: github.ref == 'refs/heads/dev'
     runs-on: windows-latest
     timeout-minutes: 35
+    env:
+      PORTAL_BUILD_API_URL: ${{ vars.PORTAL_BUILD_API_URL }}
     steps:
       - name: Check out dev
         uses: actions/checkout@v4

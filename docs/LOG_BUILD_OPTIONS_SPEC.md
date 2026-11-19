@@ -32,22 +32,32 @@ custom builds; do not embed a shared GitHub token in portal JavaScript. A
 Cloudflare Worker is the proposed API host. Cloudflare Pages Functions are an
 alternative only if portal hosting moves from GitHub Pages to Cloudflare Pages.
 
-The intended request flow is:
+Use two asynchronous API requests; the portal must not hold one HTTP request
+open for the duration of a firmware build:
 
-1. The portal submits a versioned JSON build profile to the API.
-2. The API authenticates the user, validates the profile against an allowlist,
-   applies rate limits, and dispatches a dedicated GitHub Actions workflow.
+1. `POST /api/builds` accepts a versioned JSON profile plus an idempotency key.
+   The API authenticates the user, validates the profile against an allowlist,
+   applies rate limits, dispatches a dedicated GitHub Actions workflow, stores
+   the requesting user and workflow run ID, then quickly returns a `buildId`
+   and status URL. Repeating the same request with the same idempotency key
+   must return the existing in-flight build instead of dispatching another.
+2. `GET /api/builds/{buildId}` returns the current state (`queued`,
+   `in_progress`, `success`, or `failure`) and, when complete, the exact Flash
+   usage, build summary, and download links for BIN/HEX and the profile/hash
+   manifest. Only the authenticated owner of that build may poll it. The portal
+   polls with a bounded interval/backoff and stops on a terminal state.
 3. The workflow checks out a fixed allowed branch/ref, builds the firmware,
    enforces the exact Flash limit, and uploads BIN, HEX, build summary, profile,
    and image hash as artifacts.
-4. The portal polls the build status and offers the artifacts after success.
 
 Use a GitHub App installation token held only by the API, with the minimum
 repository permissions needed to dispatch the workflow and read its run and
-artifacts. The API must never accept an arbitrary repository, branch, workflow,
-shell command, or build script from the browser. Restrict dispatch to the
-dedicated build workflow and a fixed trusted source branch. Authenticate users
-and limit build frequency so the API cannot be used as an open Actions runner.
+artifacts. Store build ownership and idempotency records in a server-side store
+with an expiry. The API must never accept an arbitrary repository, branch,
+workflow, shell command, or build script from the browser. Restrict dispatch to
+the dedicated build workflow and a fixed trusted source branch. Authenticate
+users and limit build frequency so the API cannot be used as an open Actions
+runner.
 Keep the default firmware embedded in the app as the immediate offline option;
 custom builds require network access and depend on the API and GitHub Actions.
 

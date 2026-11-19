@@ -1,0 +1,15 @@
+{
+  "format": "geiger-custom-firmware-profile",
+  "schemaVersion": 1,
+  "features": {
+    "alarms.dose": false,
+    "alarms.rate": false,
+    "device.debug": false,
+    "device.graphs": false,
+    "indication.flashlight": false,
+    "indication.modes": false,
+    "logs.enabled": false,
+    "settings.mutable": false,
+    "theme.editable": false
+  }
+}

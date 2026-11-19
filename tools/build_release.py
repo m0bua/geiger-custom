@@ -195,6 +195,9 @@ def main() -> int:
                         help="optional ARM GCC bin directory passed to build_firmware.py")
     parser.add_argument("--version",
                         help="version label embedded in About (release tag, e.g. YYYYMMDDhhmm)")
+    parser.add_argument("--portal-build-api-url",
+                        default=os.environ.get("PORTAL_BUILD_API_URL", ""),
+                        help="public HTTPS base URL for the custom firmware API")
     parser.add_argument("--require-minifier", action="store_true",
                         default=os.environ.get("CI", "").lower() == "true",
                         help="fail unless Terser is available (automatically required on CI)")
@@ -256,6 +259,16 @@ def main() -> int:
         ])
 
     document = (APP / "index.html").read_text(encoding="utf-8")
+    if args.portal_build_api_url:
+        if not args.portal_build_api_url.startswith("https://"):
+            raise ValueError("Portal build API URL must use HTTPS")
+        document, api_url_count = re.subn(
+            r'<meta name="portal-build-api" content="">',
+            lambda _: f'<meta name="portal-build-api" content="{html.escape(args.portal_build_api_url.rstrip("/"), quote=True)}">',
+            document, count=1,
+        )
+        if api_url_count != 1:
+            raise ValueError("Could not configure the portal build API URL")
     document, version_count = re.subn(
         r'(<strong id="app-version">).*?(</strong>)',
         lambda match: match.group(1) + html.escape(version) + match.group(2),
@@ -264,7 +277,8 @@ def main() -> int:
     if version_count != 1:
         raise ValueError("Could not set the app version in About")
     css = minify_css((APP / "style.css").read_text(encoding="utf-8"))
-    js = (APP / "app.js").read_text(encoding="utf-8")
+    js = ((APP / "app.js").read_text(encoding="utf-8") + "\n" +
+          (APP / "custom_build.js").read_text(encoding="utf-8"))
     compatible_hashes = "const COMPATIBLE_PROJECT_IMAGE_SHA256 = new Set(["
     if compatible_hashes not in js:
         raise ValueError("Could not find the firmware compatibility checksum list")
@@ -304,7 +318,11 @@ def main() -> int:
         r'<script\s+defer\s+src="app\.js[^"]*"\s*>\s*</script>',
         lambda _: f"<script>\n{app_script}\n</script>", document, count=1,
     )
-    if "src=\"app.js" in document or "href=\"style.css" in document:
+    document = re.sub(
+        r'<script\s+defer\s+src="custom_build\.js[^"]*"\s*>\s*</script>',
+        "", document, count=1,
+    )
+    if "src=\"app.js" in document or "src=\"custom_build.js" in document or "href=\"style.css" in document:
         raise ValueError("Could not inline the app's CSS and JavaScript")
     if "../docs/renders/" in document:
         raise ValueError("At least one manual image was not embedded")

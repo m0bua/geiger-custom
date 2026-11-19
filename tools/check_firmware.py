@@ -59,3 +59,4 @@ def check_firmware(elf_path, flash_size=FLASH_SIZE):
     if end > FLASH_BASE + flash_size:
         raise ValueError(f'Firmware exceeds Flash by {end - FLASH_BASE - flash_size} bytes')
     print(f'Verified startup/IRQ vectors; Flash image: {end - FLASH_BASE} / {flash_size} bytes')
+    return end - FLASH_BASE

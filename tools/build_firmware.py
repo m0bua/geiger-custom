@@ -5,12 +5,15 @@ Run: python tools/build_firmware.py [--test-support] [--toolchain BIN_DIR]
 """
 from pathlib import Path
 import argparse
+import hashlib
+import json
 import os
 import shutil
 import subprocess
 
 from firmware_build_config import RUNTIME_LINK_FLAGS, project_build_flags
 from check_firmware import check_firmware
+from firmware_profile import compiler_flags, load_profile, write_profile
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = Path.home() / '.platformio/packages'
@@ -42,8 +45,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--test-support', action='store_true')
     parser.add_argument('--toolchain', type=Path, default=TOOLCHAIN)
+    parser.add_argument('--profile-json', type=Path,
+                        help='compile an allowlisted feature profile for Quick Firmware')
     args = parser.parse_args()
-    out = ROOT / '.pio/scratch' / ('geiger2_test' if args.test_support else 'geiger2_manual')
+    if args.test_support and args.profile_json:
+        parser.error('--profile-json cannot be combined with --test-support')
+    profile = load_profile(args.profile_json) if args.profile_json else None
+    output_name = ('geiger2_test' if args.test_support else
+                   'geiger2_custom' if profile else 'geiger2_manual')
+    out = ROOT / '.pio/scratch' / output_name
     out.mkdir(parents=True, exist_ok=True)
     # A failed build must not leave an older image looking ready to flash.
     for suffix in ('.elf', '.bin', '.hex'):
@@ -53,6 +63,8 @@ def main():
     print(f'Toolchain: {toolchain}', flush=True)
     shared_flags = project_build_flags(ROOT)
     flags = [flag for flag in shared_flags if not flag.startswith('-Wl,')]
+    if profile:
+        flags += compiler_flags(profile)
     flags += [
              '-DF_CPU=16000000L', '-DPLATFORMIO=60200', '-DSTM32L051xx',
              '-I', str(ROOT / 'include'), '-I', str(ROOT)]
@@ -110,7 +122,7 @@ def main():
                     *objects, str(startup), '-L' + str(platform_ldscripts),
                     '-L' + str(out), '-Wl,--start-group', '-lc', '-lgcc', '-lm',
                     '-lstdc++', '-Wl,--end-group', '-o', str(elf)], check=True)
-    check_firmware(elf, test_flash_size if args.test_support else 65536)
+    flash_used = check_firmware(elf, test_flash_size if args.test_support else 65536)
     subprocess.run([executable(toolchain, 'arm-none-eabi-objcopy'), '-O', 'binary', str(elf), str(out / 'firmware.bin')], check=True)
     subprocess.run([executable(toolchain, 'arm-none-eabi-objcopy'), '-O', 'ihex', str(elf), str(out / 'firmware.hex')], check=True)
     subprocess.run([executable(toolchain, 'arm-none-eabi-size'), str(elf)], check=True)
@@ -119,6 +131,21 @@ def main():
     print(f'Flash image: {image_size} / {flash_limit} bytes; {flash_limit - image_size} bytes free')
     if args.test_support:
         print('Test-support image exceeds the physical 64-KiB Flash and must not be flashed.')
+    if profile:
+        write_profile(out / 'profile.json', profile)
+        summary = {
+            'format': 'geiger-custom-firmware-build',
+            'schemaVersion': 1,
+            'profile': profile,
+            'flashBytes': flash_used,
+            'flashCapacityBytes': 65536,
+            'flashFreeBytes': 65536 - flash_used,
+            'binBytes': image_size,
+            'sha256': hashlib.sha256((out / 'firmware.bin').read_bytes()).hexdigest(),
+        }
+        (out / 'build-summary.json').write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+        print(f"Build summary: {out / 'build-summary.json'}")
     print(out)
 
 

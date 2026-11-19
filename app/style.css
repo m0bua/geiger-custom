@@ -174,6 +174,17 @@ button { font: inherit; }
 .local-build-flash { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .quick-flash { width: 100%; max-width: none; margin-top: 10px; padding: 14px; border: 1px solid rgba(0,229,139,.25); border-radius: 9px; background: rgba(0,229,139,.045); }
 .quick-flash strong { color: var(--green); font-size: 13px; }
+.custom-firmware-builder { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.custom-firmware-builder > summary { color: var(--green); font-weight: 600; cursor: pointer; }
+.custom-firmware-builder > p, .custom-build-estimate { color: var(--muted); font-size: 12px; }
+.custom-build-auth, .custom-build-profile, .custom-build-features { margin-top: 12px; }
+.custom-build-auth { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.custom-build-auth code { color: var(--green); font-size: 18px; letter-spacing: .12em; }
+.custom-build-features { display: grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); gap: 8px 14px; }
+.custom-build-features label { display: flex; align-items: center; gap: 8px; color: #e6edf0; font-size: 12px; }
+.custom-build-profile > label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; }
+.custom-build-profile textarea { width: 100%; resize: vertical; color: #e6edf0; background: #121c21; border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: 11px/1.4 ui-monospace,monospace; }
+.custom-firmware-builder [hidden] { display: none !important; }
 .stock-firmware { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(74,92,101,.45); }
 .stock-firmware > summary { color: #aebbc0; cursor: pointer; font-size: 12px; }
 .stock-firmware > p { margin: 8px 0; color: #89999f; font-size: 11px; }
