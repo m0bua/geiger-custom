@@ -20,8 +20,43 @@ capacity of each enabled log to be configured for the target device. Log
 capacity is primarily a storage/history setting; it must not be presented as a
 reliable way to reduce firmware Flash usage.
 
-The first implementation targets the existing Quick Firmware / local build
-flow. A build must report exact Flash usage before the image can be flashed.
+The profile format and build script should first work in the existing local
+build flow. The portal API and GitHub Actions workflow then use the same
+validated profile and build script. A build must report exact Flash usage
+before the image can be flashed.
+
+## Portal build delivery architecture
+
+Keep the portal static on GitHub Pages and add a separate server-side API for
+custom builds; do not embed a shared GitHub token in portal JavaScript. A
+Cloudflare Worker is the proposed API host. Cloudflare Pages Functions are an
+alternative only if portal hosting moves from GitHub Pages to Cloudflare Pages.
+
+The intended request flow is:
+
+1. The portal submits a versioned JSON build profile to the API.
+2. The API authenticates the user, validates the profile against an allowlist,
+   applies rate limits, and dispatches a dedicated GitHub Actions workflow.
+3. The workflow checks out a fixed allowed branch/ref, builds the firmware,
+   enforces the exact Flash limit, and uploads BIN, HEX, build summary, profile,
+   and image hash as artifacts.
+4. The portal polls the build status and offers the artifacts after success.
+
+Use a GitHub App installation token held only by the API, with the minimum
+repository permissions needed to dispatch the workflow and read its run and
+artifacts. The API must never accept an arbitrary repository, branch, workflow,
+shell command, or build script from the browser. Restrict dispatch to the
+dedicated build workflow and a fixed trusted source branch. Authenticate users
+and limit build frequency so the API cannot be used as an open Actions runner.
+Keep the default firmware embedded in the app as the immediate offline option;
+custom builds require network access and depend on the API and GitHub Actions.
+
+GitHub Pages remains responsible only for static portal assets. If the API is
+unavailable, the default embedded firmware and manual firmware upload continue
+to work. Public repository artifacts may be downloadable without a GitHub
+token, but triggering a workflow requires write-level Actions authorization;
+the server-side GitHub App mediates that permission for authorized portal
+users.
 
 ## User-facing build options
 

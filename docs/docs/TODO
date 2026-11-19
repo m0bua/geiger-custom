@@ -2,3 +2,4 @@ FEAT: eco mode
 FEAT: pulse sound from radpro
 FEAT: hard settings option
 FEAT: min accuracy as in opt
+FEAT: portal custom firmware builds via API and GitHub Actions (spec: docs/LOG_BUILD_OPTIONS_SPEC.md)
