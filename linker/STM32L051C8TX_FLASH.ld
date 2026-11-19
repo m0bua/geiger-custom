@@ -21,8 +21,8 @@ SECTIONS
     . = ALIGN(4);
     _etext = .;
   } > FLASH
-  .ARM.extab : { *(.ARM.extab*) } > FLASH
-  .ARM.exidx : { *(.ARM.exidx*) } > FLASH
+  /* Bare-metal C firmware does not use exception stack unwinding. */
+  /DISCARD/ : { *(.ARM.extab*) *(.ARM.exidx*) }
   .preinit_array : { KEEP(*(.preinit_array*)) } > FLASH
   .init_array : { KEEP(*(.init_array*)) } > FLASH
   .fini_array : { KEEP(*(.fini_array*)) } > FLASH

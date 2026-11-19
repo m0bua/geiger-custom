@@ -1117,12 +1117,12 @@ const demoHiddenSettings = new Set([
   8, 10, 11, 13, 14, 15, 16, 17, 19, 20, 21, 24, 25, 26, 27,
 ]);
 Object.assign(demoSettings, {
-  0: 2, 5: 0, 6: 0, 7: 2, 9: 0, 10: 1, 11: 1, 12: 0, 22: 1,
+  0: 2, 5: 0, 6: 0, 7: 2, 9: 0, 10: 1, 11: 1, 12: 0, 22: 1, 31: 4,
   15: 0, 16: 4, 21: 3, 23: 1,
 });
 
 const remoteSettings = [
-  { id: 23, label: 'DOSE PERIOD', options: ['UPTIME', 'DAY', 'TOTAL'] },
+  { id: 23, label: 'DOSE PERIOD', options: ['UPTIME', 'DAY', 'TOTAL', 'HV'] },
   { id: 31, label: 'RATE ACCURACY', options: [
     '30% · 12 CNT', '25% · 16 CNT', '20% · 25 CNT',
     '15% · 45 CNT', '10% · 100 CNT', '5% · 400 CNT',
@@ -3752,25 +3752,28 @@ function settingsOptions(setting, currentSettings = deviceSettings) {
     const units = ['SV', 'CNT', 'R'].map((label, value) =>
       value === unit ? {label, value: `duplicate-unit-${value}`, disabled: true} :
         {label, value: mode++, disabled: false});
-    let time, uptime, day, total;
+    let time, uptime, day, total, hv;
     if (period === 0) {
       time = mode++;
       uptime = 'duplicate-period-0';
       day = mode++;
       total = mode++;
+      hv = mode++;
     } else {
       uptime = mode++;
       day = period === 1 ? 'duplicate-period-1' : mode++;
       total = period === 2 ? 'duplicate-period-2' : mode++;
+      hv = period === 3 ? 'duplicate-period-3' : mode++;
       time = mode++;
     }
     return [
       {label: 'OFF', value: 0, disabled: false}, ...units,
-      {label: 'CPM', value: 6, disabled: false},
+      {label: 'CPM', value: 7, disabled: false},
       {label: 'TIME', value: time, disabled: false},
       {label: 'UPTIME', value: uptime, disabled: period === 0},
       {label: 'DAY', value: day, disabled: period === 1},
       {label: 'TOTAL', value: total, disabled: period === 2},
+      {label: 'HV', value: hv, disabled: period === 3},
     ];
   }
   return setting.options;
@@ -4289,7 +4292,7 @@ function renderOfflinePreview() {
   elements.rateFootCount.hidden = false;
   elements.rateFoot.hidden = false;
   elements.hvStatus.hidden = true;
-  updateOverviewMetricDetails(0, 0, 0, 0, deviceSettings?.[10] ?? 1, 0);
+  updateOverviewMetricDetails(0, 0, 0, 0, 0, deviceSettings?.[10] ?? 1, 0);
   elements.loadMoreLogs.hidden = false;
   elements.loadMoreLogs.disabled = true;
   elements.doseLabel.textContent = 'DOSE TODAY';
@@ -4657,9 +4660,10 @@ function doseRowChoice(unit, period, mode) {
     if (value !== unit) choices.push({ kind: 'unit', value });
   });
   if (period === 0) {
-    choices.push({ kind: 'time' }, { kind: 'period', value: 1 }, { kind: 'period', value: 2 });
+    choices.push({ kind: 'time' }, { kind: 'period', value: 1 },
+      { kind: 'period', value: 2 }, { kind: 'period', value: 3 });
   } else {
-    [0, 1, 2].forEach((value) => {
+    [0, 1, 2, 3].forEach((value) => {
       if (value !== period) choices.push({ kind: 'period', value });
     });
     choices.push({ kind: 'time' });
@@ -4676,21 +4680,25 @@ function doseValueText(unit, pulses, dosePrefix) {
   return `${formatted.value} ${formatted.unit}`;
 }
 
-function doseRowText(unit, period, mode, cpm, uptime, uptimePulses, dayPulses, totalPulses, dosePrefix) {
+function doseRowText(unit, period, mode, cpm, uptime, uptimePulses, dayPulses,
+    totalPulses, hvPulses, hvSeconds, dosePrefix) {
   const choice = doseRowChoice(unit, period, mode);
   if (choice === 'OFF') return '';
-  if (choice.kind === 'time') return formatDoseUptime(uptime);
+  if (choice.kind === 'time') return formatDoseUptime(period === 3 ? hvSeconds : uptime);
   if (choice === 'CPM') return `${formatGroupedNumber(cpm)} CPM`;
   if (choice.kind === 'unit') {
-    const pulses = period === 0 ? uptimePulses : period === 1 ? dayPulses : totalPulses;
+    const pulses = period === 0 ? uptimePulses : period === 1 ? dayPulses :
+      period === 3 ? hvPulses : totalPulses;
     return doseValueText(choice.value, pulses, dosePrefix);
   }
-  const pulses = choice.value === 0 ? uptimePulses : choice.value === 1 ? dayPulses : totalPulses;
+  const pulses = choice.value === 0 ? uptimePulses : choice.value === 1 ? dayPulses :
+    choice.value === 3 ? hvPulses : totalPulses;
   return doseValueText(unit, pulses, dosePrefix);
 }
 
 function updateOverviewMetricDetails(cpm, uptimePulses,
-    dayPulses, totalPulses, ratePrefix, rateUsvh = cpm * 0.00666) {
+    dayPulses, totalPulses, hvPulses, ratePrefix,
+    rateUsvh = cpm * 0.00666) {
   const rateSv = formatRadiation(rateUsvh, ratePrefix, 'Sv', true);
   const rateR = formatRadiation(rateUsvh * 100, ratePrefix, 'R', true);
   document.querySelector('#overview-rate-cpm').textContent = formatGroupedNumber(Math.round(cpm));
@@ -4700,7 +4708,7 @@ function updateOverviewMetricDetails(cpm, uptimePulses,
   document.querySelector('#overview-rate-r-label').textContent = 'R/h';
   document.querySelector('#overview-rate-r').textContent = `${rateR.value} ${rateR.unit}`;
 
-  const periods = [uptimePulses, dayPulses, totalPulses];
+  const periods = [uptimePulses, dayPulses, totalPulses, hvPulses];
   const doseUnits = [
     {key: 'sv', symbol: 'Sv', factor: 1},
     {key: 'r', symbol: 'R', factor: 100},
@@ -4709,12 +4717,12 @@ function updateOverviewMetricDetails(cpm, uptimePulses,
     periods.forEach((pulses, periodIndex) => {
       const doseUsv = pulses * (400 / 3600) / 1000 * doseUnit.factor;
       const formatted = formatRadiation(doseUsv, 1, doseUnit.symbol, false, 6);
-      const period = ['uptime', 'day', 'total'][periodIndex];
+      const period = ['uptime', 'day', 'total', 'hv'][periodIndex];
       document.querySelector(`#overview-dose-${doseUnit.key}-${period}`).textContent = formatted.value;
     });
   }
   periods.forEach((pulses, periodIndex) => {
-    const period = ['uptime', 'day', 'total'][periodIndex];
+    const period = ['uptime', 'day', 'total', 'hv'][periodIndex];
     document.querySelector(`#overview-dose-cnt-${period}`).textContent = formatGroupedNumber(pulses);
   });
 }
@@ -4761,7 +4769,7 @@ function recordRateHistory(value, level, pulses, timestamp, now = performance.no
 }
 
 function handleStatus(payload) {
-  if (![25, 29, 31, 35, 47, 48, 49, 51].includes(payload.length) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
+  if (![25, 29, 31, 35, 47, 48, 49, 51, 55].includes(payload.length) || payload[0] !== 0) throw new ProtocolError('Device rejected GET_STATUS or returned an unknown format.');
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const uptimeSeconds = view.getUint32(1, true);
   const count = view.getUint32(5, true);
@@ -4780,6 +4788,10 @@ function handleStatus(payload) {
   const usbRaw = view.getUint16(21, true);
   const countTotal = payload.length >= 29 ? view.getUint32(25, true) : count;
   const lifetimePulses = payload.length >= 35 ? view.getUint32(31, true) : countTotal;
+  const rateSamplePulses = payload.length >= 51 ? view.getUint32(47, true) :
+    (payload.length >= 49 ? view.getUint16(47, true) :
+      (payload.length >= 48 ? payload[47] : countTotal));
+  const hvSessionSeconds = payload.length >= 55 ? view.getUint32(51, true) : 0;
   const screenSeconds = payload.length >= 47 ? view.getUint32(35, true) : null;
   const sleepSeconds = payload.length >= 47 ? view.getUint32(39, true) : null;
   const usbSeconds = payload.length >= 47 ? view.getUint32(43, true) : null;
@@ -4803,12 +4815,9 @@ function handleStatus(payload) {
       (dosePeriod === 0 ? countTotal : count);
   const uptimePulses = countTotal;
   const dayPulses = count;
-  const dosePulseCount = payload.length >= 35 ?
+  const dosePulseCount = dosePeriod === 3 ? rateSamplePulses : payload.length >= 35 ?
     (dosePeriod === 0 ? uptimePulses : dosePeriod === 1 ? dayPulses : lifetimePulses) :
     derivedDosePulses;
-  const rateSamplePulses = payload.length >= 51 ? view.getUint32(47, true) :
-    (payload.length >= 49 ? view.getUint16(47, true) :
-      (payload.length >= 48 ? payload[47] : countTotal));
   rateLevel = displayedCpm * 666 > 90000 ? 'red' :
     (displayedCpm * 666 >= 40000 ? 'yellow' : 'green');
   const levelClass = `level-${rateLevel}`;
@@ -4821,13 +4830,13 @@ function handleStatus(payload) {
   const rateUsvh = baseRateUsvh * (unit === 2 ? 100 : 1);
   const doseUsv = doseNsv / 1000 * (unit === 2 ? 100 : 1);
   updateOverviewMetricDetails(cpm, uptimePulses, dayPulses,
-    lifetimePulses, ratePrefix, baseRateUsvh);
+    lifetimePulses, rateSamplePulses, ratePrefix, baseRateUsvh);
   // When the user is looking at an interior slice of the history, keep that
   // slice fixed as new samples arrive. Only the Y scale may change. A view at
   // the live edge (scroll = 0) continues following "now"; the old edge is
   // clamped normally when the buffer advances.
   const rateChartIsHistorical = rateChartScrollSeconds > 0;
-  const dosePeriodLabels = ['DOSE UPTIME', 'DOSE TODAY', 'DOSE TOTAL'];
+  const dosePeriodLabels = ['DOSE UPTIME', 'DOSE TODAY', 'DOSE TOTAL', 'DOSE HV'];
   elements.doseLabel.textContent = dosePeriodLabels[dosePeriod] || 'DOSE TODAY';
 
   if (unit === 1) {
@@ -4865,7 +4874,8 @@ function handleStatus(payload) {
   elements.rateFootCount.hidden = false;
   elements.rateFoot.hidden = false;
   let doseRow = doseRowText(unit, dosePeriod, doseRowMode, cpm, uptimeSeconds,
-    uptimePulses, dayPulses, lifetimePulses, dosePrefix);
+    uptimePulses, dayPulses, lifetimePulses, rateSamplePulses,
+    hvSessionSeconds, dosePrefix);
   elements.doseFoot.textContent = doseRow;
   elements.doseFoot.hidden = doseRow.length === 0;
   elements.debugCount.textContent = formatGroupedNumber(countTotal);

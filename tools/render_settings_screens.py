@@ -89,7 +89,7 @@ def render(filename, title, description, lines, colors):
 
 render("1.2.1-settings-simple.svg", "Settings - LED selected",
        "The settings list shows DOSE PERIOD and RATE ACCURACY before LED, selected in the third row in the accent color with its current value ALWAYS, followed by CLICKS and the rate alarm settings.",
-       [settings_line("DOSE PERIOD", "DAY"), settings_line("RATE ACCURACY", "30%"),
+       [settings_line("DOSE PERIOD", "DAY"), settings_line("RATE ACCURACY", "10%"),
         settings_line("LED", "ALWAYS", True),
         settings_line("CLICKS", "OFF"), settings_line("RATE SCREEN", "OFF"),
         settings_line("RATE LIGHT", "OFF")],

@@ -384,7 +384,7 @@ static uint8_t lcd_settings_value_index[SETTING_COUNT] = {
     [SETTING_RATE_PREFIX] = 1u, [SETTING_DOSE_PREFIX] = 1u,
     [SETTING_LONG_PRESS] = 3u, [SETTING_RATE_ROW_2] = 0u,
     [SETTING_DOSE_ROW_2] = 1u, [SETTING_DOSE_PERIOD] = 1u,
-    [SETTING_RATE_CUSTOM] = 4u, [SETTING_RATE_ACCURACY] = 0u
+    [SETTING_RATE_CUSTOM] = 4u, [SETTING_RATE_ACCURACY] = 4u
 };
 static bool click_sound_active;
 static uint8_t click_sound_profile;
@@ -463,7 +463,7 @@ static uint16_t lcd_rate_sample_count;
 static bool lcd_rate_accuracy_pending = true;
 static uint32_t lcd_count_total;
 static uint32_t lcd_daily_pulse_count;
-static uint32_t lcd_dose_period_pulses[3];
+static uint32_t lcd_dose_period_pulses[4];
 static uint8_t lcd_settings_sequence;
 static uint32_t lcd_dose_value_thousandths;
 static uint32_t lcd_dose_fraction;
@@ -2229,7 +2229,7 @@ static const char *const timer_values[] = { "1", "5", "10", "30", "60", "90" };
 static const char *const zero_values[] = { "SHOW", "HIDE" };
 static const char *const unit_values[] = { "SV", "CNT", "R" };
 static const char *const prefix_values[] = { "m", "\xB5", "n", "AUTO", "CPM", "CPS" };
-static const char *const dose_period_values[] = { "UPTIME", "DAY", "TOTAL" };
+static const char *const dose_period_values[] = { "UPTIME", "DAY", "TOTAL", "HV" };
 static const char *const empty_values[] = { "" };
 static const char *const reset_values[] = {
     "SETTINGS", "LOGS", "OLD LOGS", "EEPROM", "SPI", "ALL"
@@ -2268,12 +2268,12 @@ static uint8_t lcd_dose_row_option(uint8_t option_index)
     if (selected_period == 0u) {
         if (option_index == 0u) return LCD_DOSE_ROW_TIME;
         --option_index;
-        for (uint8_t period = 1u; period < 3u; ++period) {
+        for (uint8_t period = 1u; period < 4u; ++period) {
             if (option_index == 0u) return (uint8_t)(LCD_DOSE_ROW_PERIOD_BASE + period);
             --option_index;
         }
     } else {
-        for (uint8_t period = 0u; period < 3u; ++period) {
+        for (uint8_t period = 0u; period < 4u; ++period) {
             if (period == selected_period) continue;
             if (option_index == 0u) return (uint8_t)(LCD_DOSE_ROW_PERIOD_BASE + period);
             --option_index;
@@ -2287,7 +2287,7 @@ static uint8_t lcd_dose_row_option(uint8_t option_index)
 
 static uint8_t lcd_dose_row_option_count(void)
 {
-    return 7u;
+    return 8u;
 }
 
 static const char *const *const lcd_settings_value_lists[] = {
@@ -2304,7 +2304,7 @@ static const uint8_t lcd_settings_value_list_map[(LCD_SETTINGS_COUNT + 1u) / 2u]
 
 static const uint8_t lcd_settings_value_counts[LCD_SETTINGS_COUNT] = {
     6u, 6u, 4u, 4u, 4u, 9u, 9u, 6u, 2u, 3u, 6u, 6u, 3u, 3u, 6u, 2u,
-    9u, 2u, 1u, 1u, 2u, 6u, 7u, 3u, 4u, 4u, 4u, 8u, 9u, 3u, 2u, 6u
+    9u, 2u, 1u, 1u, 2u, 6u, 8u, 4u, 4u, 4u, 4u, 8u, 9u, 3u, 2u, 6u
 };
 
 static __attribute__((noinline)) uint8_t lcd_settings_value_count(uint8_t item)
@@ -2379,7 +2379,7 @@ static const char *lcd_settings_value_text(uint8_t item)
         if (option == LCD_DOSE_ROW_TIME) return "TIME";
         if (option == LCD_DOSE_ROW_CPM) return "CPM";
         if (option < 3u) return unit_values[option];
-        if (option < 6u) return dose_period_values[option - LCD_DOSE_ROW_PERIOD_BASE];
+        if (option < 7u) return dose_period_values[option - LCD_DOSE_ROW_PERIOD_BASE];
         return "OFF";
     }
     return lcd_settings_value_list(item)[value_index];
@@ -4455,7 +4455,7 @@ static bool settings_legacy_record_read(uint8_t slot, uint8_t *record)
          record[2u + SETTING_DOSE_PREFIX] >= 2u)) return false;
     if (record[2u + SETTING_RATE_ROW_2] >=
             (record[2u + SETTING_UNIT] == 1u ? 5u : 4u) ||
-        record[2u + SETTING_DOSE_ROW_2] >= 7u || record[35] >
+        record[2u + SETTING_DOSE_ROW_2] >= 8u || record[35] >
             BOARD_LOG_MEMORY_SPI) return false;
     return true;
 }
@@ -4502,7 +4502,7 @@ static bool settings_record_read(uint8_t slot, uint8_t *record)
          record[2u + SETTING_DOSE_PREFIX] >= 2u)) return false;
     if (record[2u + SETTING_RATE_ROW_2] >=
             (record[2u + SETTING_UNIT] == 1u ? 5u : 4u) ||
-        record[2u + SETTING_DOSE_ROW_2] >= 7u ||
+        record[2u + SETTING_DOSE_ROW_2] >= 8u ||
         record[SETTINGS_EEPROM_SOURCE_OFFSET] > BOARD_LOG_MEMORY_SPI) {
         return false;
     }
@@ -5515,6 +5515,7 @@ void board_display_set_dose(uint32_t dose_thousandths,
                             uint32_t uptime_pulse_count,
                             uint32_t day_pulse_count,
                             uint32_t total_pulse_count,
+                            uint32_t hv_pulse_count,
                             uint32_t measurement_seconds)
 {
     static uint32_t previous_dose_thousandths = UINT32_MAX;
@@ -5522,17 +5523,18 @@ void board_display_set_dose(uint32_t dose_thousandths,
     static uint32_t previous_dose_pulse_count = UINT32_MAX;
     static uint32_t previous_measurement_seconds = UINT32_MAX;
     bool period_pulses_changed = false;
-    const uint32_t period_pulses[3] = {
-        uptime_pulse_count, day_pulse_count, total_pulse_count
+    const uint32_t period_pulses[4] = {
+        uptime_pulse_count, day_pulse_count, total_pulse_count,
+        hv_pulse_count
     };
-    for (uint8_t i = 0u; i < 3u; ++i) {
+    for (uint8_t i = 0u; i < 4u; ++i) {
         if (lcd_dose_period_pulses[i] != period_pulses[i]) {
             period_pulses_changed = true;
         }
         lcd_dose_period_pulses[i] = period_pulses[i];
     }
     const uint8_t selected_period =
-        lcd_settings_value_index[SETTING_DOSE_PERIOD] < 3u ?
+        lcd_settings_value_index[SETTING_DOSE_PERIOD] < 4u ?
             lcd_settings_value_index[SETTING_DOSE_PERIOD] : 0u;
     const uint32_t dose_pulse_count = period_pulses[selected_period];
     const bool dose_changed = dose_thousandths != previous_dose_thousandths ||
@@ -5699,6 +5701,10 @@ uint8_t board_display_rate_led_mask(void)
 
 void board_display_set_rate_led(void)
 {
+    if (lcd_rate_accuracy_pending) {
+        board_rgb_set(4u);
+        return;
+    }
     if (lcd_settings_value_index[SETTING_LED_COLOR] != 0u) {
         const uint16_t color = lcd_rate_color;
         board_rgb_set_color((uint8_t)((((color >> 11u) & 0x1Fu) * 255u) / 31u),

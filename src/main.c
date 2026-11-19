@@ -39,10 +39,12 @@ static bool total_pulse_save(uint32_t total, uint8_t *sequence)
 
 static uint32_t selected_dose_pulses(uint8_t period, uint32_t uptime_pulses,
                                      uint32_t day_pulses,
-                                     uint32_t total_pulses)
+                                     uint32_t total_pulses,
+                                     uint32_t hv_pulses)
 {
     if (period == 0u) return uptime_pulses;
     if (period == 2u) return total_pulses;
+    if (period == 3u) return hv_pulses;
     return day_pulses;
 }
 
@@ -83,6 +85,7 @@ int main(void)
     uint32_t hv_pulses_since_on = 0u;
     uint32_t session_pulses_total = 0u;
     uint32_t session_elapsed_seconds = 0u;
+    uint32_t hv_session_elapsed_seconds = 0u;
     uint32_t dose_thousandths = 0u;
     uint32_t dose_fraction = 0u;
     uint32_t dose_measurement_seconds = 0u;
@@ -163,7 +166,7 @@ int main(void)
                     calendar_seconds % 86400u : 0u;
                 dose_from_pulse_count(selected_dose_pulses(
                         board_display_dose_period(), 0u, today_pulse_count,
-                        total_pulse_count),
+                        total_pulse_count, hv_pulses_since_on),
                     &dose_thousandths, &dose_fraction);
             }
         }
@@ -173,11 +176,12 @@ int main(void)
     }
     total_pulse_saved = total_pulse_count;
     dose_from_pulse_count(selected_dose_pulses(board_display_dose_period(),
-            session_pulses_total, today_pulse_count, total_pulse_count),
+            session_pulses_total, today_pulse_count, total_pulse_count,
+            hv_pulses_since_on),
         &dose_thousandths, &dose_fraction);
     board_display_set_dose(dose_thousandths, dose_fraction,
                            session_pulses_total, today_pulse_count,
-                           total_pulse_count,
+                           total_pulse_count, hv_pulses_since_on,
                            dose_measurement_seconds);
     screen_alarm_active = board_display_screen_alarm_active();
     sound_alarm_active = board_display_sound_alarm_active();
@@ -220,6 +224,10 @@ int main(void)
                     log_writer_hv_disabled();
                 } else {
                     hv_pulses_since_on = 0u;
+                    hv_session_elapsed_seconds = 0u;
+                    if (board_display_dose_period() == 3u) {
+                        dose_measurement_seconds = 0u;
+                    }
                     if ((uint32_t)(now - hv_off_started_at) > 60000u) {
                         const uint32_t current_pulses = board_detector_count();
                         event_count = current_pulses;
@@ -579,17 +587,22 @@ int main(void)
                             dose_from_pulse_count(selected_dose_pulses(
                                     board_display_dose_period(),
                                     session_pulses_total, today_pulse_count,
-                                    total_pulse_count),
+                                    total_pulse_count,
+                                    hv_pulses_since_on),
                                 &dose_thousandths, &dose_fraction);
                             board_display_set_dose(dose_thousandths,
                                 dose_fraction, session_pulses_total,
                                 today_pulse_count, total_pulse_count,
+                                hv_pulses_since_on,
                                 dose_measurement_seconds);
                         }
                     }
                 }
                 if (hv_enabled && session_elapsed_seconds < UINT32_MAX) {
                     ++session_elapsed_seconds;
+                }
+                if (hv_enabled && hv_session_elapsed_seconds < UINT32_MAX) {
+                    ++hv_session_elapsed_seconds;
                 }
                 const uint32_t sampled_pulses =
                     detected_pulses - previous_minute_sample;
@@ -631,18 +644,22 @@ int main(void)
                         }
                     } else if (board_display_dose_period() == 0u) {
                         dose_measurement_seconds = board_uptime_seconds_get();
+                    } else if (board_display_dose_period() == 3u) {
+                        dose_measurement_seconds = hv_session_elapsed_seconds;
                     } else {
                         dose_measurement_seconds = session_elapsed_seconds;
                     }
                 }
                 dose_from_pulse_count(selected_dose_pulses(
                         board_display_dose_period(), session_pulses_total,
-                        today_pulse_count, total_pulse_count),
+                        today_pulse_count, total_pulse_count,
+                        hv_pulses_since_on),
                     &dose_thousandths, &dose_fraction);
                 board_display_set_dose(dose_thousandths, dose_fraction,
                                        session_pulses_total,
                                        today_pulse_count,
                                        total_pulse_count,
+                                       hv_pulses_since_on,
                                        dose_measurement_seconds);
                 const uint32_t measured_rate_thousandths = (uint32_t)(
                     ((uint64_t)latest_cpm * 666u + 50u) / 100u);
@@ -860,6 +877,7 @@ int main(void)
             status.sleep_seconds = debug_sleep_seconds;
             status.usb_seconds = debug_usb_seconds;
             status.rate_sample_pulses = hv_pulses_since_on;
+            status.hv_session_seconds = hv_session_elapsed_seconds;
             protocol_v1_set_status(&status);
         }
         /* Keep clocks and interrupt-driven pulse counting alive while the CPU

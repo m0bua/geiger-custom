@@ -25,6 +25,7 @@ typedef struct {
     uint32_t sleep_seconds;
     uint32_t usb_seconds;
     uint32_t rate_sample_pulses;
+    uint32_t hv_session_seconds;
 } protocol_v1_status_t;
 
 enum {

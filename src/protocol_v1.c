@@ -215,7 +215,8 @@ static void handle_frame(uint8_t *frame, uint8_t length)
             }
         }
         write_u32(&response[47], current_status.rate_sample_pulses);
-        response_length = 51u;
+        write_u32(&response[51], current_status.hv_session_seconds);
+        response_length = 55u;
     } else if (opcode == PROTOCOL_V1_OP_GET_SETTINGS &&
                (payload_length == 0u ||
                 (payload_length == 1u && frame[8] == 1u))) {

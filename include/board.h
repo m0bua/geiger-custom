@@ -109,6 +109,7 @@ void board_display_set_dose(uint32_t dose_thousandths,
                             uint32_t uptime_pulse_count,
                             uint32_t day_pulse_count,
                             uint32_t total_pulse_count,
+                            uint32_t hv_pulse_count,
                             uint32_t measurement_seconds);
 void board_display_set_dose_cpm(uint32_t cpm);
 uint8_t board_display_dose_period(void);
