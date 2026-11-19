@@ -4910,7 +4910,7 @@ function handleStatus(payload) {
     elements.rateDose.classList.add('level-blue');
   }
   const rateUncertainty = sampleCount === 0 ? 'INF' :
-    `${Math.max(5, Math.round(100 / Math.sqrt(sampleCount)))}%`;
+    `${Math.max(accuracy, Math.round(100 / Math.sqrt(sampleCount)))}%`;
   elements.hvStatus.hidden = hvEnabled;
   elements.rateFootMain.textContent = rateRow;
   elements.rateFootCount.innerHTML = `${formatGroupedNumber(sampleCount)} CNT · <span class="rate-accuracy-${rateAccuracyPending ? 'blue' : 'gray'}">±${rateUncertainty}</span>`;

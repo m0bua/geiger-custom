@@ -3900,8 +3900,13 @@ settings_line_draw:
                 } else if (show_rate_precision) {
                     char precision[5] = { 'I', 'N', 'F', ' ', ' ' };
                     uint8_t uncertainty = 100u;
+                    uint8_t accuracy_setting =
+                        lcd_settings_value_index[SETTING_RATE_ACCURACY];
+                    if (accuracy_setting > 5u) accuracy_setting = 0u;
+                    const uint8_t minimum_uncertainty =
+                        (uint8_t)(30u - accuracy_setting * 5u);
                     if (lcd_rate_sample_count != 0u) {
-                        while (uncertainty > 5u) {
+                        while (uncertainty > minimum_uncertainty) {
                             const uint32_t midpoint = 2u * uncertainty - 1u;
                             if ((uint32_t)lcd_rate_sample_count * midpoint *
                                     midpoint <= 40000u) break;
