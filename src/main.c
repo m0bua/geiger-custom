@@ -5,6 +5,7 @@
 #include "protocol_v1.h"
 #include "rate_display.h"
 #include "second_log.h"
+#include "firmware_features.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -147,7 +148,9 @@ int main(void)
     board_lcd_backlight_set_brightness(10u);
     board_lcd_backlight_set(false);
     board_display_init();
+#if FW_FEATURE_LOGS
     (void)log_writer_init();
+#endif
     second_log_init();
     daily_dose_init(UINT16_MAX, 0u);
     (void)total_pulse_load(&total_pulse_count, &total_pulse_sequence);
@@ -190,7 +193,9 @@ int main(void)
     board_display_apply_hv_setting();
     hv_enabled = board_hv_is_enabled();
     hv_off_started_at = board_millis;
+#if FW_FEATURE_LOGS
     if (!hv_enabled) log_writer_hv_disabled();
+#endif
     /* Ignore startup transients accumulated while RTC/display were coming up. */
     event_count = board_detector_count();
     previous_minute_sample = event_count;
@@ -221,7 +226,9 @@ int main(void)
                 hv_enabled = new_hv_enabled;
                 if (!hv_enabled) {
                     hv_off_started_at = now;
+#if FW_FEATURE_LOGS
                     log_writer_hv_disabled();
+#endif
                 } else {
                     hv_pulses_since_on = 0u;
                     hv_session_elapsed_seconds = 0u;
@@ -633,9 +640,15 @@ int main(void)
                     daily_dose_count() : session_pulses_total;
                 /* Count every detector pulse in live and persistent dose/logs. */
                 if (hv_enabled) {
+#if FW_FEATURE_LOGS
                     log_writer_second(dose_pulses, latest_display_cpm,
                         log_uptime_seconds,
                         log_calendar_seconds, log_calendar_valid);
+#else
+                    (void)log_uptime_seconds;
+                    (void)log_calendar_seconds;
+                    (void)log_calendar_valid;
+#endif
                 }
                 if (hv_enabled) {
                     if (board_display_dose_period() == 1u) {

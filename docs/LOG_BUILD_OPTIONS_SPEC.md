@@ -1,5 +1,17 @@
 # Log options in Quick Firmware — technical specification
 
+## Initial build-profile prototype
+
+The `geiger2_minimal` PlatformIO environment is an initial proof of concept,
+not the configurable Quick Firmware builder. It currently fixes settings to
+firmware defaults and compiles out logs, on-device graphs, on-device Debug,
+flashlight, indication-mode switching, rate and dose alarm classes, and
+device-theme editing. The companion app uses protocol capability bits to hide
+unavailable controls and log views while keeping app-side Debug and overview
+graphs available. The standard `geiger2` environment keeps the full feature
+set. Measured sizes are recorded with each build result; this profile is
+intended for device boot testing before extending the builder.
+
 ## Goal
 
 Allow a firmware build profile to omit selected log types so the linker can

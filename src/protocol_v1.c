@@ -5,6 +5,7 @@
 #include "log_writer.h"
 #include "spi_nor.h"
 #include "spi_log.h"
+#include "firmware_features.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -190,10 +191,40 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         write_u16(&response[1], 1u);
         response[3] = PROTOCOL_V1_VERSION;
         write_u16(&response[4], PROTOCOL_V1_MAX_PAYLOAD);
-        write_u32(&response[6], (1u << 0u) | (1u << 1u) |
-            (1u << 2u) | (1u << 3u) | (1u << 4u) | (1u << 5u) |
-            (1u << 6u) | (1u << 7u) | (1u << 8u) | (1u << 9u) |
-            (1u << 10u) | (1u << 11u));
+        uint32_t capabilities = PROTOCOL_V1_CAP_STATUS |
+            PROTOCOL_V1_CAP_GET_SETTINGS | PROTOCOL_V1_CAP_SET_RTC |
+            PROTOCOL_V1_CAP_DEVICE_ACTION | PROTOCOL_V1_CAP_PRECISE_RTC |
+            PROTOCOL_V1_CAP_RATE_CPM_TENTHS;
+#if FW_FEATURE_MUTABLE_SETTINGS
+        capabilities |= PROTOCOL_V1_CAP_SET_SETTING;
+#endif
+#if FW_FEATURE_LOGS
+        capabilities |= PROTOCOL_V1_CAP_LOG_INFO |
+            PROTOCOL_V1_CAP_LOG_PAGE | PROTOCOL_V1_CAP_SPI_DUMP |
+            PROTOCOL_V1_CAP_SPI_WRITE;
+#endif
+#if FW_FEATURE_DEVICE_GRAPHS
+        capabilities |= PROTOCOL_V1_CAP_DEVICE_GRAPHS;
+#endif
+#if FW_FEATURE_DEVICE_DEBUG
+        capabilities |= PROTOCOL_V1_CAP_DEVICE_DEBUG;
+#endif
+#if FW_FEATURE_FLASHLIGHT
+        capabilities |= PROTOCOL_V1_CAP_FLASHLIGHT;
+#endif
+#if FW_FEATURE_INDICATION_MODES
+        capabilities |= PROTOCOL_V1_CAP_INDICATION_MODES;
+#endif
+#if FW_FEATURE_RATE_ALARMS
+        capabilities |= PROTOCOL_V1_CAP_RATE_ALARMS;
+#endif
+#if FW_FEATURE_DOSE_ALARMS
+        capabilities |= PROTOCOL_V1_CAP_DOSE_ALARMS;
+#endif
+#if FW_FEATURE_THEME_CONFIG
+        capabilities |= PROTOCOL_V1_CAP_THEME_CONFIG;
+#endif
+        write_u32(&response[6], capabilities);
         response_length = 10u;
     } else if (opcode == PROTOCOL_V1_OP_GET_STATUS && payload_length == 0u) {
         /* status, uptime, today's CNT, CPM x10, dose in nSv, ADC raw, flags */
@@ -236,11 +267,14 @@ static void handle_frame(uint8_t *frame, uint8_t length)
                 response_length += 4u;
             }
         }
+#if FW_FEATURE_MUTABLE_SETTINGS
     } else if (opcode == PROTOCOL_V1_OP_SET_SETTING &&
                payload_length == 2u) {
         if (!board_display_setting_remote_write(frame[8], frame[9])) {
             response[0] = PROTOCOL_STATUS_INVALID_VALUE;
         }
+#endif
+#if FW_FEATURE_THEME_CONFIG
     } else if (opcode == PROTOCOL_V1_OP_GET_THEME && payload_length == 0u) {
         const uint8_t count = board_display_theme_color_count();
         uint16_t colors[7];
@@ -265,6 +299,7 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         if (!board_display_theme_write(colors, 7u, frame[22])) {
             response[0] = PROTOCOL_STATUS_INVALID_VALUE;
         }
+#endif
     } else if (opcode == PROTOCOL_V1_OP_SET_RTC) {
         if (payload_length == 6u) {
         uint32_t actual_seconds;
@@ -287,6 +322,7 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         deferred_action = board_display_remote_action_valid(
             deferred_action_id, deferred_action_value);
         if (!deferred_action) response[0] = PROTOCOL_STATUS_INVALID_VALUE;
+#if FW_FEATURE_LOGS
     } else if (opcode == PROTOCOL_V1_OP_GET_LOG_INFO &&
                payload_length == 0u) {
         const bool spi_was_ready = spi_nor_is_ready();
@@ -398,6 +434,7 @@ static void handle_frame(uint8_t *frame, uint8_t length)
             response[5] = requested;
             response_length = (uint16_t)(6u + requested);
         }
+#endif
     } else {
         response[0] = PROTOCOL_STATUS_UNKNOWN_OPCODE;
     }

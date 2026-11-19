@@ -13,6 +13,7 @@
 #include "spi_log.h"
 #include "spi_nor.h"
 #include "lcd_theme.h"
+#include "firmware_features.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -41,8 +42,14 @@ static bool adc_calibrated;
 static volatile bool power_off_wakeup;
 static volatile uint8_t button_wakeup_pending_mask;
 /* Runtime-only indication mode: INVISIBLE, NORMAL, SEARCH. */
+#if FW_FEATURE_INDICATION_MODES
 static uint8_t lcd_indication_mode = 1u;
+#else
+static const uint8_t lcd_indication_mode = 1u;
+#endif
+#if FW_FEATURE_INDICATION_MODES
 static uint32_t lcd_search_mode_started;
+#endif
 
 #define DETECTOR_GPIO_BASE GPIOB_BASE
 #define DETECTOR_PIN       BOARD_DETECTOR_PIN
@@ -159,7 +166,7 @@ static uint32_t lcd_search_mode_started;
 #define LCD_PANEL_Y_OFFSET 24u
 #define LCD_Y_OFFSET 28u
 #define LCD_SMALL_TEXT_GAP 1u
-#define LCD_EXTRA_SCREEN_COUNT 2u
+#define LCD_EXTRA_SCREEN_COUNT (FW_FEATURE_DEVICE_DEBUG ? 2u : 1u)
 #define LCD_GRAPH_PAGE 5u
 #define LCD_DEBUG_SUBPAGE_COUNT 3u
 #define LCD_GRAPH_BAR_GAP 1u
@@ -290,7 +297,9 @@ static uint32_t lcd_backlight_ramp_last_ms;
 static uint8_t lcd_screen_page;
 static uint8_t lcd_main_return_page;
 static uint8_t lcd_last_extra_page = 3u;
+#if FW_FEATURE_DEVICE_DEBUG
 static uint8_t lcd_debug_subpage;
+#endif
 static uint32_t lcd_debug_sleep_seconds;
 static uint8_t lcd_graph_range_index = 3u;
 static uint8_t lcd_graph_log_type;
@@ -384,6 +393,7 @@ static uint8_t lcd_settings_value_index[SETTING_COUNT] = {
     [SETTING_RATE_PREFIX] = 1u, [SETTING_DOSE_PREFIX] = 1u,
     [SETTING_LONG_PRESS] = 3u, [SETTING_RATE_ROW_2] = 0u,
     [SETTING_DOSE_ROW_2] = 1u, [SETTING_DOSE_PERIOD] = 1u,
+    [SETTING_USE_SPI] = BOARD_LOG_MEMORY_OFF,
     [SETTING_RATE_CUSTOM] = 4u, [SETTING_RATE_ACCURACY] = 4u
 };
 static bool click_sound_active;
@@ -446,10 +456,12 @@ static void board_rgb_apply(void)
         RCC_APB2ENR &= ~(1u << 5u);
     }
 }
+#if FW_FEATURE_FLASHLIGHT
 static bool flashlight_enabled;
 static bool flashlight_manual_enabled;
 static bool flashlight_alarm_override;
 static bool flashlight_alarm_output;
+#endif
 static volatile bool lcd_screen_wake_requested;
 static bool lcd_screen_always_on;
 static uint32_t lcd_screen_control_last_contact_ms;
@@ -1950,19 +1962,24 @@ static void lcd_top_row_draw_uptime(void)
 
 static void lcd_top_row_draw_mode_letter(void)
 {
+#if FW_FEATURE_INDICATION_MODES
     if (lcd_indication_mode == 0u) {
         lcd_top_row_draw_glyph('I', 48u, LCD_WIDTH, LCD_TEXT_RED);
     } else if (lcd_indication_mode == 2u) {
         lcd_top_row_draw_glyph('S', 48u, LCD_WIDTH, LCD_TEXT_GREEN);
     }
+#endif
 }
 
 static void lcd_top_row_draw_flashlight_letter(void)
 {
+#if FW_FEATURE_FLASHLIGHT
     if (!flashlight_manual_enabled) return;
     lcd_top_row_draw_glyph('L', 56u, LCD_WIDTH, LCD_TEXT_YELLOW);
+#endif
 }
 
+#if FW_FEATURE_DEVICE_DEBUG
 static uint8_t lcd_debug_u32_digits(char *text, uint32_t value)
 {
     char reversed[10];
@@ -2157,6 +2174,7 @@ static uint8_t lcd_info_make_line(uint8_t row, char *line)
     lcd_debug_put_right(line, 20u, value, value_length);
     return 20u;
 }
+#endif
 
 #define LCD_SETTINGS_COUNT SETTING_COUNT
 #define LCD_SETTINGS_MENU_COUNT SETTING_COUNT
@@ -2924,7 +2942,7 @@ static void lcd_graph_build_series(uint8_t tier, uint8_t requested)
     }
 }
 
-static void lcd_graph_select_period(bool forward)
+static void __attribute__((unused)) lcd_graph_select_period(bool forward)
 {
     lcd_graph_log_type = (uint8_t)((lcd_graph_log_type + (forward ? 1u : 4u)) % 5u);
     lcd_graph_selected = 0u;
@@ -3000,7 +3018,7 @@ static bool lcd_graph_load_log_window(uint8_t start)
     return lcd_graph_log_window_valid;
 }
 
-static bool lcd_graph_move_bar(bool older)
+static bool __attribute__((unused)) lcd_graph_move_bar(bool older)
 {
     if (!lcd_graph_log_summary_valid || lcd_graph_log_available == 0u)
         return false;
@@ -3103,7 +3121,7 @@ static void lcd_graph_reset_log_window(void)
     lcd_graph_selected_point_valid = false;
 }
 
-static __attribute__((noinline)) bool lcd_graph_update_log_summary(void)
+static __attribute__((noinline, unused)) bool lcd_graph_update_log_summary(void)
 {
     if (lcd_graph_log_summary_valid) return true;
     const uint8_t type = (uint8_t)(lcd_graph_log_type - 1u);
@@ -3485,7 +3503,7 @@ done:
     return false;
 }
 
-static bool lcd_graph_prepare_glyph(void)
+static bool __attribute__((unused)) lcd_graph_prepare_glyph(void)
 {
     if (lcd_graph_partial_kind != 0u) return lcd_graph_prepare_partial_glyph();
     const uint8_t step = lcd_text_glyph_index;
@@ -3555,9 +3573,11 @@ static __attribute__((noinline)) void lcd_render_small_line(
 static __attribute__((noinline)) bool lcd_text_prepare_glyph(void)
 {
     lcd_text_palette_count = 0u;
+#if FW_FEATURE_DEVICE_GRAPHS
     if (lcd_screen_page == LCD_GRAPH_PAGE) {
         return lcd_graph_prepare_glyph();
     }
+#endif
 
     if (lcd_screen_page >= 2u) {
         if (lcd_screen_page == 2u) {
@@ -3628,6 +3648,7 @@ settings_line_draw:
             lcd_submit_text_window(x_window, y_window);
             return true;
         }
+#if FW_FEATURE_DEVICE_DEBUG
         if (lcd_screen_page == 3u) {
             char text[24];
             const bool clock_page = lcd_debug_subpage == 0u;
@@ -3704,6 +3725,7 @@ settings_line_draw:
             lcd_submit_text_window(x_window, y_window);
             return true;
         }
+#endif
         lcd_text_active = false;
         return false;
     }
@@ -3981,6 +4003,7 @@ settings_line_draw:
 
 static void lcd_indication_mode_next(void)
 {
+#if FW_FEATURE_INDICATION_MODES
     if (lcd_indication_mode == 2u &&
         (uint32_t)(board_millis - lcd_search_mode_started) >= 10000u) {
         lcd_indication_mode = 1u;
@@ -3989,10 +4012,12 @@ static void lcd_indication_mode_next(void)
         if (lcd_indication_mode == 2u) lcd_search_mode_started = board_millis;
     }
     board_rgb_apply();
+#endif
 }
 
 void board_display_left_short(void)
 {
+#if FW_FEATURE_DEVICE_GRAPHS
     if (lcd_screen_page == LCD_GRAPH_PAGE) {
         if (lcd_graph_input_locked) {
             lcd_graph_pending_action = LCD_GRAPH_PENDING_LEFT;
@@ -4005,11 +4030,16 @@ void board_display_left_short(void)
         lcd_graph_select_period(false);
         return;
     }
+#endif
     if (lcd_screen_page >= 2u) {
         board_display_extra_step(false);
         return;
     }
+#if FW_FEATURE_INDICATION_MODES
     lcd_indication_mode_next();
+#else
+    lcd_indication_mode_next();
+#endif
     if (lcd_screen_page == 1u) lcd_dose_row_hidden = false;
     lcd_text_active = false;
     lcd_text_row_commands_queued = false;
@@ -4019,6 +4049,7 @@ void board_display_left_short(void)
 
 void board_display_right_short(void)
 {
+#if FW_FEATURE_DEVICE_GRAPHS
     if (lcd_screen_page == LCD_GRAPH_PAGE) {
         if (lcd_graph_input_locked) {
             lcd_graph_pending_action = LCD_GRAPH_PENDING_RIGHT;
@@ -4031,6 +4062,7 @@ void board_display_right_short(void)
         lcd_graph_select_period(true);
         return;
     }
+#endif
     if (lcd_screen_page >= 2u) {
         board_display_extra_step(true);
         return;
@@ -4051,17 +4083,29 @@ void board_display_right_short(void)
 
 bool board_display_search_mode(void)
 {
+#if FW_FEATURE_INDICATION_MODES
     return lcd_indication_mode == 2u;
+#else
+    return false;
+#endif
 }
 
 uint8_t board_display_indication_mode(void)
 {
+#if FW_FEATURE_INDICATION_MODES
     return lcd_indication_mode;
+#else
+    return 1u;
+#endif
 }
 
 bool board_display_invisible_mode(void)
 {
+#if FW_FEATURE_INDICATION_MODES
     return lcd_indication_mode == 0u && lcd_screen_page < 2u;
+#else
+    return false;
+#endif
 }
 
 bool board_display_use_spi(void)
@@ -4071,12 +4115,20 @@ bool board_display_use_spi(void)
 
 uint8_t board_display_log_memory(void)
 {
+#if FW_FEATURE_LOGS
     return settings_log_memory;
+#else
+    return BOARD_LOG_MEMORY_OFF;
+#endif
 }
 
 uint8_t board_display_log_source(void)
 {
+#if FW_FEATURE_LOGS
     return settings_log_source;
+#else
+    return BOARD_LOG_MEMORY_OFF;
+#endif
 }
 
 uint8_t board_display_dose_period(void)
@@ -4105,6 +4157,7 @@ bool board_display_usb_connected(void)
 
 bool board_display_rate_long_press(void)
 {
+#if FW_FEATURE_FLASHLIGHT
     if (lcd_screen_page > 1u || lcd_settings_list_active) return false;
 
     flashlight_manual_enabled = !flashlight_manual_enabled;
@@ -4116,10 +4169,14 @@ bool board_display_rate_long_press(void)
     lcd_text_row_commands_queued = false;
     lcd_cpm_redraw_pending = true;
     return true;
+#else
+    return false;
+#endif
 }
 
 bool board_display_graph_enter(void)
 {
+#if FW_FEATURE_DEVICE_GRAPHS
     if (lcd_screen_page != 1u || lcd_settings_list_active) return false;
     lcd_main_return_page = 1u;
     lcd_screen_page = LCD_GRAPH_PAGE;
@@ -4143,10 +4200,14 @@ bool board_display_graph_enter(void)
     lcd_background_pending = false;
     lcd_cpm_redraw_pending = true;
     return true;
+#else
+    return false;
+#endif
 }
 
 bool board_display_graph_long_press(void)
 {
+#if FW_FEATURE_DEVICE_GRAPHS
     if (lcd_screen_page != LCD_GRAPH_PAGE) return false;
     if (lcd_graph_input_locked) { lcd_graph_pending_action = LCD_GRAPH_PENDING_TOGGLE; return true; }
     if (lcd_graph_log_type) {
@@ -4190,10 +4251,14 @@ bool board_display_graph_long_press(void)
         lcd_text_row_commands_queued = false;
     }
     return true;
+#else
+    return false;
+#endif
 }
 
 bool board_display_graph_back(void)
 {
+#if FW_FEATURE_DEVICE_GRAPHS
     if (lcd_screen_page != LCD_GRAPH_PAGE || !lcd_graph_cursor_mode) return false;
     lcd_graph_previous_selected = lcd_graph_selected;
     lcd_graph_cursor_mode = false;
@@ -4202,10 +4267,14 @@ bool board_display_graph_back(void)
     lcd_graph_partial_kind = 0u;
     lcd_graph_partial_pending = true;
     return true;
+#else
+    return false;
+#endif
 }
 
 void board_flashlight_alarm_set(bool active, bool on)
 {
+#if FW_FEATURE_FLASHLIGHT
     const bool desired = active ? on : flashlight_manual_enabled;
 
     flashlight_alarm_override = active;
@@ -4219,9 +4288,15 @@ void board_flashlight_alarm_set(bool active, bool on)
         lcd_text_row_commands_queued = false;
         lcd_cpm_redraw_pending = true;
     }
+#else
+    (void)active;
+    (void)on;
+#endif
 }
 
+#if FW_FEATURE_DEVICE_DEBUG
 static void lcd_debug_probe_spi(void);
+#endif
 
 void board_display_extra_enter(void)
 {
@@ -4230,7 +4305,9 @@ void board_display_extra_enter(void)
     }
     lcd_main_return_page = lcd_screen_page;
     lcd_screen_page = lcd_last_extra_page;
+#if FW_FEATURE_DEVICE_DEBUG
     if (lcd_screen_page == 3u) lcd_debug_probe_spi();
+#endif
     lcd_settings_list_active = false;
     lcd_settings_editing = false;
     lcd_text_active = false;
@@ -4246,7 +4323,11 @@ bool board_display_extra_active(void)
 
 bool board_display_graph_active(void)
 {
+#if FW_FEATURE_DEVICE_GRAPHS
     return lcd_screen_page == LCD_GRAPH_PAGE;
+#else
+    return false;
+#endif
 }
 
 void board_display_extra_step(bool forward)
@@ -4263,7 +4344,9 @@ void board_display_extra_step(bool forward)
              LCD_EXTRA_SCREEN_COUNT));
     }
     lcd_last_extra_page = lcd_screen_page;
+#if FW_FEATURE_DEVICE_DEBUG
     if (lcd_screen_page == 3u) lcd_debug_probe_spi();
+#endif
     lcd_settings_list_active = false;
     lcd_settings_editing = false;
     lcd_text_active = false;
@@ -4322,6 +4405,7 @@ void board_display_force_home(void)
 
 static void board_display_settings_redraw(void);
 
+#if FW_FEATURE_DEVICE_DEBUG
 static void lcd_debug_probe_spi(void)
 {
     if (spi_nor_is_ready() || spi_nor_size_bytes() != 0u) return;
@@ -4330,6 +4414,7 @@ static void lcd_debug_probe_spi(void)
         spi_nor_deinit();
     }
 }
+#endif
 
 #define SETTINGS_EEPROM_BASE 160u
 #define SETTINGS_EEPROM_SLOT_SIZE (8u + SETTING_COUNT)
@@ -4403,7 +4488,7 @@ static bool board_eeprom_clear_all(void)
 
 static uint32_t settings_visibility_default_mask(void)
 {
-    return (1UL << SETTING_RATE_CUSTOM) |
+    uint32_t mask = (1UL << SETTING_RATE_CUSTOM) |
         (1UL << SETTING_DOSE_CUSTOM) |
         (1UL << SETTING_LONG_PRESS) |
         (1UL << SETTING_HV) |
@@ -4418,6 +4503,23 @@ static uint32_t settings_visibility_default_mask(void)
         (1UL << SETTING_DOSE_PREFIX) |
         (1UL << SETTING_RESET) |
         (1UL << SETTING_REBOOT);
+#if !FW_FEATURE_LOGS
+    mask |= (1UL << SETTING_USE_SPI);
+#endif
+#if !FW_FEATURE_RATE_ALARMS
+    mask |= (1UL << SETTING_RATE_SCREEN) |
+        (1UL << SETTING_RATE_LIGHT) | (1UL << SETTING_RATE_SOUND) |
+        (1UL << SETTING_RATE_CUSTOM);
+#endif
+#if !FW_FEATURE_DOSE_ALARMS
+    mask |= (1UL << SETTING_DOSE_SCREEN) |
+        (1UL << SETTING_DOSE_LIGHT) | (1UL << SETTING_DOSE_SOUND) |
+        (1UL << SETTING_DOSE_CUSTOM) | (1UL << SETTING_ALARM_STOP);
+#endif
+#if !FW_FEATURE_THEME_CONFIG
+    mask |= (1UL << SETTING_LED_COLOR);
+#endif
+    return mask;
 }
 
 static uint8_t settings_record_crc(const uint8_t *record)
@@ -4543,7 +4645,7 @@ static bool settings_eeprom_save(void)
     return true;
 }
 
-static void settings_eeprom_load(void)
+static void __attribute__((unused)) settings_eeprom_load(void)
 {
     uint8_t record0[SETTINGS_EEPROM_SLOT_SIZE];
     uint8_t record1[SETTINGS_EEPROM_SLOT_SIZE];
@@ -4663,7 +4765,7 @@ static bool settings_theme_record_read(uint8_t slot, uint8_t *record)
         record[SETTINGS_THEME_CRC_OFFSET] == settings_theme_crc(record);
 }
 
-static bool settings_theme_save(void)
+static bool __attribute__((unused)) settings_theme_save(void)
 {
     uint8_t record0[SETTINGS_THEME_SLOT_SIZE];
     uint8_t record1[SETTINGS_THEME_SLOT_SIZE];
@@ -4694,7 +4796,7 @@ static bool settings_theme_save(void)
     return true;
 }
 
-static void settings_theme_load(void)
+static void __attribute__((unused)) settings_theme_load(void)
 {
     uint8_t record0[SETTINGS_THEME_SLOT_SIZE];
     uint8_t record1[SETTINGS_THEME_SLOT_SIZE];
@@ -4725,7 +4827,7 @@ static bool settings_theme_dim_read(uint8_t slot, uint8_t *sequence,
         record[3] == (uint8_t)(0x71u ^ *sequence ^ *percent);
 }
 
-static bool settings_theme_dim_save(void)
+static bool __attribute__((unused)) settings_theme_dim_save(void)
 {
     uint8_t sequence0, percent0, sequence1, percent1;
     const bool valid0 = settings_theme_dim_read(0u, &sequence0, &percent0);
@@ -4749,7 +4851,7 @@ static bool settings_theme_dim_save(void)
     return true;
 }
 
-static void settings_theme_dim_load(void)
+static void __attribute__((unused)) settings_theme_dim_load(void)
 {
     uint8_t sequence0, percent0, sequence1, percent1;
     const bool valid0 = settings_theme_dim_read(0u, &sequence0, &percent0);
@@ -4770,7 +4872,7 @@ bool board_display_settings_list_active(void)
     return lcd_screen_page == 2u && lcd_settings_list_active;
 }
 
-static void lcd_settings_apply_current(void)
+static void __attribute__((unused)) lcd_settings_apply_current(void)
 {
     if (lcd_settings_selected == 9u) {
         const uint8_t prefix_default =
@@ -4879,6 +4981,12 @@ bool board_display_theme_read(uint16_t *colors, uint8_t capacity,
 bool board_display_theme_write(const uint16_t *colors, uint8_t count,
                                uint8_t graph_dimming_percent)
 {
+#if !FW_FEATURE_THEME_CONFIG
+    (void)colors;
+    (void)count;
+    (void)graph_dimming_percent;
+    return false;
+#else
     uint16_t previous[LCD_THEME_COLOR_COUNT];
     const uint8_t previous_dimming = lcd_theme_graph_dimming_percent;
     if (colors == NULL || count != LCD_THEME_COLOR_COUNT ||
@@ -4898,10 +5006,16 @@ bool board_display_theme_write(const uint16_t *colors, uint8_t count,
     lcd_background_pending = true;
     lcd_cpm_redraw_pending = true;
     return true;
+#endif
 }
 
 bool board_display_setting_remote_write(uint8_t setting_id, uint8_t value)
 {
+#if !FW_FEATURE_MUTABLE_SETTINGS
+    (void)setting_id;
+    (void)value;
+    return false;
+#else
     const uint8_t previous_selected = lcd_settings_selected;
     const uint8_t previous_edit_value = lcd_settings_edit_value;
     const bool previous_editing = lcd_settings_editing;
@@ -4965,6 +5079,7 @@ bool board_display_setting_remote_write(uint8_t setting_id, uint8_t value)
     lcd_settings_edit_value = previous_edit_value;
     lcd_settings_editing = previous_editing;
     return true;
+#endif
 }
 
 static bool settings_reset_all(void)
@@ -4985,7 +5100,7 @@ static bool lcd_cleanup_clear_spi(void)
     return (spi_nor_is_ready() || spi_nor_init()) && spi_log_clear();
 }
 
-static bool lcd_cleanup_execute(void)
+static bool __attribute__((unused)) lcd_cleanup_execute(void)
 {
     bool ok = false;
     switch (lcd_cleanup_selected) {
@@ -5040,32 +5155,53 @@ static bool lcd_cleanup_execute(void)
 bool board_display_remote_action_valid(uint8_t action, uint8_t value)
 {
     if (action == PROTOCOL_V1_ACTION_RESET) {
+#if FW_FEATURE_MUTABLE_SETTINGS
         return value < LCD_RESET_COUNT && !LCD_CLEANUP_MENU_ACTIVE;
+#else
+        return false;
+#endif
     }
     if (action == PROTOCOL_V1_ACTION_POWER_OFF ||
         action == PROTOCOL_V1_ACTION_REBOOT) {
         return value == 0u;
     }
     if (action == PROTOCOL_V1_ACTION_WAKE_SCREEN) return value == 0u;
-    if (action == PROTOCOL_V1_ACTION_SET_INDICATION_MODE) return value < 3u;
-    if (action == PROTOCOL_V1_ACTION_SET_FLASHLIGHT) return value < 2u;
+    if (action == PROTOCOL_V1_ACTION_SET_INDICATION_MODE) {
+#if FW_FEATURE_INDICATION_MODES
+        return value < 3u;
+#else
+        return false;
+#endif
+    }
+    if (action == PROTOCOL_V1_ACTION_SET_FLASHLIGHT) {
+#if FW_FEATURE_FLASHLIGHT
+        return value < 2u;
+#else
+        return false;
+#endif
+    }
     if (action == PROTOCOL_V1_ACTION_SET_SCREEN_ALWAYS_ON) return value < 2u;
     return false;
 }
 
 void board_display_remote_action_execute(uint8_t action, uint8_t value)
 {
+#if FW_FEATURE_MUTABLE_SETTINGS
     if (action == PROTOCOL_V1_ACTION_RESET) {
         lcd_cleanup_selected = value;
         (void)lcd_cleanup_execute();
-    } else if (action == PROTOCOL_V1_ACTION_POWER_OFF) {
+    } else
+#endif
+    if (action == PROTOCOL_V1_ACTION_POWER_OFF) {
         board_power_off();
     } else if (action == PROTOCOL_V1_ACTION_REBOOT) {
         board_reboot();
     } else if (action == PROTOCOL_V1_ACTION_WAKE_SCREEN) {
         lcd_screen_wake_requested = true;
         board_lcd_backlight_set(true);
-    } else if (action == PROTOCOL_V1_ACTION_SET_INDICATION_MODE) {
+    }
+#if FW_FEATURE_INDICATION_MODES
+    else if (action == PROTOCOL_V1_ACTION_SET_INDICATION_MODE) {
         lcd_indication_mode = value;
         if (value == 2u) lcd_search_mode_started = board_millis;
         if (value == 2u) {
@@ -5077,14 +5213,19 @@ void board_display_remote_action_execute(uint8_t action, uint8_t value)
         lcd_text_row_commands_queued = false;
         lcd_background_pending = true;
         lcd_cpm_redraw_pending = true;
-    } else if (action == PROTOCOL_V1_ACTION_SET_FLASHLIGHT) {
+    }
+#endif
+#if FW_FEATURE_FLASHLIGHT
+    else if (action == PROTOCOL_V1_ACTION_SET_FLASHLIGHT) {
         flashlight_manual_enabled = value != 0u;
         flashlight_enabled = flashlight_alarm_override ? flashlight_alarm_output :
             flashlight_manual_enabled;
         REG32(GPIOB_BASE + GPIO_BSRR) = flashlight_enabled ?
             (1u << FLASHLIGHT_PIN) : (1u << (16u + FLASHLIGHT_PIN));
         lcd_cpm_redraw_pending = true;
-    } else if (action == PROTOCOL_V1_ACTION_SET_SCREEN_ALWAYS_ON) {
+    }
+#endif
+    else if (action == PROTOCOL_V1_ACTION_SET_SCREEN_ALWAYS_ON) {
         lcd_screen_always_on = value != 0u;
         lcd_screen_wake_requested = true;
         board_lcd_backlight_set(true);
@@ -5301,17 +5442,22 @@ bool board_click_sound_busy(void)
 
 static bool rate_alarm_for_mode(uint8_t mode)
 {
+#if FW_FEATURE_RATE_ALARMS
     if (mode == 1u) {
         return lcd_alarm_rate_color == LCD_COUNTER_YELLOW ||
             lcd_alarm_rate_color == LCD_COUNTER_RED;
     }
     if (mode == 2u) return lcd_alarm_rate_color == LCD_COUNTER_RED;
     if (mode == 3u) return rate_custom_threshold_active();
+#else
+    (void)mode;
+#endif
     return false;
 }
 
 static bool dose_alarm_for_mode(uint8_t mode)
 {
+#if FW_FEATURE_DOSE_ALARMS
     static const uint16_t custom_dose_usv[] = {
         5u, 7u, 10u, 30u, 50u, 100u, 500u, 1000u
     };
@@ -5331,51 +5477,78 @@ static bool dose_alarm_for_mode(uint8_t mode)
         return false;
     }
     return actual_nsv_x3600 >= threshold_nsv_x3600;
+#else
+    (void)mode;
+    return false;
+#endif
 }
 
-static bool display_alarm_active(uint8_t rate_mode, uint8_t dose_mode)
+static bool __attribute__((unused)) display_alarm_active(uint8_t rate_mode, uint8_t dose_mode)
 {
+#if FW_FEATURE_INDICATION_MODES
     if (lcd_indication_mode == 0u) return false;
+#endif
     return rate_alarm_for_mode(rate_mode) || dose_alarm_for_mode(dose_mode);
 }
 
 bool board_display_screen_alarm_active(void)
 {
+#if FW_FEATURE_RATE_ALARMS || FW_FEATURE_DOSE_ALARMS
     return display_alarm_active(
         lcd_settings_value_index[SETTING_RATE_SCREEN],
         lcd_settings_value_index[SETTING_DOSE_SCREEN]);
+#else
+    return false;
+#endif
 }
 
 bool board_display_light_alarm_active(void)
 {
+#if FW_FEATURE_RATE_ALARMS || FW_FEATURE_DOSE_ALARMS
     return display_alarm_active(
         lcd_settings_value_index[SETTING_RATE_LIGHT],
         lcd_settings_value_index[SETTING_DOSE_LIGHT]);
+#else
+    return false;
+#endif
 }
 
 bool board_display_dose_alarm_active(void)
 {
+#if FW_FEATURE_DOSE_ALARMS
     return dose_alarm_for_mode(lcd_settings_value_index[SETTING_DOSE_SCREEN]) ||
         dose_alarm_for_mode(lcd_settings_value_index[SETTING_DOSE_LIGHT]) ||
         dose_alarm_for_mode(lcd_settings_value_index[SETTING_DOSE_SOUND]);
+#else
+    return false;
+#endif
 }
 
 bool board_display_sound_alarm_active(void)
 {
+#if FW_FEATURE_RATE_ALARMS || FW_FEATURE_DOSE_ALARMS
     return display_alarm_active(
         lcd_settings_value_index[SETTING_RATE_SOUND],
         lcd_settings_value_index[SETTING_DOSE_SOUND]);
+#else
+    return false;
+#endif
 }
 
 bool board_display_sound_alarm_stop_on_clear(void)
 {
+#if FW_FEATURE_RATE_ALARMS || FW_FEATURE_DOSE_ALARMS
     return lcd_indication_mode == 0u || lcd_settings_value_index[SETTING_ALARM_STOP] == 0u ||
         (lcd_settings_value_index[SETTING_RATE_SOUND] == 0u &&
          lcd_settings_value_index[SETTING_DOSE_SOUND] == 0u);
+#else
+    return true;
+#endif
 }
 
 void board_display_settings_list_activate(void)
 {
+#if FW_FEATURE_DEVICE_DEBUG
     if (lcd_screen_page == 3u) {
         lcd_debug_subpage = (uint8_t)((lcd_debug_subpage + 1u) %
             LCD_DEBUG_SUBPAGE_COUNT);
@@ -5385,6 +5558,7 @@ void board_display_settings_list_activate(void)
         lcd_cpm_redraw_pending = true;
         return;
     }
+#endif
     if (lcd_screen_page != 2u ||
         lcd_settings_list_active) return;
     lcd_settings_list_active = true;
@@ -5433,6 +5607,9 @@ void board_display_settings_move(bool forward)
 
 void board_display_settings_change(void)
 {
+#if !FW_FEATURE_MUTABLE_SETTINGS
+    return;
+#else
     if (!board_display_settings_list_active()) return;
     if (LCD_CLEANUP_MENU_ACTIVE) {
         if (!LCD_CLEANUP_CONFIRM_PENDING) {
@@ -5489,6 +5666,7 @@ void board_display_settings_change(void)
         lcd_settings_apply_current();
         board_display_settings_redraw();
     }
+#endif
 }
 
 void board_display_settings_list_exit(void)
@@ -6000,6 +6178,7 @@ static void lcd_text_render_service(void)
         lcd_text_row_commands_queued = false;
         lcd_settings_redraw_pending = false;
     }
+#if FW_FEATURE_DEVICE_DEBUG
     if (lcd_screen_page == 3u && lcd_debug_redraw_pending &&
         !lcd_text_active) {
         lcd_text_active = true;
@@ -6007,6 +6186,7 @@ static void lcd_text_render_service(void)
         lcd_text_row_commands_queued = false;
         lcd_debug_redraw_pending = false;
     }
+#endif
     if (!lcd_text_active) {
         return;
     }
@@ -6175,6 +6355,7 @@ void board_display_service(void)
     }
     /* Never interrupt an active DMA transfer. At the next chunk boundary,
      * discard the stale frame and render the most recent user action. */
+#if FW_FEATURE_DEVICE_GRAPHS
     if (lcd_graph_pending_action != 0 && !lcd_graph_loading &&
         !lcd_graph_log_summary_work_active &&
         lcd_screen_page == LCD_GRAPH_PAGE && !lcd_dma_active &&
@@ -6198,6 +6379,7 @@ void board_display_service(void)
             board_display_extra_exit();
         }
     }
+#endif
     if (lcd_screen_page < 2u) {
         rtc_calendar_t calendar;
         uint32_t minute_key = board_uptime_seconds / 60u;
@@ -6216,12 +6398,14 @@ void board_display_service(void)
                 lcd_cpm_redraw_pending = true;
             }
         }
+#if FW_FEATURE_DEVICE_DEBUG
     } else if (lcd_screen_page == 3u) {
         static uint32_t debug_displayed_second = UINT32_MAX;
         if (board_uptime_seconds != debug_displayed_second) {
             debug_displayed_second = board_uptime_seconds;
             lcd_debug_redraw_pending = true;
         }
+#endif
     }
     if (lcd_background_pending && lcd_queue_drained() && !lcd_fill_active &&
         !lcd_dma_active) {
@@ -6229,6 +6413,7 @@ void board_display_service(void)
         lcd_begin_fill();
     }
     lcd_text_render_service();
+#if FW_FEATURE_DEVICE_GRAPHS
     if (lcd_screen_page == LCD_GRAPH_PAGE && lcd_graph_log_type != 0u &&
         lcd_graph_loading && !lcd_graph_input_locked &&
         !lcd_graph_log_summary_work_active) {
@@ -6246,6 +6431,8 @@ void board_display_service(void)
             lcd_cpm_redraw_pending = true;
         }
     }
+#endif
+#if FW_FEATURE_MUTABLE_SETTINGS
     if (lcd_cleanup_working_pending && lcd_ready &&
         !lcd_text_active && !lcd_settings_redraw_pending &&
         lcd_queue_drained() && !lcd_fill_active && !lcd_dma_active) {
@@ -6256,6 +6443,7 @@ void board_display_service(void)
         }
         board_display_settings_redraw();
     }
+#endif
 }
 
 bool board_display_busy(void)
@@ -6268,18 +6456,26 @@ bool board_display_busy(void)
     }
     const bool redraw_pending = backlight_requested_on &&
         (lcd_cpm_redraw_pending ||
+#if FW_FEATURE_DEVICE_GRAPHS
          lcd_graph_partial_pending ||
          (lcd_screen_page == LCD_GRAPH_PAGE &&
           deadline_reached(lcd_graph_refresh_deadline)) ||
+#endif
          lcd_dose_row_redraw_pending || lcd_main_rows_redraw_pending ||
          (lcd_screen_page == 2u && lcd_settings_redraw_pending) ||
-         lcd_cleanup_working_pending ||
-         (lcd_screen_page == 3u && lcd_debug_redraw_pending));
+         lcd_cleanup_working_pending
+#if FW_FEATURE_DEVICE_DEBUG
+         || (lcd_screen_page == 3u && lcd_debug_redraw_pending)
+#endif
+         );
     return !lcd_ready || !lcd_queue_drained() || lcd_background_pending ||
            lcd_fill_start_pending ||
-           lcd_fill_active || lcd_text_active || redraw_pending ||
-           (lcd_screen_page == LCD_GRAPH_PAGE &&
-            (lcd_graph_loading || lcd_graph_log_summary_work_active));
+           lcd_fill_active || lcd_text_active || redraw_pending
+#if FW_FEATURE_DEVICE_GRAPHS
+           || (lcd_screen_page == LCD_GRAPH_PAGE &&
+               (lcd_graph_loading || lcd_graph_log_summary_work_active))
+#endif
+           ;
 }
 
 void board_display_init(void)
@@ -6294,16 +6490,27 @@ void board_display_init(void)
     lcd_text_row_commands_queued = false;
     lcd_background_pending = true;
     board_rtc_init();
+#if FW_FEATURE_MUTABLE_SETTINGS
     settings_eeprom_load();
+#else
+    settings_log_memory = BOARD_LOG_MEMORY_OFF;
+    settings_log_source = BOARD_LOG_MEMORY_OFF;
+    settings_spi_enabled = false;
+    lcd_settings_hidden_mask = settings_visibility_default_mask();
+#endif
+#if FW_FEATURE_THEME_CONFIG
     settings_theme_load();
     settings_theme_dim_load();
+#endif
     lcd_screen_page = 0u;
-    lcd_last_extra_page = 3u;
+    lcd_last_extra_page = FW_FEATURE_DEVICE_DEBUG ? 3u : 2u;
     lcd_main_return_page = 0u;
     lcd_settings_selected = lcd_settings_visible_to_item(0u);
+#if FW_FEATURE_LOGS
     if (settings_log_source == BOARD_LOG_MEMORY_SPI) {
         (void)spi_nor_init();
     }
+#endif
     lcd_apply_brightness_settings();
     /* Replace static startup labels with the loaded unit/prefix choices
      * before the LCD's initial background fill and first text render. */
@@ -6679,6 +6886,7 @@ void board_init(void)
     (void)RCC_IOPENR;
     protocol_v1_transport_init();
 
+#if FW_FEATURE_FLASHLIGHT
     /* PB8 controls the flashlight; preload OFF before enabling output mode. */
     REG32(GPIOB_BASE + GPIO_BSRR) = 1u << (16u + FLASHLIGHT_PIN);
     REG32(GPIOB_BASE + GPIO_OTYPER) &= ~(1u << FLASHLIGHT_PIN);
@@ -6689,6 +6897,7 @@ void board_init(void)
          ~(3u << (FLASHLIGHT_PIN * 2u))) |
         (1u << (FLASHLIGHT_PIN * 2u));
     flashlight_enabled = false;
+#endif
 
     /* Keep the detector stage off during startup transients. */
     REG32(GPIOA_BASE + GPIO_BSRR) = 1u << (16u + 5u);

@@ -21,12 +21,20 @@ const ACTION_SET_FLASHLIGHT = 5;
 const ACTION_SET_SCREEN_ALWAYS_ON = 6;
 const CAP_GET_SETTINGS = 1 << 1;
 const CAP_SET_SETTING = 1 << 2;
+const CAP_GET_LOG_INFO = 1 << 3;
+const CAP_GET_LOG_PAGE = 1 << 4;
 const CAP_GET_SPI_DUMP = 1 << 5;
 const CAP_SET_RTC = 1 << 6;
 const CAP_PRECISE_RTC = 1 << 10;
 const CAP_RATE_CPM_TENTHS = 1 << 11;
 const CAP_DEVICE_ACTION = 1 << 7;
 const CAP_THEME_CONFIG = 1 << 9;
+const CAP_DEVICE_GRAPHS = 1 << 12;
+const CAP_DEVICE_DEBUG = 1 << 13;
+const CAP_FLASHLIGHT = 1 << 14;
+const CAP_INDICATION_MODES = 1 << 15;
+const CAP_RATE_ALARMS = 1 << 16;
+const CAP_DOSE_ALARMS = 1 << 17;
 const THEME_COLORS = [
   {id: 'background', label: 'Background'}, {id: 'text', label: 'Text'},
   {id: 'accent', label: 'Accent'}, {id: 'blue', label: 'Blue'},
@@ -1600,6 +1608,8 @@ function selectPage(page, updateUrl = true) {
   if (page === 'instructions') page = 'manual';
   const pages = ['overview', 'debug', 'settings', 'logs', 'firmware', 'manual', 'about'];
   if (!pages.includes(page)) return;
+  if (page === 'logs' && serial &&
+      (protocolCapabilities & CAP_GET_LOG_INFO) === 0) page = 'overview';
   if (page !== 'logs') setLogsFullscreen(false);
   for (const name of pages) {
     const active = name === page;
@@ -1699,7 +1709,8 @@ function applyLogInfo(payload, sampledAt = performance.now()) {
 }
 
 async function refreshLogCounts() {
-  if (!serial || !logInfo || logCountsRefreshBusy) return;
+  if (!serial || (protocolCapabilities & CAP_GET_LOG_INFO) === 0 ||
+      !logInfo || logCountsRefreshBusy) return;
   logCountsRefreshBusy = true;
   const activeSerial = serial;
   try {
@@ -3403,6 +3414,7 @@ async function loadNewerLogRecords(catchUp = true) {
 }
 
 async function loadLogInfo() {
+  if (serial && (protocolCapabilities & CAP_GET_LOG_INFO) === 0) return;
   if (!serial || logInfoLoading) return;
   logInfoLoading = true;
   const requestStarted = performance.now();
@@ -3712,7 +3724,31 @@ function handleHello(payload) {
   updateRtcControls();
   updateDeviceControls();
   updateSpiDumpAvailability();
+  updateFirmwareFeatureAvailability();
   renderSettingsClock();
+}
+
+function updateFirmwareFeatureAvailability() {
+  const connected = !!serial;
+  const has = (capability) => !connected ||
+    (protocolCapabilities & capability) !== 0;
+  const modeControls = document.querySelector('.device-mode-controls');
+  if (modeControls) modeControls.hidden = !has(CAP_INDICATION_MODES);
+  if (elements.deviceFlashlight) {
+    elements.deviceFlashlight.hidden = !has(CAP_FLASHLIGHT);
+  }
+  const themeSection = document.querySelector('.theme-config');
+  if (themeSection) themeSection.hidden = !has(CAP_THEME_CONFIG);
+  const deviceLogsAvailable = has(CAP_GET_LOG_INFO) && has(CAP_GET_LOG_PAGE);
+  document.querySelectorAll('[data-debug-feature="logs"], [data-debug-group="debug-log-rows"]')
+    .forEach((row) => { row.hidden = !deviceLogsAvailable; });
+  const logsAvailable = deviceLogsAvailable;
+  elements.logsTab.hidden = !logsAvailable;
+  elements.logsPage.hidden = !logsAvailable ||
+    !elements.logsTab.classList.contains('active');
+  if (connected && !logsAvailable && elements.logsTab.classList.contains('active')) {
+    selectPage('overview');
+  }
 }
 
 function updateSpiDumpAvailability() {
@@ -3810,9 +3846,10 @@ function renderSettings() {
   elements.settingsList.replaceChildren();
   const preview = !serial;
   const currentSettings = deviceSettings ?? demoSettings;
-  const settingsProtocolSupported = preview ||
-    (protocolCapabilities & (CAP_GET_SETTINGS | CAP_SET_SETTING)) ===
-      (CAP_GET_SETTINGS | CAP_SET_SETTING);
+  const settingsReadable = preview ||
+    (protocolCapabilities & CAP_GET_SETTINGS) !== 0;
+  const settingsWritable = preview ||
+    (protocolCapabilities & CAP_SET_SETTING) !== 0;
   const rows = [];
   for (const setting of remoteSettings) {
     if (setting.id === 19) continue;
@@ -3820,9 +3857,10 @@ function renderSettings() {
     const hasSetting = preview || (deviceSettings !== null &&
       setting.id < deviceSettings.length);
     const actionSupported = !serial ||
-      ![14, 18, 19].includes(setting.id) ||
-      (protocolCapabilities & CAP_DEVICE_ACTION) !== 0;
-    const supported = settingsProtocolSupported && hasSetting && actionSupported;
+      ((setting.id !== 14 || (protocolCapabilities & CAP_SET_SETTING) !== 0) &&
+       (![18, 19].includes(setting.id) ||
+        (protocolCapabilities & CAP_DEVICE_ACTION) !== 0));
+    const supported = settingsReadable && hasSetting && actionSupported;
     const optionSettings = preview ? demoSettings :
       (supported ? currentSettings : demoSettings);
     const options = settingsOptions(setting, optionSettings).map((option, index) =>
@@ -3854,7 +3892,7 @@ function renderSettings() {
       row.append(actionTitle);
       const powerOffButton = makeDeviceActionButton('POWER OFF', 1);
       const rebootButton = makeDeviceActionButton('REBOOT', 2);
-      const rebootSupported = settingsProtocolSupported &&
+      const rebootSupported = settingsReadable &&
         deviceSettings !== null && 19 < deviceSettings.length &&
         (!serial || (protocolCapabilities & CAP_DEVICE_ACTION) !== 0);
       for (const [button, actionIsSupported] of [
@@ -3868,7 +3906,8 @@ function renderSettings() {
       }
       controls.classList.add('setting-power-controls');
       controls.append(powerOffButton, rebootButton,
-        makeSettingVisibilityControl(19, rebootSupported, preview));
+        makeSettingVisibilityControl(19,
+          rebootSupported && settingsWritable, preview));
       row.append(controls);
       rows.push(row);
       continue;
@@ -3884,14 +3923,14 @@ function renderSettings() {
         select.append(option);
       });
       select.value = String(selectedResetAction);
-      select.disabled = !preview && (!supported ||
+      select.disabled = !preview && (!supported || !settingsWritable ||
         (protocolCapabilities & CAP_DEVICE_ACTION) === 0);
       select.addEventListener('change', () => {
         selectedResetAction = Number(select.value);
       });
       controls.append(select);
       const resetButton = makeDeviceActionButton('Reset', 0, () => selectedResetAction);
-      if (preview || !supported) resetButton.disabled = true;
+      if (preview || !supported || !settingsWritable) resetButton.disabled = true;
       controls.append(resetButton);
     } else {
       const select = document.createElement('select');
@@ -3907,7 +3946,7 @@ function renderSettings() {
       const selectedValue = optionSettings[setting.id] ?? 0;
       select.value = String(selectedValue);
       const inactiveSetting = setting.id === 11 && optionSettings[9] === 1;
-      select.disabled = (!preview && !supported) || inactiveSetting;
+      select.disabled = (!preview && (!supported || !settingsWritable)) || inactiveSetting;
       select.addEventListener('change', async () => {
         const nextValue = Number(select.value);
         if (preview) {
@@ -3946,7 +3985,8 @@ function renderSettings() {
       controls.append(select);
     }
 
-    controls.append(makeSettingVisibilityControl(setting.id, supported, preview));
+    controls.append(makeSettingVisibilityControl(setting.id,
+      supported && settingsWritable, preview));
     row.append(label);
     row.append(controls);
     rows.push(row);
@@ -3959,9 +3999,7 @@ function renderSettings() {
     elements.settingsStatus.textContent =
       'Offline preview · temporary changes; reload to restore factory defaults.';
   } else if (deviceSettings === null) {
-    const protocolReady =
-      (protocolCapabilities & (CAP_GET_SETTINGS | CAP_SET_SETTING)) ===
-        (CAP_GET_SETTINGS | CAP_SET_SETTING);
+    const protocolReady = (protocolCapabilities & CAP_GET_SETTINGS) !== 0;
     elements.settingsStatus.textContent = protocolReady ?
       'Waiting for device settings; controls remain disabled.' :
       'Settings unavailable in this firmware; controls disabled.';
@@ -3969,12 +4007,15 @@ function renderSettings() {
     const unsupportedCount = remoteSettings.filter(({ id }) =>
       id >= deviceSettings.length || ([14, 18, 19].includes(id) &&
         (protocolCapabilities & CAP_DEVICE_ACTION) === 0)).length;
-    elements.settingsStatus.textContent = unsupportedCount ?
-      `Loaded from device · ${unsupportedCount} unsupported items disabled` : 'Loaded from device';
+    elements.settingsStatus.textContent = !settingsWritable ?
+      'Loaded from device · fixed by firmware' : unsupportedCount ?
+        `Loaded from device · ${unsupportedCount} unsupported items disabled` : 'Loaded from device';
   }
   document.querySelector('.settings-note').textContent = preview ?
     'Demo controls are temporary. Reload the page to restore factory defaults; device actions remain disabled.' :
-    'Use Show to control which settings appear in the device menu. Visibility requires firmware protocol support.';
+    settingsWritable ?
+      'Use Show to control which settings appear in the device menu. Visibility requires firmware protocol support.' :
+      'Settings are fixed by this firmware build and cannot be changed from the app or device menu.';
 }
 
 function rgb565ToHex(color) {
@@ -4427,6 +4468,7 @@ function renderOfflinePreview() {
   elements.settingsClockStatus.dataset.level = '';
   elements.syncClock.disabled = true;
   renderSettings();
+  updateFirmwareFeatureAvailability();
   drawRateChart();
 }
 
@@ -4497,8 +4539,7 @@ function setDeviceModeActive(mode) {
 
 async function loadSettings() {
   if (!serial) return;
-  if ((protocolCapabilities & (CAP_GET_SETTINGS | CAP_SET_SETTING)) !==
-      (CAP_GET_SETTINGS | CAP_SET_SETTING)) {
+  if ((protocolCapabilities & CAP_GET_SETTINGS) === 0) {
     elements.settingsStatus.textContent = '';
     renderSettings();
     await loadTheme();
@@ -4534,14 +4575,16 @@ async function loadSettings() {
     renderSettings();
     await loadTheme();
     if (logInfo && logRecords.length) renderLogSummary();
-    elements.settingsStatus.textContent = 'Loaded from device';
+    elements.settingsStatus.textContent =
+      (protocolCapabilities & CAP_SET_SETTING) === 0 ?
+        'Loaded from device · fixed by firmware' : 'Loaded from device';
   } catch (error) {
     elements.settingsStatus.textContent = error.message;
   }
 }
 
 async function writeSetting(settingId, value, control) {
-  if (!serial) return;
+  if (!serial || (protocolCapabilities & CAP_SET_SETTING) === 0) return;
   control.disabled = true;
   elements.settingsStatus.textContent = 'Saving…';
   try {
