@@ -293,6 +293,7 @@ jobs:
           - Added selectable rate-uncertainty targets of 30%, 25%, 20%, 15%, 10%, and 5% (about 12, 16, 25, 45, 100, and 400 pulses). The device shows uncertainty in blue until its target, then gray; RATE ROW 2 can keep ACCURACY visible. The app continuously shows total HV-on pulses and estimated uncertainty.
           - HV OFF now pauses dose and persistent-log accumulation while the displayed rate decays. The app shows an HV OFF indicator and preserves the selected secondary rows. Re-enabling HV resumes measurement; after more than a minute without pulses, the rate sample starts fresh.
           - Added HV as a selectable dose period and DOSE ROW 2 value. It shows dose accumulated since HV was last enabled and resets on the next enable; the app also displays the HV-session pulse count and elapsed time.
+          - RATE ACCURACY now defaults to 10%. During the blue sampling phase, detector pulse flashes are blue; once the target is reached, LED color follows the configured rate level.
 
           ### Known issue
           Battery percentage is still a voltage-based estimate. USB and solar input detection do not confirm charging current, so the new behavior needs hardware verification.
