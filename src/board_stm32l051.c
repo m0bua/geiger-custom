@@ -21,10 +21,10 @@
 #include <stdint.h>
 
 uint16_t lcd_theme_palette[LCD_THEME_COLOR_COUNT] = {
-    0x0000u, 0xD6BAu, 0x77E0u, 0x001Fu,
-    0x07E0u, 0xFFE0u, 0xF800u
+    FW_THEME_COLOR_0, FW_THEME_COLOR_1, FW_THEME_COLOR_2, FW_THEME_COLOR_3,
+    FW_THEME_COLOR_4, FW_THEME_COLOR_5, FW_THEME_COLOR_6
 };
-uint8_t lcd_theme_graph_dimming_percent = 30u;
+uint8_t lcd_theme_graph_dimming_percent = FW_THEME_DIMMING;
 
 volatile uint32_t board_millis;
 static volatile uint32_t board_uptime_seconds;
@@ -389,12 +389,38 @@ typedef enum {
 } setting_id_t;
 
 static uint8_t lcd_settings_value_index[SETTING_COUNT] = {
-    [SETTING_LED] = 2u, [SETTING_SCREEN_TIMER] = 2u,
-    [SETTING_RATE_PREFIX] = 1u, [SETTING_DOSE_PREFIX] = 1u,
-    [SETTING_LONG_PRESS] = 3u, [SETTING_RATE_ROW_2] = 0u,
-    [SETTING_DOSE_ROW_2] = 1u, [SETTING_DOSE_PERIOD] = 1u,
-    [SETTING_USE_SPI] = BOARD_LOG_MEMORY_OFF,
-    [SETTING_RATE_CUSTOM] = 4u, [SETTING_RATE_ACCURACY] = 4u
+    [SETTING_LED] = FW_DEFAULT_SETTING_0,
+    [SETTING_CLICKS] = FW_DEFAULT_SETTING_1,
+    [SETTING_RATE_SCREEN] = FW_DEFAULT_SETTING_2,
+    [SETTING_RATE_LIGHT] = FW_DEFAULT_SETTING_3,
+    [SETTING_RATE_SOUND] = FW_DEFAULT_SETTING_4,
+    [SETTING_LED_BRIGHT] = FW_DEFAULT_SETTING_5,
+    [SETTING_SCREEN_BRIGHT] = FW_DEFAULT_SETTING_6,
+    [SETTING_SCREEN_TIMER] = FW_DEFAULT_SETTING_7,
+    [SETTING_LEAD_ZERO] = FW_DEFAULT_SETTING_8,
+    [SETTING_UNIT] = FW_DEFAULT_SETTING_9,
+    [SETTING_RATE_PREFIX] = FW_DEFAULT_SETTING_10,
+    [SETTING_DOSE_PREFIX] = FW_DEFAULT_SETTING_11,
+    [SETTING_RATE_ROW_2] = FW_DEFAULT_SETTING_12,
+    [SETTING_USE_SPI] = FW_DEFAULT_SETTING_13,
+    [SETTING_RESET] = FW_DEFAULT_SETTING_14,
+    [SETTING_HV] = FW_DEFAULT_SETTING_15,
+    [SETTING_RATE_CUSTOM] = FW_DEFAULT_SETTING_16,
+    [SETTING_ALARM_STOP] = FW_DEFAULT_SETTING_17,
+    [SETTING_POWER_OFF] = FW_DEFAULT_SETTING_18,
+    [SETTING_REBOOT] = FW_DEFAULT_SETTING_19,
+    [SETTING_TONE] = FW_DEFAULT_SETTING_20,
+    [SETTING_LONG_PRESS] = FW_DEFAULT_SETTING_21,
+    [SETTING_DOSE_ROW_2] = FW_DEFAULT_SETTING_22,
+    [SETTING_DOSE_PERIOD] = FW_DEFAULT_SETTING_23,
+    [SETTING_DOSE_SCREEN] = FW_DEFAULT_SETTING_24,
+    [SETTING_DOSE_LIGHT] = FW_DEFAULT_SETTING_25,
+    [SETTING_DOSE_SOUND] = FW_DEFAULT_SETTING_26,
+    [SETTING_DOSE_CUSTOM] = FW_DEFAULT_SETTING_27,
+    [SETTING_LED_TIME] = FW_DEFAULT_SETTING_28,
+    [SETTING_BATT_FORMAT] = FW_DEFAULT_SETTING_29,
+    [SETTING_LED_COLOR] = FW_DEFAULT_SETTING_30,
+    [SETTING_RATE_ACCURACY] = FW_DEFAULT_SETTING_31
 };
 static bool click_sound_active;
 static uint8_t click_sound_profile;
@@ -4726,6 +4752,103 @@ static void __attribute__((unused)) settings_eeprom_load(void)
     settings_spi_enabled = settings_log_memory == BOARD_LOG_MEMORY_SPI;
 }
 
+#if FW_FEATURE_MUTABLE_SETTINGS && FW_SETTING_MUTABLE_MASK != 0xFFFFFFFFUL
+static void settings_profile_apply_fixed(void)
+{
+#if !FW_SETTING_IS_MUTABLE(0)
+    lcd_settings_value_index[0] = FW_DEFAULT_SETTING_0;
+#endif
+#if !FW_SETTING_IS_MUTABLE(1)
+    lcd_settings_value_index[1] = FW_DEFAULT_SETTING_1;
+#endif
+#if !FW_SETTING_IS_MUTABLE(2)
+    lcd_settings_value_index[2] = FW_DEFAULT_SETTING_2;
+#endif
+#if !FW_SETTING_IS_MUTABLE(3)
+    lcd_settings_value_index[3] = FW_DEFAULT_SETTING_3;
+#endif
+#if !FW_SETTING_IS_MUTABLE(4)
+    lcd_settings_value_index[4] = FW_DEFAULT_SETTING_4;
+#endif
+#if !FW_SETTING_IS_MUTABLE(5)
+    lcd_settings_value_index[5] = FW_DEFAULT_SETTING_5;
+#endif
+#if !FW_SETTING_IS_MUTABLE(6)
+    lcd_settings_value_index[6] = FW_DEFAULT_SETTING_6;
+#endif
+#if !FW_SETTING_IS_MUTABLE(7)
+    lcd_settings_value_index[7] = FW_DEFAULT_SETTING_7;
+#endif
+#if !FW_SETTING_IS_MUTABLE(8)
+    lcd_settings_value_index[8] = FW_DEFAULT_SETTING_8;
+#endif
+#if !FW_SETTING_IS_MUTABLE(9)
+    lcd_settings_value_index[9] = FW_DEFAULT_SETTING_9;
+#endif
+#if !FW_SETTING_IS_MUTABLE(10)
+    lcd_settings_value_index[10] = FW_DEFAULT_SETTING_10;
+#endif
+#if !FW_SETTING_IS_MUTABLE(11)
+    lcd_settings_value_index[11] = FW_DEFAULT_SETTING_11;
+#endif
+#if !FW_SETTING_IS_MUTABLE(12)
+    lcd_settings_value_index[12] = FW_DEFAULT_SETTING_12;
+#endif
+#if !FW_SETTING_IS_MUTABLE(13)
+    lcd_settings_value_index[13] = FW_DEFAULT_SETTING_13;
+    settings_log_memory = FW_DEFAULT_SETTING_13;
+    if (settings_log_memory < BOARD_LOG_MEMORY_OFF)
+        settings_log_source = settings_log_memory;
+    settings_spi_enabled = settings_log_memory == BOARD_LOG_MEMORY_SPI;
+#endif
+#if !FW_SETTING_IS_MUTABLE(15)
+    lcd_settings_value_index[15] = FW_DEFAULT_SETTING_15;
+#endif
+#if !FW_SETTING_IS_MUTABLE(16)
+    lcd_settings_value_index[16] = FW_DEFAULT_SETTING_16;
+#endif
+#if !FW_SETTING_IS_MUTABLE(17)
+    lcd_settings_value_index[17] = FW_DEFAULT_SETTING_17;
+#endif
+#if !FW_SETTING_IS_MUTABLE(20)
+    lcd_settings_value_index[20] = FW_DEFAULT_SETTING_20;
+#endif
+#if !FW_SETTING_IS_MUTABLE(21)
+    lcd_settings_value_index[21] = FW_DEFAULT_SETTING_21;
+#endif
+#if !FW_SETTING_IS_MUTABLE(22)
+    lcd_settings_value_index[22] = FW_DEFAULT_SETTING_22;
+#endif
+#if !FW_SETTING_IS_MUTABLE(23)
+    lcd_settings_value_index[23] = FW_DEFAULT_SETTING_23;
+#endif
+#if !FW_SETTING_IS_MUTABLE(24)
+    lcd_settings_value_index[24] = FW_DEFAULT_SETTING_24;
+#endif
+#if !FW_SETTING_IS_MUTABLE(25)
+    lcd_settings_value_index[25] = FW_DEFAULT_SETTING_25;
+#endif
+#if !FW_SETTING_IS_MUTABLE(26)
+    lcd_settings_value_index[26] = FW_DEFAULT_SETTING_26;
+#endif
+#if !FW_SETTING_IS_MUTABLE(27)
+    lcd_settings_value_index[27] = FW_DEFAULT_SETTING_27;
+#endif
+#if !FW_SETTING_IS_MUTABLE(28)
+    lcd_settings_value_index[28] = FW_DEFAULT_SETTING_28;
+#endif
+#if !FW_SETTING_IS_MUTABLE(29)
+    lcd_settings_value_index[29] = FW_DEFAULT_SETTING_29;
+#endif
+#if !FW_SETTING_IS_MUTABLE(30)
+    lcd_settings_value_index[30] = FW_DEFAULT_SETTING_30;
+#endif
+#if !FW_SETTING_IS_MUTABLE(31)
+    lcd_settings_value_index[31] = FW_DEFAULT_SETTING_31;
+#endif
+}
+#endif
+
 static bool settings_spi_apply(void)
 {
     const uint8_t target = lcd_settings_value_index[SETTING_USE_SPI];
@@ -4882,13 +5005,17 @@ static void __attribute__((unused)) lcd_settings_apply_current(void)
     if (lcd_settings_selected == 9u) {
         const uint8_t prefix_default =
             lcd_settings_value_index[SETTING_UNIT] == 1u ? 0u : 1u;
-        lcd_settings_value_index[SETTING_RATE_PREFIX] = prefix_default;
-        lcd_settings_value_index[SETTING_DOSE_PREFIX] = prefix_default;
-        if (lcd_settings_value_index[SETTING_DOSE_ROW_2] >=
+        if (FW_SETTING_IS_MUTABLE(SETTING_RATE_PREFIX))
+            lcd_settings_value_index[SETTING_RATE_PREFIX] = prefix_default;
+        if (FW_SETTING_IS_MUTABLE(SETTING_DOSE_PREFIX))
+            lcd_settings_value_index[SETTING_DOSE_PREFIX] = prefix_default;
+        if (FW_SETTING_IS_MUTABLE(SETTING_DOSE_ROW_2) &&
+            lcd_settings_value_index[SETTING_DOSE_ROW_2] >=
                 lcd_settings_value_count(SETTING_DOSE_ROW_2)) {
             lcd_settings_value_index[SETTING_DOSE_ROW_2] = 0u;
         }
-        if (lcd_settings_value_index[SETTING_RATE_ROW_2] >=
+        if (FW_SETTING_IS_MUTABLE(SETTING_RATE_ROW_2) &&
+            lcd_settings_value_index[SETTING_RATE_ROW_2] >=
                 lcd_settings_value_count(SETTING_RATE_ROW_2)) {
             lcd_settings_value_index[SETTING_RATE_ROW_2] = 0u;
         }
@@ -4952,11 +5079,14 @@ uint8_t board_display_settings_remote_count(void)
     return SETTING_COUNT;
 }
 
-bool board_display_settings_remote_read(uint8_t *values, uint8_t capacity)
+bool board_display_settings_remote_read(uint8_t *values, uint8_t capacity,
+                                       bool include_mutability)
 {
     if (values == NULL || capacity < SETTING_COUNT) return false;
     for (uint8_t i = 0u; i < SETTING_COUNT; ++i) {
         values[i] = lcd_settings_value_index[i];
+        if (include_mutability && !FW_SETTING_IS_MUTABLE(i))
+            values[i] |= 0x80u;
     }
     return true;
 }
@@ -5028,7 +5158,7 @@ bool board_display_setting_remote_write(uint8_t setting_id, uint8_t value)
     if (setting_id >= 0x80u && setting_id < (uint8_t)(0x80u + SETTING_COUNT)) {
         const uint8_t item = (uint8_t)(setting_id - 0x80u);
         const uint32_t bit = 1UL << item;
-        const uint32_t candidate = value != 0u ?
+        uint32_t candidate = value != 0u ?
             (lcd_settings_hidden_mask | bit) :
             (lcd_settings_hidden_mask & ~bit);
         if (LCD_CLEANUP_MENU_ACTIVE || value > 1u ||
@@ -5056,6 +5186,7 @@ bool board_display_setting_remote_write(uint8_t setting_id, uint8_t value)
     if (lcd_settings_list_active || setting_id >= SETTING_COUNT ||
         setting_id == SETTING_RESET ||
         setting_id == SETTING_POWER_OFF || setting_id == SETTING_REBOOT ||
+        !FW_SETTING_IS_MUTABLE(setting_id) ||
         value >= lcd_settings_value_count(setting_id)) {
         return false;
     }
@@ -6498,11 +6629,16 @@ void board_display_init(void)
 #if FW_FEATURE_MUTABLE_SETTINGS
     settings_eeprom_load();
 #else
-    settings_log_memory = BOARD_LOG_MEMORY_OFF;
-    settings_log_source = BOARD_LOG_MEMORY_OFF;
-    settings_spi_enabled = false;
+    settings_log_memory = FW_DEFAULT_SETTING_13;
+    settings_log_source = settings_log_memory < BOARD_LOG_MEMORY_OFF ?
+        settings_log_memory : BOARD_LOG_MEMORY_OFF;
+    settings_spi_enabled = settings_log_memory == BOARD_LOG_MEMORY_SPI;
     lcd_settings_hidden_mask = settings_visibility_default_mask();
 #endif
+#if FW_FEATURE_MUTABLE_SETTINGS && FW_SETTING_MUTABLE_MASK != 0xFFFFFFFFUL
+    settings_profile_apply_fixed();
+#endif
+    lcd_settings_hidden_mask |= ~FW_SETTING_MUTABLE_MASK;
 #if FW_FEATURE_THEME_CONFIG
     settings_theme_load();
     settings_theme_dim_load();

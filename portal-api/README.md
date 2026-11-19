@@ -11,8 +11,9 @@ without this service.
 1. Create a GitHub App for `m0bua/geiger-custom` with **Actions: read and
    write** and **Contents: read**, install it on this repository, and note the
    App ID and installation ID. The Worker uses the installation token only to
-   dispatch `build-custom-firmware.yml` on the fixed `dev` branch and read its
-   run/artifact metadata.
+   dispatch `build-custom-firmware.yml` on the branch embedded in the app
+   (`dev` for pre-releases and `main` for stable releases) and read its
+   run/artifact metadata. The Worker accepts only `dev` and `main`.
 2. Create a GitHub OAuth App, enable Device Flow, and use `read:user`. Add the
    OAuth Client ID to the Worker configuration. The Worker allows only names
    listed in `ALLOWED_GITHUB_USERS`; start with the repository maintainer.
@@ -26,10 +27,12 @@ without this service.
    ```
 
 5. Set `PORTAL_ORIGIN` to the exact deployed portal origin, then deploy with
-   `npx wrangler deploy`. The workflow and its build script must already be
-   present on `dev` before enabling requests from the portal.
+   `npx wrangler deploy`. The custom-build workflow and build script must be
+   present on both `dev` and `main` before stable and pre-release apps can use
+   them.
 6. Configure the portal's public `PORTAL_BUILD_API_URL` to the deployed
-   `workers.dev` URL. This URL is not a secret. Do not configure a shared
+   `workers.dev` URL. The custom-build section is included only in built apps
+   that contain this URL. This URL is not a secret. Do not configure a shared
    GitHub token in the portal.
 
 The OAuth device token is held in app memory and sent only to this API for user

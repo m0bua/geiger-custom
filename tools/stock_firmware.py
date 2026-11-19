@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from pathlib import Path
 import re
 
@@ -26,3 +28,18 @@ def stock_hex_files() -> list[Path]:
         return (-version[0], -version[1], -version[2], language_rank, path.name.casefold())
 
     return sorted(files, key=order)
+
+
+def write_browser_catalog() -> Path:
+    """Write stock HEX images as a local script for file:// app previews."""
+    images = [
+        [path.name, base64.b64encode(path.read_bytes()).decode("ascii")]
+        for path in stock_hex_files()
+    ]
+    output = STOCK_DIR / "catalog.js"
+    output.write_text(
+        "globalThis.REPOSITORY_STOCK_FIRMWARES = " +
+        json.dumps(images, separators=(",", ":")) + ";\n",
+        encoding="utf-8",
+    )
+    return output

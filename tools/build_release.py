@@ -259,6 +259,14 @@ def main() -> int:
         ])
 
     document = (APP / "index.html").read_text(encoding="utf-8")
+    custom_build_branch = "dev" if version.endswith("-dev") else "main"
+    document, branch_count = re.subn(
+        r'<meta name="portal-build-branch" content="">',
+        lambda _: f'<meta name="portal-build-branch" content="{custom_build_branch}">',
+        document, count=1,
+    )
+    if branch_count != 1:
+        raise ValueError("Could not configure the custom build source branch")
     if args.portal_build_api_url:
         if not args.portal_build_api_url.startswith("https://"):
             raise ValueError("Portal build API URL must use HTTPS")

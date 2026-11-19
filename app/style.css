@@ -163,30 +163,52 @@ button { font: inherit; }
 .release-history-toggle-input:focus-visible ~ .release-history-toggle { outline: 1px solid var(--green); outline-offset: 4px; }
 .information-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .information-note a { color: var(--green); }
-.firmware-section { width: 100%; max-width: none; margin-top: 10px; padding: 0 14px; border: 1px solid var(--line); border-radius: 9px; background: rgba(17,26,31,.65); }
-.firmware-section > summary { padding: 13px 0; color: #d8e2e4; font-size: 14px; font-weight: 600; cursor: pointer; list-style: none; }
+.firmware-section { position: relative; box-sizing: border-box; width: 100%; max-width: none; margin-top: 10px; padding: 0 14px; border: 1px solid var(--line); border-radius: 9px; background: rgba(17,26,31,.65); }
+.firmware-section > summary { box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; height: 48px; min-height: 48px; padding: 0; color: #d8e2e4; font-size: 14px; font-weight: 600; cursor: pointer; list-style: none; }
+.firmware-section:not([open]) { display: flex; height: 50px; min-height: 50px; padding-top: 0; padding-bottom: 0; overflow: hidden; }
+.firmware-section:not([open]) > summary { flex: 1; height: auto; min-height: 0; margin: 0; align-self: stretch; }
 .firmware-section > summary::-webkit-details-marker { display: none; }
-.firmware-section > summary::after { float: right; color: var(--muted); content: "+"; font: 18px/1 "DM Mono", Consolas, monospace; }
+.firmware-section > summary::after { position: absolute; top: 24px; right: 17px; margin: 0; color: var(--muted); content: "+"; font: 18px/1 "DM Mono", Consolas, monospace; transform: translateY(-50%); }
 .firmware-section[open] > summary::after { content: "−"; }
 .firmware-section[open] > summary { border-bottom: 1px solid var(--line); }
 .firmware-section > :not(summary) { margin-top: 12px; }
-.firmware-section > :last-child { margin-bottom: 14px; }
+.firmware-section > :last-child:not(summary) { margin-bottom: 14px; }
 .local-build-flash { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.quick-flash { width: 100%; max-width: none; margin-top: 10px; padding: 14px; border: 1px solid rgba(0,229,139,.25); border-radius: 9px; background: rgba(0,229,139,.045); }
+.quick-flash { width: 100%; max-width: none; }
 .quick-flash strong { color: var(--green); font-size: 13px; }
-.custom-firmware-builder { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
-.custom-firmware-builder > summary { color: var(--green); font-weight: 600; cursor: pointer; }
+.firmware-current-static-title { margin: 0; padding: 15px 0 0; color: #d8e2e4; font-size: 14px; font-weight: 600; }
+.firmware-subsection { box-sizing: border-box; margin-top: 10px; padding: 0 12px; border: 1px solid rgba(74,92,101,.45); border-radius: 8px; background: rgba(12,20,24,.25); }
+.firmware-subsection > summary { box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; height: 44px; min-height: 44px; padding: 0; color: #aebbc0; font-size: 13px; font-weight: 600; cursor: pointer; list-style: none; }
+.firmware-subsection > summary::-webkit-details-marker { display: none; }
+.firmware-subsection > summary::after { margin-left: auto; color: var(--muted); content: "+"; font: 18px/1 "DM Mono", Consolas, monospace; }
+.firmware-subsection[open] > summary::after { content: "−"; }
+.firmware-subsection[open] > summary { border-bottom: 1px solid var(--line); }
+.firmware-subsection > :not(summary) { margin-top: 10px; }
+.firmware-subsection > :last-child:not(summary) { margin-bottom: 12px; }
+.custom-firmware-builder { margin-top: 10px; }
+.custom-firmware-builder > summary { color: #aebbc0; }
 .custom-firmware-builder > p, .custom-build-estimate { color: var(--muted); font-size: 12px; }
 .custom-build-auth, .custom-build-profile, .custom-build-features { margin-top: 12px; }
 .custom-build-auth { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .custom-build-auth code { color: var(--green); font-size: 18px; letter-spacing: .12em; }
 .custom-build-features { display: grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); gap: 8px 14px; }
 .custom-build-features label { display: flex; align-items: center; gap: 8px; color: #e6edf0; font-size: 12px; }
+.custom-build-config-view { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: rgba(12,20,24,.45); }
+.custom-build-config-view > summary { color: #d8e2e4; font-size: 12px; font-weight: 600; cursor: pointer; }
+.custom-build-config-view > p { margin: 8px 0 12px; color: var(--muted); font-size: 11px; }
+.custom-build-config-list { display: block; }
+.custom-build-settings-pair { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(11, auto); column-gap: 42px; }
+.custom-build-settings-pair .setting-controls { gap: 8px; }
+.custom-build-settings-pair .setting-row select { min-width: 100px; }
+.custom-build-theme-section { margin-top: 18px; }
+.custom-build-theme-toolbar { align-items: center; }
+.custom-build-theme-toolbar .theme-preset-control select { min-width: 128px; }
+.custom-build-theme-toolbar .custom-build-theme-code-control { flex: 1 1 300px; }
+.custom-build-theme-toolbar > .button { flex: 0 0 auto; }
 .custom-build-profile > label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; }
 .custom-build-profile textarea { width: 100%; resize: vertical; color: #e6edf0; background: #121c21; border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: 11px/1.4 ui-monospace,monospace; }
 .custom-firmware-builder [hidden] { display: none !important; }
-.stock-firmware { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(74,92,101,.45); }
-.stock-firmware > summary { color: #aebbc0; cursor: pointer; font-size: 12px; }
+@media (max-width: 580px) { .custom-build-settings-pair { grid-template-columns: 1fr; grid-template-rows: none; grid-auto-flow: row; } }
 .stock-firmware > p { margin: 8px 0; color: #89999f; font-size: 11px; }
 .stock-firmware-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .stock-firmware-list .button { justify-content: flex-start; }
@@ -401,6 +423,7 @@ button { font: inherit; }
 .theme-code-control input { box-sizing: border-box; flex: 1 1 auto; width: auto; min-width: 0; min-height: 36px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; color: #d8e2e4; background: #0b1115; font: 11px "DM Mono", Consolas, monospace; }
 .theme-code-control input[aria-invalid="true"] { border-color: #ff7474; color: #ff7474; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.settings-panel > .panel-heading { border-bottom: 0; }
 .panel-heading h2 { margin: 0; font: 600 14px "DM Mono", Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
 .panel-heading-actions { display: flex; align-items: center; gap: 12px; }
 .refresh-button { min-height: 30px; padding: 0 11px; }
@@ -440,9 +463,9 @@ footer { padding: 17px 2px 24px; color: #627278; font: 10px "DM Mono", Consolas,
   .settings-pair { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(11, auto); column-gap: 56px; }
 }
 @media (min-width: 651px) and (max-width: 1179px) {
-  .theme-colors { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .theme-colors { grid-template-columns: 1fr; }
   .theme-color-group { grid-template-columns: 1fr; gap: 8px; }
-  .theme-color-grid { grid-template-columns: 1fr; }
+  .theme-color-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (min-width: 651px) and (max-width: 859px) {
   .settings-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: none; grid-auto-flow: row; }

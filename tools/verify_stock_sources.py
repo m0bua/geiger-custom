@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from pathlib import Path
+import re
 from urllib.parse import urlparse
 
 from build_release import validate_stock_hex
@@ -43,6 +45,21 @@ def main() -> int:
     stock_paths = stock_hex_files()
     if not stock_paths:
         raise FileNotFoundError(f"No stock HEX files found in {STOCK_DIR}.")
+    expected_names = [path.name for path in stock_paths]
+    catalog_path = STOCK_DIR / "catalog.js"
+    catalog_text = catalog_path.read_text(encoding="utf-8")
+    catalog_match = re.fullmatch(
+        r"globalThis\.REPOSITORY_STOCK_FIRMWARES\s*=\s*(\[.*\]);\s*",
+        catalog_text, re.DOTALL,
+    )
+    if not catalog_match:
+        raise ValueError(f"Invalid browser stock firmware catalog: {catalog_path}.")
+    catalog = json.loads(catalog_match.group(1))
+    if [entry[0] for entry in catalog] != expected_names:
+        raise ValueError("Browser stock firmware catalog differs from firmware/stock HEX files.")
+    for entry, path in zip(catalog, stock_paths):
+        if len(entry) != 2 or base64.b64decode(entry[1], validate=True) != path.read_bytes():
+            raise ValueError(f"Browser stock catalog image differs from {path.name}.")
     for path in stock_paths:
         raw = path.read_bytes()
         validate_stock_hex(path, raw)

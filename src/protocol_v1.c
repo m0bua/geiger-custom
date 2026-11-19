@@ -194,7 +194,8 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         uint32_t capabilities = PROTOCOL_V1_CAP_STATUS |
             PROTOCOL_V1_CAP_GET_SETTINGS | PROTOCOL_V1_CAP_SET_RTC |
             PROTOCOL_V1_CAP_DEVICE_ACTION | PROTOCOL_V1_CAP_PRECISE_RTC |
-            PROTOCOL_V1_CAP_RATE_CPM_TENTHS;
+            PROTOCOL_V1_CAP_RATE_CPM_TENTHS |
+            PROTOCOL_V1_CAP_SETTING_MUTABILITY;
 #if FW_FEATURE_MUTABLE_SETTINGS
         capabilities |= PROTOCOL_V1_CAP_SET_SETTING;
 #endif
@@ -250,13 +251,16 @@ static void handle_frame(uint8_t *frame, uint8_t length)
         response_length = 55u;
     } else if (opcode == PROTOCOL_V1_OP_GET_SETTINGS &&
                (payload_length == 0u ||
-                (payload_length == 1u && frame[8] == 1u))) {
+                (payload_length == 1u && frame[8] == 1u) ||
+                (payload_length == 1u && frame[8] == 2u))) {
         const bool include_hidden_mask = payload_length == 1u;
+        const bool include_mutability = include_hidden_mask && frame[8] == 2u;
         const uint8_t count = board_display_settings_remote_count();
         response[1] = count;
         if (count > PROTOCOL_V1_MAX_PAYLOAD -
                 (include_hidden_mask ? 6u : 2u) ||
-            !board_display_settings_remote_read(&response[2], count)) {
+            !board_display_settings_remote_read(&response[2], count,
+                                                include_mutability)) {
             response[0] = PROTOCOL_STATUS_INVALID_VALUE;
             response_length = 1u;
         } else {

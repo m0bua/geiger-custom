@@ -35,6 +35,7 @@ const CAP_FLASHLIGHT = 1 << 14;
 const CAP_INDICATION_MODES = 1 << 15;
 const CAP_RATE_ALARMS = 1 << 16;
 const CAP_DOSE_ALARMS = 1 << 17;
+const CAP_SETTING_MUTABILITY = 1 << 18;
 const THEME_COLORS = [
   {id: 'background', label: 'Background'}, {id: 'text', label: 'Text'},
   {id: 'accent', label: 'Accent'}, {id: 'blue', label: 'Blue'},
@@ -343,6 +344,9 @@ const elements = {
   copyDiagnostics: document.querySelector('#copy-diagnostics'),
   clearDiagnostics: document.querySelector('#clear-diagnostics'),
   firmwarePage: document.querySelector('#firmware-page'),
+  firmwareCurrentSection: document.querySelector('#firmware-current-section'),
+  firmwareCurrentSummary: document.querySelector('#firmware-current-summary'),
+  firmwareCurrentStaticTitle: document.querySelector('#firmware-current-static-title'),
   embeddedQuickFlash: document.querySelector('#embedded-quick-flash'),
   customFirmwareBuilder: document.querySelector('#custom-firmware-builder'),
   customBuildSignIn: document.querySelector('#custom-build-sign-in'),
@@ -350,7 +354,9 @@ const elements = {
   customBuildAuthCode: document.querySelector('#custom-build-auth-code'),
   customBuildEstimate: document.querySelector('#custom-build-estimate'),
   customBuildProfileJson: document.querySelector('#custom-build-profile-json'),
+  customBuildConfigList: document.querySelector('#custom-build-config-list'),
   customBuildExportProfile: document.querySelector('#custom-build-export-profile'),
+  customBuildCopyProfile: document.querySelector('#custom-build-copy-profile'),
   customBuildImportProfile: document.querySelector('#custom-build-import-profile'),
   customBuildStart: document.querySelector('#custom-build-start'),
   customBuildDownload: document.querySelector('#custom-build-download'),
@@ -1066,6 +1072,7 @@ let protocolCapabilities = 0;
 let protocolMaxPayload = 64;
 let deviceSettings = null;
 let deviceHiddenSettings = null;
+let deviceMutableSettings = null;
 let deviceTheme = null;
 let deviceThemeDimming = null;
 let themeDraft = DEFAULT_THEME_RGB565.slice();
@@ -3849,7 +3856,11 @@ function makeSettingVisibilityControl(settingId, supported, preview) {
     writeSetting(0x80 + settingId, input.checked ? 0 : 1, input);
   });
   const text = document.createElement('span');
-  text.textContent = 'Show';
+  text.textContent = !preview && deviceMutableSettings?.[settingId] === false ? 'Static' : 'Show';
+  if (!preview && deviceMutableSettings?.[settingId] === false) {
+    input.disabled = true;
+    input.title = 'This setting is fixed by the firmware build.';
+  }
   label.append(input, text);
   return label;
 }
@@ -3873,6 +3884,8 @@ function renderSettings() {
        (![18, 19].includes(setting.id) ||
         (protocolCapabilities & CAP_DEVICE_ACTION) !== 0));
     const supported = settingsReadable && hasSetting && actionSupported;
+    const settingWritable = settingsWritable &&
+      (deviceMutableSettings === null || deviceMutableSettings[setting.id] !== false);
     const optionSettings = preview ? demoSettings :
       (supported ? currentSettings : demoSettings);
     const options = settingsOptions(setting, optionSettings).map((option, index) =>
@@ -3935,14 +3948,14 @@ function renderSettings() {
         select.append(option);
       });
       select.value = String(selectedResetAction);
-      select.disabled = !preview && (!supported || !settingsWritable ||
+      select.disabled = !preview && (!supported || !settingWritable ||
         (protocolCapabilities & CAP_DEVICE_ACTION) === 0);
       select.addEventListener('change', () => {
         selectedResetAction = Number(select.value);
       });
       controls.append(select);
       const resetButton = makeDeviceActionButton('Reset', 0, () => selectedResetAction);
-      if (preview || !supported || !settingsWritable) resetButton.disabled = true;
+      if (preview || !supported || !settingWritable) resetButton.disabled = true;
       controls.append(resetButton);
     } else {
       const select = document.createElement('select');
@@ -3958,7 +3971,7 @@ function renderSettings() {
       const selectedValue = optionSettings[setting.id] ?? 0;
       select.value = String(selectedValue);
       const inactiveSetting = setting.id === 11 && optionSettings[9] === 1;
-      select.disabled = (!preview && (!supported || !settingsWritable)) || inactiveSetting;
+      select.disabled = (!preview && (!supported || !settingWritable)) || inactiveSetting;
       select.addEventListener('change', async () => {
         const nextValue = Number(select.value);
         if (preview) {
@@ -3998,7 +4011,7 @@ function renderSettings() {
     }
 
     controls.append(makeSettingVisibilityControl(setting.id,
-      supported && settingsWritable, preview));
+      supported && settingWritable, preview));
     row.append(label);
     row.append(controls);
     rows.push(row);
@@ -4096,108 +4109,143 @@ function updateThemeApplyState(supported) {
       themeDraft.every((color, index) => color === current[index]));
 }
 
-function renderThemeControls(colors = themeDraft) {
-  const supported = !serial || (protocolCapabilities & CAP_THEME_CONFIG) !== 0;
-  elements.themePreset.value = themePreset;
-  elements.themePreset.disabled = !supported;
-  elements.themeColors.replaceChildren();
-  THEME_COLOR_GROUPS.forEach(({label: groupLabel, start, end}) => {
+function createThemeColorControl(index, colors, {
+  disabled = false, onChange = () => {}, onEditStart = () => {}, onInvalid = () => {},
+} = {}) {
+  const {label} = THEME_COLORS[index];
+  const row = document.createElement('div');
+  row.className = 'theme-color-control';
+  const name = document.createElement('span');
+  name.textContent = label;
+  const input = document.createElement('input');
+  input.type = 'color';
+  input.value = rgb565ToHex(colors[index]);
+  input.dataset.themeColorIndex = String(index);
+  input.disabled = disabled;
+  input.setAttribute('aria-label', `${label} color`);
+  const code = document.createElement('input');
+  code.type = 'text';
+  code.className = 'theme-color-code';
+  code.value = input.value.toUpperCase();
+  code.dataset.themeColorIndex = String(index);
+  code.maxLength = 7;
+  code.pattern = '#[0-9A-Fa-f]{6}';
+  code.spellcheck = false;
+  code.disabled = disabled;
+  code.setAttribute('aria-label', `${label} RGB hex code`);
+  const commit = (hex) => {
+    colors[index] = hexToRgb565(hex);
+    input.value = rgb565ToHex(colors[index]);
+    code.value = input.value.toUpperCase();
+    code.removeAttribute('aria-invalid');
+    onChange(index, colors[index]);
+  };
+  input.addEventListener('pointerdown', onEditStart);
+  input.addEventListener('input', () => commit(input.value));
+  code.addEventListener('input', () => {
+    if (!/^#[0-9a-f]{6}$/i.test(code.value)) {
+      code.setAttribute('aria-invalid', 'true');
+      onInvalid(index);
+      return;
+    }
+    commit(code.value);
+  });
+  row.append(name, input, code);
+  return row;
+}
+
+function renderThemeColorGrid(container, indexes, colors, options = {}) {
+  container.replaceChildren();
+  for (const index of indexes) container.append(createThemeColorControl(index, colors, options));
+}
+
+function createThemeDimmingControl(value, {disabled = false, id = '', onChange = () => {}, onInvalid = () => {}} = {}) {
+  const control = document.createElement('label');
+  control.className = 'theme-color-control theme-dimming-control';
+  if (id) control.htmlFor = id;
+  const name = document.createElement('span');
+  name.textContent = 'Graph dimming';
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.min = '0';
+  input.max = '100';
+  input.step = '1';
+  input.value = String(value);
+  input.disabled = disabled;
+  if (id) input.id = id;
+  const suffix = document.createElement('span');
+  suffix.textContent = '%';
+  input.addEventListener('input', () => {
+    const next = Number(input.value);
+    if (!Number.isInteger(next) || next < 0 || next > 100) {
+      input.setAttribute('aria-invalid', 'true');
+      onInvalid();
+      return;
+    }
+    input.removeAttribute('aria-invalid');
+    onChange(next);
+  });
+  control.append(name, input, suffix);
+  return control;
+}
+
+function renderThemeEditor(container, colors, dimming, options = {}) {
+  const {disabled = false, onEditStart = () => {}, onColorChange = () => {},
+    onColorInvalid = () => {}, onDimmingChange = () => {}, onDimmingInvalid = () => {}} = options;
+  container.replaceChildren();
+  THEME_COLOR_GROUPS.forEach(({label, start, end}) => {
     const group = document.createElement('div');
     group.className = 'theme-color-group';
     const title = document.createElement('div');
     title.className = 'theme-color-group-title';
-    title.textContent = groupLabel;
+    title.textContent = label;
     const grid = document.createElement('div');
     grid.className = 'theme-color-grid';
-    for (let index = start; index < end; index += 1) {
-      const {label} = THEME_COLORS[index];
-      const row = document.createElement('div');
-      row.className = 'theme-color-control';
-      const name = document.createElement('span');
-      name.textContent = label;
-      const input = document.createElement('input');
-      input.type = 'color';
-      input.value = rgb565ToHex(colors[index]);
-      input.dataset.themeColorIndex = String(index);
-      input.disabled = !supported;
-      input.setAttribute('aria-label', `${label} color`);
-      const code = document.createElement('input');
-      code.type = 'text';
-      code.className = 'theme-color-code';
-      code.value = input.value.toUpperCase();
-      code.dataset.themeColorIndex = String(index);
-      code.maxLength = 7;
-      code.pattern = '#[0-9A-Fa-f]{6}';
-      code.spellcheck = false;
-      code.disabled = !supported;
-      code.setAttribute('aria-label', `${label} RGB hex code`);
-      input.addEventListener('pointerdown', () => {
-        themePreset = 'custom';
-        elements.themePreset.value = themePreset;
-      });
-      input.addEventListener('input', () => {
-        code.removeAttribute('aria-invalid');
-        themeDraft[index] = hexToRgb565(input.value);
-        input.value = rgb565ToHex(themeDraft[index]);
-        code.value = input.value.toUpperCase();
-        themePreset = 'custom';
-        elements.themePreset.value = themePreset;
-        syncThemeConfigCode();
-        updateThemeApplyState(supported);
-      });
-      code.addEventListener('input', () => {
-        code.removeAttribute('aria-invalid');
-        if (!/^#[0-9a-f]{6}$/i.test(code.value)) {
-          code.setAttribute('aria-invalid', 'true');
-          updateThemeApplyState(supported);
-          return;
-        }
-        themeDraft[index] = hexToRgb565(code.value);
-        input.value = rgb565ToHex(themeDraft[index]);
-        code.value = input.value.toUpperCase();
-        themePreset = 'custom';
-        elements.themePreset.value = themePreset;
-        syncThemeConfigCode();
-        updateThemeApplyState(supported);
-      });
-      row.append(name, input, code);
-      grid.append(row);
-    }
-    if (groupLabel === 'Interface') {
-      const dimming = document.createElement('label');
-      dimming.className = 'theme-color-control theme-dimming-control';
-      dimming.htmlFor = 'theme-graph-dimming';
-      const name = document.createElement('span');
-      name.textContent = 'Graph dimming';
-      const input = document.createElement('input');
-      input.type = 'number';
-      input.id = 'theme-graph-dimming';
-      input.min = '0';
-      input.max = '100';
-      input.step = '1';
-      input.value = String(themeDraftDimming);
-      input.disabled = !supported;
-      const suffix = document.createElement('span');
-      suffix.textContent = '%';
-      input.addEventListener('input', () => {
-        const value = Number(input.value);
-        if (!Number.isInteger(value) || value < 0 || value > 100) {
-          input.setAttribute('aria-invalid', 'true');
-          updateThemeApplyState(supported);
-          return;
-        }
-        input.removeAttribute('aria-invalid');
-        themeDraftDimming = value;
-        themePreset = detectThemePreset(themeDraft, themeDraftDimming);
-        elements.themePreset.value = themePreset;
-        syncThemeConfigCode();
-        updateThemeApplyState(supported);
-      });
-      dimming.append(name, input, suffix);
-      grid.append(dimming);
+    renderThemeColorGrid(grid, Array.from({length: end - start}, (_, offset) => start + offset), colors, {
+      disabled,
+      onEditStart,
+      onChange: onColorChange,
+      onInvalid: onColorInvalid,
+    });
+    if (label === 'Interface') {
+      grid.append(createThemeDimmingControl(dimming, {
+        id: options.dimmingId || '',
+        disabled,
+        onChange: onDimmingChange,
+        onInvalid: onDimmingInvalid,
+      }));
     }
     group.append(title, grid);
-    elements.themeColors.append(group);
+    container.append(group);
+  });
+}
+
+function renderThemeControls(colors = themeDraft) {
+  const supported = !serial || (protocolCapabilities & CAP_THEME_CONFIG) !== 0;
+  elements.themePreset.value = themePreset;
+  elements.themePreset.disabled = !supported;
+  renderThemeEditor(elements.themeColors, colors, themeDraftDimming, {
+    disabled: !supported,
+    dimmingId: 'theme-graph-dimming',
+    onEditStart: () => {
+      themePreset = 'custom';
+      elements.themePreset.value = themePreset;
+    },
+    onColorChange: () => {
+      themePreset = 'custom';
+      elements.themePreset.value = themePreset;
+      syncThemeConfigCode();
+      updateThemeApplyState(supported);
+    },
+    onColorInvalid: () => updateThemeApplyState(supported),
+    onDimmingChange: (value) => {
+      themeDraftDimming = value;
+      themePreset = detectThemePreset(themeDraft, themeDraftDimming);
+      elements.themePreset.value = themePreset;
+      syncThemeConfigCode();
+      updateThemeApplyState(supported);
+    },
+    onDimmingInvalid: () => updateThemeApplyState(supported),
   });
   syncThemeConfigCode();
   updateThemeApplyState(supported);
@@ -4559,7 +4607,9 @@ async function loadSettings() {
   }
   elements.settingsStatus.textContent = 'Reading…';
   try {
-    const payload = await serial.request(OP_GET_SETTINGS, Uint8Array.of(1));
+    const hasMutabilityMask = (protocolCapabilities & CAP_SETTING_MUTABILITY) !== 0;
+    const payload = await serial.request(OP_GET_SETTINGS,
+      Uint8Array.of(hasMutabilityMask ? 2 : 1));
     if (payload.length < 2 || payload[0] !== 0 ||
         ![21, 22, 24, 28, 29, 30, 31, 32].includes(payload[1]) ||
         (payload.length !== payload[1] + 2 &&
@@ -4567,9 +4617,14 @@ async function loadSettings() {
       throw new ProtocolError('Invalid settings response.');
     }
     const count = payload[1];
-    deviceSettings = Array.from(payload.subarray(2, 2 + count));
+    const rawSettings = Array.from(payload.subarray(2, 2 + count));
+    deviceSettings = rawSettings.map((value) => value & 0x7f);
     deviceHiddenSettings = null;
-    if (payload.length === count + 6) {
+    deviceMutableSettings = null;
+    if (hasMutabilityMask) {
+      deviceMutableSettings = rawSettings.map((value) => (value & 0x80) === 0);
+    }
+    if (payload.length >= count + 6) {
       const offset = 2 + count;
       const mask = (payload[offset] | (payload[offset + 1] << 8) |
         (payload[offset + 2] << 16) | (payload[offset + 3] << 24)) >>> 0;
@@ -5339,8 +5394,9 @@ detectLocalBuild();
 loadLatestFlashBackup();
   loadMemoryDownloads();
 if (typeof globalThis.EMBEDDED_FIRMWARE_B64 === 'string' && elements.embeddedQuickFlash) {
+  elements.firmwareCurrentSection.hidden = false;
+  elements.firmwareCurrentSection.open = true;
   elements.embeddedQuickFlash.hidden = false;
-  elements.embeddedQuickFlash.open = true;
   elements.firmwareTools.open = false;
 }
 renderEmbeddedStockFirmware();
@@ -5396,32 +5452,130 @@ function updateStockFirmwareButtons() {
 
 function renderEmbeddedStockFirmware() {
   const images = globalThis.EMBEDDED_STOCK_FIRMWARES;
-  if (!Array.isArray(images) || images.length === 0 || !elements.stockFirmwareSection) return;
+  if (!elements.stockFirmwareSection) return;
+  if (!Array.isArray(images) || images.length === 0) {
+    elements.stockFirmwareSection.hidden = false;
+    elements.stockFirmwareSection.addEventListener('toggle', () => {
+      if (elements.stockFirmwareSection.open) loadRepositoryStockFirmware();
+    });
+    return;
+  }
   elements.stockFirmwareSection.hidden = false;
   for (const entry of images) {
     if (!Array.isArray(entry) || entry.length !== 2 ||
         typeof entry[0] !== 'string' || typeof entry[1] !== 'string') continue;
     const [filename, base64] = entry;
-    const label = filename.replace(/\.hex$/i, '').replace(/-\(only-Windows\)/i, ' · Windows').replaceAll('-', ' ');
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'button';
-    button.textContent = `Flash ${label}`;
-    button.title = filename;
-    button.addEventListener('click', () => flashEmbeddedStockFirmware(filename, base64));
-    elements.stockFirmwareList.append(button);
+    addStockFirmwareEntry(filename, () => flashEmbeddedStockFirmware(filename, base64));
   }
-  renderStockFirmwareSources(globalThis.EMBEDDED_STOCK_SOURCE_LINKS);
+  renderStockFirmwareSources(globalThis.EMBEDDED_STOCK_SOURCE_LINKS, [], images);
   updateStockFirmwareButtons();
 }
 
-function renderStockFirmwareSources(sources) {
+let repositoryStockFirmwarePromise = null;
+
+async function loadRepositoryStockFirmware() {
+  if (repositoryStockFirmwarePromise || elements.stockFirmwareList.childElementCount) return;
+  const status = document.querySelector('#stock-firmware-status');
+  if (status) {
+    status.textContent = 'Loading stock firmware files…';
+    status.hidden = false;
+  }
+  if (window.location.protocol === 'file:') {
+    try {
+      const catalogScript = document.createElement('script');
+      catalogScript.src = new URL('../firmware/stock/catalog.js', window.location.href).href;
+      await new Promise((resolve, reject) => {
+        catalogScript.onload = resolve;
+        catalogScript.onerror = () => reject(new Error('Could not load the local stock firmware images.'));
+        document.head.append(catalogScript);
+      });
+      const images = globalThis.REPOSITORY_STOCK_FIRMWARES;
+      if (!Array.isArray(images) || !images.length) throw new Error('The local stock firmware catalog is empty.');
+      for (const entry of images) {
+        if (!Array.isArray(entry) || entry.length !== 2 ||
+            typeof entry[0] !== 'string' || typeof entry[1] !== 'string') continue;
+        const [filename, base64] = entry;
+        addStockFirmwareEntry(filename, () => flashEmbeddedStockFirmware(filename, base64));
+      }
+      renderStockFirmwareSources([], images.map(([filename]) => filename));
+      updateStockFirmwareButtons();
+      if (status) status.hidden = true;
+    } catch (error) {
+      if (status) {
+        status.textContent = `Could not load the local stock catalog: ${error.message}`;
+        status.hidden = false;
+      }
+    }
+    return;
+  }
+  repositoryStockFirmwarePromise = (async () => {
+    const manifestUrl = new URL('../firmware/stock/sources.json', window.location.href);
+    const manifestResponse = await fetch(manifestUrl);
+    if (!manifestResponse.ok) throw new Error(`Could not load stock catalog (${manifestResponse.status}).`);
+    const manifest = await manifestResponse.json();
+    const filenames = Object.keys(manifest.files || {}).filter((filename) =>
+      /^[A-Za-z0-9(). _-]+\.hex$/i.test(filename));
+    const versionOf = (filename) => filename.match(/(\d+)\.(\d+)\.(\d+)/)?.slice(1).map(Number) || [0, 0, 0];
+    filenames.sort((left, right) => {
+      const a = versionOf(left);
+      const b = versionOf(right);
+      for (let index = 0; index < 3; index += 1) {
+        if (a[index] !== b[index]) return b[index] - a[index];
+      }
+      const languageOrder = (name) => /(?:^|[-_])EN(?:[-_.]|$)/i.test(name) ? 0 : 1;
+      return languageOrder(left) - languageOrder(right) || left.localeCompare(right);
+    });
+    if (!filenames.length) throw new Error('The stock catalog contains no firmware images.');
+    for (const filename of filenames) {
+      addStockFirmwareEntry(filename, () => flashRepositoryStockFirmware(filename));
+    }
+    renderStockFirmwareSources(manifest.links, filenames);
+    updateStockFirmwareButtons();
+    if (status) status.hidden = true;
+  })().catch((error) => {
+    repositoryStockFirmwarePromise = null;
+    if (status) {
+      status.textContent = `Could not load stock firmware: ${error.message}`;
+      status.hidden = false;
+    }
+  });
+  await repositoryStockFirmwarePromise;
+}
+
+function addStockFirmwareEntry(filename, flash, disabled = false) {
+  const label = filename.replace(/\.hex$/i, '').replace(/-\(only-Windows\)/i, ' · Windows').replaceAll('-', ' ');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'button';
+  button.textContent = `Flash ${label}`;
+  button.title = filename;
+  button.disabled = disabled;
+  if (flash) button.addEventListener('click', flash);
+  elements.stockFirmwareList.append(button);
+}
+
+async function flashRepositoryStockFirmware(filename) {
+  try {
+    const imageUrl = new URL(`../firmware/stock/${encodeURIComponent(filename)}`, window.location.href);
+    const response = await fetch(imageUrl);
+    if (!response.ok) throw new Error(`Could not download ${filename} (${response.status}).`);
+    const file = new File([await response.blob()], filename, {type: 'text/plain'});
+    await flashStockFirmwareFile(filename, file);
+  } catch (error) {
+    beginFirmwareLogAction(`Stock firmware · ${filename}`);
+    appendFirmwareLog(`Stock firmware load failed: ${error.message}`, 'error');
+    setRebootStatus(`Stock firmware load failed: ${error.message}`, 'error');
+  }
+}
+
+function renderStockFirmwareSources(sources, repositoryFiles = [], embeddedFiles = []) {
   const container = elements.stockFirmwareSources;
-  if (!container || !Array.isArray(sources) || sources.length === 0) return;
+  if (!container) return;
+  container.replaceChildren();
   const heading = document.createElement('h4');
   heading.textContent = 'Sources and downloads';
   const list = document.createElement('ul');
-  for (const source of sources) {
+  for (const source of Array.isArray(sources) ? sources : []) {
     if (!source || typeof source.label !== 'string' ||
         typeof source.description !== 'string' || typeof source.url !== 'string') continue;
     let parsedUrl;
@@ -5442,19 +5596,62 @@ function renderStockFirmwareSources(sources) {
     item.append(link, description);
     list.append(item);
   }
-  if (!list.childElementCount) return;
-  container.replaceChildren(heading, list);
+  for (const filename of repositoryFiles) {
+    if (typeof filename !== 'string' || !/^[A-Za-z0-9(). _-]+\.hex$/i.test(filename)) continue;
+    const item = document.createElement('li');
+    const link = document.createElement('a');
+    link.href = new URL(`../firmware/stock/${encodeURIComponent(filename)}`, window.location.href).href;
+    link.download = filename;
+    link.textContent = `${filename} · repository HEX`;
+    const description = document.createElement('span');
+    description.textContent = ' Download this stock image.';
+    item.append(link, description);
+    list.append(item);
+  }
+  for (const entry of embeddedFiles) {
+    if (!Array.isArray(entry) || entry.length !== 2 ||
+        typeof entry[0] !== 'string' || typeof entry[1] !== 'string') continue;
+    const [filename, base64] = entry;
+    const item = document.createElement('li');
+    const link = document.createElement('a');
+    link.href = '#';
+    link.textContent = `${filename} · embedded HEX`;
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      const binary = atob(base64);
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], {type: 'text/plain'}));
+      const downloadLink = document.createElement('a');
+      downloadLink.href = url;
+      downloadLink.download = filename;
+      downloadLink.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+    const description = document.createElement('span');
+    description.textContent = ' Download this embedded stock image.';
+    item.append(link, description);
+    list.append(item);
+  }
+  if (!list.childElementCount) {
+    container.hidden = true;
+    return;
+  }
+  container.append(heading, list);
   container.hidden = false;
 }
 
 async function flashEmbeddedStockFirmware(filename, base64) {
+  const binary = atob(base64);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  await flashStockFirmwareFile(filename, new File([bytes], filename, {type: 'text/plain'}));
+}
+
+async function flashStockFirmwareFile(filename, file) {
   if (dumpBusy || firmwareFlashBusy || firmwareBackupBusy) return;
   const label = filename.replace(/\.hex$/i, '').replace(/-\(only-Windows\)/i, ' · Windows').replaceAll('-', ' ');
   beginFirmwareLogAction(`Stock firmware · ${label}`);
   try {
-    const binary = atob(base64);
-    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    await loadFirmwareImage(new File([bytes], filename, {type: 'text/plain'}));
+    await loadFirmwareImage(file);
     if (!selectedFirmwareImage || selectedFirmwareImage.identity !== 'stock') {
       throw new Error('The embedded image did not pass stock firmware classification.');
     }
@@ -5752,7 +5949,10 @@ function setDumpBusy(busy) {
   elements.clearFirmware.disabled = actionBusy;
   elements.firmwareVerify.disabled = actionBusy;
   elements.flashFirmware.disabled = actionBusy || !selectedFirmwareImage;
-  if (elements.quickFlashFirmware) elements.quickFlashFirmware.disabled = actionBusy;
+  if (elements.quickFlashFirmware) {
+    elements.quickFlashFirmware.disabled = actionBusy ||
+      typeof globalThis.EMBEDDED_FIRMWARE_B64 !== 'string';
+  }
   if (elements.flashLocalBuild) elements.flashLocalBuild.disabled = actionBusy;
   updateEepromWriteButton();
   updateSpiWriteButton();
@@ -7375,6 +7575,7 @@ async function connectDevice(portOverride = null, transport = null) {
   protocolCapabilities = 0;
   deviceSettings = null;
   deviceHiddenSettings = null;
+  deviceMutableSettings = null;
   rateHistory.length = 0;
   rateHistoryLevels.length = 0;
   rateHistoryPulses.length = 0;
@@ -7401,6 +7602,7 @@ async function connectDevice(portOverride = null, transport = null) {
       activeTransport = 'serial';
       deviceSettings = null;
       deviceHiddenSettings = null;
+      deviceMutableSettings = null;
       logInfo = null;
       logRecords = [];
       logRefreshRetryAt = 0;
@@ -7446,6 +7648,7 @@ async function connectDevice(portOverride = null, transport = null) {
     elements.rebootFirmware.disabled = false;
     deviceSettings = null;
     deviceHiddenSettings = null;
+    deviceMutableSettings = null;
     logInfo = null;
     logRecords = [];
     logRefreshRetryAt = 0;
@@ -7472,6 +7675,7 @@ async function disconnectDevice() {
   polling = false;
   deviceSettings = null;
   deviceHiddenSettings = null;
+  deviceMutableSettings = null;
   logInfo = null;
   logRecords = [];
   logRefreshRetryAt = 0;

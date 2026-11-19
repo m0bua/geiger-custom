@@ -85,11 +85,20 @@ def main() -> int:
                         help="GitHub releases API response used to add versioned app snapshots")
     parser.add_argument("--spi-mini-bin", type=Path, default=DEFAULT_SPI_MINI,
                         help="SPI service firmware embedded in the live app")
+    parser.add_argument("--portal-build-api-url",
+                        default=os.environ.get("PORTAL_BUILD_API_URL", "").strip(),
+                        help="Public custom firmware API base URL embedded in the live app")
+    parser.add_argument("--custom-build-branch", choices=("dev", "main"),
+                        default=os.environ.get("PORTAL_BUILD_BRANCH", "dev").strip() or "dev",
+                        help="source branch used for custom firmware builds from the live app")
     args = parser.parse_args()
+    if args.portal_build_api_url and not args.portal_build_api_url.startswith("https://"):
+        raise ValueError("Portal build API URL must use HTTPS")
     output = args.output if args.output.is_absolute() else ROOT / args.output
     output.mkdir(parents=True, exist_ok=True)
 
     shutil.copytree(ROOT / "app", output / "app", dirs_exist_ok=True)
+    shutil.copytree(ROOT / "firmware/stock", output / "firmware/stock", dirs_exist_ok=True)
     mini_path = args.spi_mini_bin.resolve()
     if not mini_path.is_file():
         raise FileNotFoundError(f"SPI service firmware is missing: {mini_path}")
@@ -98,6 +107,21 @@ def main() -> int:
         raise ValueError(f"SPI service firmware has invalid size: {len(mini_bytes)} bytes")
     app_index = output / "app/index.html"
     app_document = app_index.read_text(encoding="utf-8")
+    app_document, branch_count = re.subn(
+        r'<meta name="portal-build-branch" content="">',
+        lambda _: f'<meta name="portal-build-branch" content="{args.custom_build_branch}">',
+        app_document, count=1,
+    )
+    if branch_count != 1:
+        raise ValueError("Could not configure the custom build source branch")
+    if args.portal_build_api_url:
+        app_document, api_url_count = re.subn(
+            r'<meta name="portal-build-api" content="">',
+            lambda _: f'<meta name="portal-build-api" content="{html.escape(args.portal_build_api_url.rstrip("/"), quote=True)}">',
+            app_document, count=1,
+        )
+        if api_url_count != 1:
+            raise ValueError("Could not configure the portal build API URL")
     injection = ("<script id=\"embedded-spi-mini\">window.EMBEDDED_SPI_MINI_B64=\"" +
                  base64.b64encode(mini_bytes).decode("ascii") + "\";</script>")
     app_document, embedded_count = re.subn(

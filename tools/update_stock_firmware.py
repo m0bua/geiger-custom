@@ -10,7 +10,7 @@ from urllib.parse import quote, unquote, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
 from build_release import validate_stock_hex
-from stock_firmware import STOCK_DIR
+from stock_firmware import STOCK_DIR, write_browser_catalog
 
 
 ALLOWED_HOSTS = {"milerdport.cloud", "mainserver.milerd.ru"}
@@ -154,6 +154,8 @@ def main() -> int:
         print(f"Updated provenance manifest: {MANIFEST.relative_to(STOCK_DIR.parents[1])}")
     else:
         print("No new firmware images or source records.")
+    catalog_path = write_browser_catalog()
+    print(f"Updated browser stock firmware catalog: {catalog_path.relative_to(STOCK_DIR.parents[1])}")
     return 0
 
 

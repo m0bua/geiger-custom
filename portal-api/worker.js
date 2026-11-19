@@ -1,12 +1,21 @@
 const API_VERSION = "2026-03-10";
 const PROFILE_FORMAT = "geiger-custom-firmware-profile";
 const WORKFLOW_FILE = "build-custom-firmware.yml";
-const SOURCE_BRANCH = "dev";
 const PROFILE_FEATURES = [
   "logs.enabled", "device.graphs", "device.debug",
   "indication.flashlight", "indication.modes", "alarms.rate",
   "alarms.dose", "theme.editable", "settings.mutable",
 ];
+const PROFILE_SETTINGS = {
+  led: 6, clicks: 6, "rate-screen": 4, "rate-light": 4, "rate-sound": 4,
+  "led-bright": 9, "screen-bright": 9, "screen-timer": 6, "lead-zero": 2,
+  unit: 3, "rate-prefix": 4, "dose-prefix": 4, "rate-row-2": 6,
+  "log-memory": 3, hv: 2, "rate-custom": 9, "alarm-stop": 2, tone: 2,
+  "long-press": 6, "dose-row-2": 8, "dose-period": 4, "dose-screen": 4,
+  "dose-light": 4, "dose-sound": 4, "dose-custom": 8, "led-time": 9,
+  "batt-format": 3, "led-color": 2, "rate-accuracy": 6,
+};
+const PROFILE_THEMES = ["dark", "light", "ocean", "amber", "violet", "monokai", "dracula", "nord", "solarized", "custom"];
 
 function response(request, env, body, status = 200, extra = {}) {
   const origin = request.headers.get("Origin") || "";
@@ -134,6 +143,31 @@ function validateProfile(profile) {
       throw new Error(`Feature ${key} must be true or false.`);
     }
   }
+  if (profile.settings !== undefined &&
+      (!profile.settings || typeof profile.settings !== "object" || Array.isArray(profile.settings))) {
+    throw new Error("settings must be a JSON object.");
+  }
+  for (const [key, setting] of Object.entries(profile.settings || {})) {
+    if (!(key in PROFILE_SETTINGS)) continue;
+    if (!setting || typeof setting !== "object" || Array.isArray(setting) ||
+        ("mutable" in setting && typeof setting.mutable !== "boolean") ||
+        ("default" in setting && (!Number.isInteger(setting.default) ||
+          setting.default < 0 || setting.default >= PROFILE_SETTINGS[key]))) {
+      throw new Error(`Invalid build setting ${key}.`);
+    }
+  }
+  if (profile.theme !== undefined &&
+      (!profile.theme || typeof profile.theme !== "object" || Array.isArray(profile.theme) ||
+       ("mutable" in profile.theme && typeof profile.theme.mutable !== "boolean") ||
+       ("preset" in profile.theme && !PROFILE_THEMES.includes(profile.theme.preset)) ||
+       ("colors" in profile.theme && (!Array.isArray(profile.theme.colors) ||
+         profile.theme.colors.length !== 7 ||
+         profile.theme.colors.some((color) => typeof color !== "string" ||
+           !/^#[0-9a-f]{6}$/i.test(color)))) ||
+       ("dimming" in profile.theme && (!Number.isInteger(profile.theme.dimming) ||
+         profile.theme.dimming < 0 || profile.theme.dimming > 100)))) {
+    throw new Error("Invalid build theme.");
+  }
   return profile;
 }
 
@@ -174,6 +208,10 @@ async function authDevicePoll(request, env) {
 async function createBuild(request, env) {
   const user = await authenticatedUser(request, env);
   const body = await readJson(request);
+  const sourceBranch = body.sourceBranch;
+  if (sourceBranch !== "dev" && sourceBranch !== "main") {
+    return fail(request, env, 400, "Custom build source branch must be dev or main.");
+  }
   const profile = validateProfile(body.profile);
   const idem = request.headers.get("Idempotency-Key") || "";
   if (!/^[a-zA-Z0-9_-]{12,100}$/.test(idem)) {
@@ -197,7 +235,7 @@ async function createBuild(request, env) {
   const dispatch = await fetch(endpoint, {
     method: "POST",
     headers: githubHeaders(token),
-    body: JSON.stringify({ref: SOURCE_BRANCH, inputs: {profile_json: JSON.stringify(profile)}}),
+    body: JSON.stringify({ref: sourceBranch, inputs: {profile_json: JSON.stringify(profile)}}),
   });
   const result = await dispatch.json().catch(() => ({}));
   if (!dispatch.ok || !result.workflow_run_id) {

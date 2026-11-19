@@ -78,7 +78,8 @@ void board_display_extra_exit(void);
 void board_display_force_home(void);
 bool board_display_settings_list_active(void);
 uint8_t board_display_settings_remote_count(void);
-bool board_display_settings_remote_read(uint8_t *values, uint8_t capacity);
+bool board_display_settings_remote_read(uint8_t *values, uint8_t capacity,
+                                       bool include_mutability);
 uint32_t board_display_settings_hidden_mask(void);
 bool board_display_setting_remote_write(uint8_t setting_id, uint8_t value);
 uint8_t board_display_theme_color_count(void);

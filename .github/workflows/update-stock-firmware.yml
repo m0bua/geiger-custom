@@ -38,9 +38,10 @@ jobs:
           add-paths: |
             firmware/stock/*.hex
             firmware/stock/sources.json
+            firmware/stock/catalog.js
           commit-message: Add newly published stock firmware
           title: Add newly published stock firmware
           body: |
             Scheduled check of the Milerd PORT firmware update API found new HEX images.
 
-            The updater validates Intel HEX structure, flash address range, and vector table, and records source URLs and SHA-256 hashes in `firmware/stock/sources.json`.
+            The updater validates Intel HEX structure, flash address range, and vector table, records source URLs and SHA-256 hashes in `firmware/stock/sources.json`, and regenerates the local browser catalog.

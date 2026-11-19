@@ -81,8 +81,35 @@ For each applicable setting, distinguish two build-time choices:
 
 - **Variable:** retain the setting UI/protocol/persistence so it can be
   changed on the device or through the app.
-- **Fixed:** keep the behavior, but compile in the selected value as a build
-  default and remove the runtime mutability machinery for that setting.
+- **Static:** keep the behavior, compile the selected value as a build default,
+  and remove runtime controls for that setting.
+
+The Quick Firmware builder presents device settings and the theme in one
+generated configuration view. Setting rows use the Settings tab layout (three
+columns on wide screens) and have a **Static** checkbox and a default selector.
+Static settings keep the selected behavior while removing
+the setting from device/app controls; variable settings keep runtime controls
+and use the selected value as their initial default. The theme row has the
+same static switch, offers the existing palette presets, and edits the actual
+seven palette colors in the same grouped editor as app theme settings. Its
+palette code can be copied in the existing T2 format and pasted into the
+app's theme settings. By default, settings hidden in the app's device settings
+catalog start Static in the build profile, visible settings start Variable,
+and the theme starts Static. This default mapping uses the same hidden-setting
+set as the app's settings view.
+
+HV is treated specially: its build default is ON, with an ON/OFF selector.
+**Always ON** makes HV static and locks that selector to ON; the device cannot
+turn HV off in that profile.
+
+The profile stores each setting under a stable descriptive key as
+`{"mutable": true|false, "default": N}` and stores the theme as
+`{"mutable": true|false, "preset": "dark", "colors": ["#RRGGBB", ...], "dimming": N}`. Selecting a preset fills its palette, while custom edits retain the individual colors. The aggregate
+`features.settings.mutable` and `features.theme.editable` fields are derived
+for compatibility with feature-level build logic. Schema version 2 adds the
+per-setting defaults and mutability fields; schema version 3 stores the full
+theme palette. Imports continue to accept earlier profiles and convert known
+theme presets to their palette colors.
 
 For the rate-alarm and dose-alarm groups, also provide a separate
 **feature-disabled** choice. This removes that alarm class itself, including
@@ -196,6 +223,10 @@ summary alongside the JSON.
 
 - Keep feature flags and capacities in a single build-profile configuration
   consumed by the firmware build system and the Quick Firmware UI.
+- Represent each setting and the theme with a `mutable` flag and a selected
+  compile-time default; derive aggregate mutability feature flags from them.
+- Build the static/default controls as one view from the existing app setting
+  and theme catalogs, not as separate hand-maintained lists.
 - Version and validate the exported/imported JSON profile. Use stable named
   keys rather than positional indexes, and define defaults, unknown-key
   handling, and forward-compatible round-tripping for future schema changes.
