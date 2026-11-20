@@ -76,9 +76,6 @@ window.addEventListener('keydown', (event) => {
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", help="version shown in About; defaults to build time plus -local")
-    parser.add_argument("--portal-build-api-url",
-                        default=os.environ.get("PORTAL_BUILD_API_URL", ""),
-                        help="public HTTPS base URL for the custom firmware API")
     parser.add_argument("--toolchain", type=Path,
                         help="ARM GCC bin directory passed to firmware builder")
     parser.add_argument("--firmware-bin", type=Path,
@@ -120,8 +117,6 @@ def main() -> int:
                "--output", str(embedded_html)]
     if args.version:
         command.extend(["--version", args.version])
-    if args.portal_build_api_url:
-        command.extend(["--portal-build-api-url", args.portal_build_api_url])
     if args.toolchain:
         command.extend(["--toolchain", str(args.toolchain.resolve())])
     if args.firmware_bin:

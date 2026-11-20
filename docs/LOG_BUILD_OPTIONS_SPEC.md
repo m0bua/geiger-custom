@@ -27,46 +27,30 @@ before the image can be flashed.
 
 ## Portal build delivery architecture
 
-Keep the portal static on GitHub Pages and add a separate server-side API for
-custom builds; do not embed a shared GitHub token in portal JavaScript. A
-Cloudflare Worker is the proposed API host. Cloudflare Pages Functions are an
-alternative only if portal hosting moves from GitHub Pages to Cloudflare Pages.
+Keep the portal static on GitHub Pages and use a public GitHub Issue as the
+request queue; no Cloudflare service or shared browser token is needed. The
+app opens a prefilled issue containing a versioned profile, request ID, and a
+fixed source-branch choice (`dev` or `main`). The user must submit the issue
+from a GitHub account; repository write access is not required. Make clear in
+the UI that the issue and profile are public. Never include device data or
+secrets in the profile.
 
-Use two asynchronous API requests; the portal must not hold one HTTP request
-open for the duration of a firmware build:
+The dedicated `build-custom-firmware.yml` workflow responds to newly opened
+issues with the exact request title prefix. It validates the marker, request
+ID, profile size and schema, and branch before checking out firmware source.
+Rate limit each account to three requests per rolling 24 hours. The workflow
+builds with the same validated profile/build script as local builds, enforces
+the exact Flash limit, and uploads BIN, HEX, profile, and build summary as an
+artifact. It comments on the issue with acceptance, status, and the Actions
+run/artifact link; artifacts expire after three days. Pre-release app builds
+select `dev`, stable app builds select `main`.
 
-1. `POST /api/builds` accepts a versioned JSON profile plus an idempotency key.
-   The API authenticates the user, validates the profile against an allowlist,
-   applies rate limits, dispatches a dedicated GitHub Actions workflow, stores
-   the requesting user and workflow run ID, then quickly returns a `buildId`
-   and status URL. Repeating the same request with the same idempotency key
-   must return the existing in-flight build instead of dispatching another.
-2. `GET /api/builds/{buildId}` returns the current state (`queued`,
-   `in_progress`, `success`, or `failure`) and, when complete, the exact Flash
-   usage, build summary, and download links for BIN/HEX and the profile/hash
-   manifest. Only the authenticated owner of that build may poll it. The portal
-   polls with a bounded interval/backoff and stops on a terminal state.
-3. The workflow checks out a fixed allowed branch/ref, builds the firmware,
-   enforces the exact Flash limit, and uploads BIN, HEX, build summary, profile,
-   and image hash as artifacts.
-
-Use a GitHub App installation token held only by the API, with the minimum
-repository permissions needed to dispatch the workflow and read its run and
-artifacts. Store build ownership and idempotency records in a server-side store
-with an expiry. The API must never accept an arbitrary repository, branch,
-workflow, shell command, or build script from the browser. Restrict dispatch to
-the dedicated build workflow and a fixed trusted source branch. Authenticate
-users and limit build frequency so the API cannot be used as an open Actions
-runner.
-Keep the default firmware embedded in the app as the immediate offline option;
-custom builds require network access and depend on the API and GitHub Actions.
-
-GitHub Pages remains responsible only for static portal assets. If the API is
-unavailable, the default embedded firmware and manual firmware upload continue
-to work. Public repository artifacts may be downloadable without a GitHub
-token, but triggering a workflow requires write-level Actions authorization;
-the server-side GitHub App mediates that permission for authorized portal
-users.
+GitHub requires an issue-triggered workflow to exist on the repository's
+default branch. Therefore this flow cannot be activated for public issue
+requests until the workflow, request validator, profile validator, and build
+script are present on `main`. Keep implementation on `dev` until separately
+authorized to update `main`. Until then, the custom-build view is a preview;
+the embedded Quick flash and manual upload continue to work.
 
 ## User-facing build options
 

@@ -195,9 +195,6 @@ def main() -> int:
                         help="optional ARM GCC bin directory passed to build_firmware.py")
     parser.add_argument("--version",
                         help="version label embedded in About (release tag, e.g. YYYYMMDDhhmm)")
-    parser.add_argument("--portal-build-api-url",
-                        default=os.environ.get("PORTAL_BUILD_API_URL", ""),
-                        help="public HTTPS base URL for the custom firmware API")
     parser.add_argument("--require-minifier", action="store_true",
                         default=os.environ.get("CI", "").lower() == "true",
                         help="fail unless Terser is available (automatically required on CI)")
@@ -267,16 +264,6 @@ def main() -> int:
     )
     if branch_count != 1:
         raise ValueError("Could not configure the custom build source branch")
-    if args.portal_build_api_url:
-        if not args.portal_build_api_url.startswith("https://"):
-            raise ValueError("Portal build API URL must use HTTPS")
-        document, api_url_count = re.subn(
-            r'<meta name="portal-build-api" content="">',
-            lambda _: f'<meta name="portal-build-api" content="{html.escape(args.portal_build_api_url.rstrip("/"), quote=True)}">',
-            document, count=1,
-        )
-        if api_url_count != 1:
-            raise ValueError("Could not configure the portal build API URL")
     document, version_count = re.subn(
         r'(<strong id="app-version">).*?(</strong>)',
         lambda match: match.group(1) + html.escape(version) + match.group(2),

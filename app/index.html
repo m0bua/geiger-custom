@@ -4,7 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b1115">
-  <meta name="portal-build-api" content="">
   <meta name="portal-build-branch" content="">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -282,12 +281,7 @@
         </details>
       <details id="custom-firmware-builder" class="firmware-subsection custom-firmware-builder" hidden>
         <summary>Build custom firmware</summary>
-        <p>A custom build runs on GitHub Actions and needs an internet connection.</p>
-        <div class="custom-build-auth">
-          <button id="custom-build-sign-in" class="button button-quiet" type="button">Sign in with GitHub</button>
-          <a id="custom-build-auth-link" href="https://github.com/login/device" target="_blank" rel="noopener" hidden>Authorize device code</a>
-          <code id="custom-build-auth-code" hidden></code>
-        </div>
+        <p>Builds run on GitHub Actions. Start build opens a prefilled public GitHub issue containing your profile; submit the issue to start the build. You need a GitHub account to submit it. Up to three requests per account are accepted every 24 hours. Progress and the artifact link appear in the issue.</p>
         <div class="custom-build-features">
           <label><input type="checkbox" data-build-feature="logs.enabled" checked> Logs</label>
           <label><input type="checkbox" data-build-feature="device.graphs" checked> On-device graphs</label>
@@ -314,8 +308,7 @@
         </div>
         <div class="actions">
           <button id="custom-build-start" class="button button-primary" type="button" disabled>Start build</button>
-          <a id="custom-build-download" class="button button-quiet" hidden>Download custom firmware</a>
-          <a id="custom-build-run" target="_blank" rel="noopener" hidden>Open build on GitHub</a>
+          <a id="custom-build-run" class="button button-quiet" target="_blank" rel="noopener" hidden>Open GitHub build request</a>
         </div>
         <p id="custom-build-status" role="status" aria-live="polite">Configure a profile to start a custom build.</p>
       </details>
@@ -622,7 +615,7 @@
         <ul>
           <li><strong>Quick flash:</strong> programs the firmware embedded in the release app. In a local project build this action is available only when the app was built with the project firmware.</li>
           <li><strong>Stock images:</strong> Current Firmware → Stock contains validated stock HEX images. Choose a version button to flash that image directly; no file selection is needed. The list is ordered newest version first; English is preferred when versions match. Source links are listed below the buttons.</li>
-          <li><strong>Custom builds:</strong> when available, open Current Firmware → Build custom firmware, sign in with an authorized GitHub account, select features and build-time settings, then start the build. Builds run on GitHub Actions and need internet access. The estimate is approximate; use the completed build's reported size. Export, apply, or copy a versioned JSON profile to reuse configuration. Pre-release apps build from <code>dev</code>; stable apps build from <code>main</code>.</li>
+          <li><strong>Custom builds:</strong> in a published app, open Current Firmware → Build custom firmware, choose features and build-time settings, then select Start build. The app opens a prefilled public GitHub issue with the profile; submit it to queue the build. A GitHub account and internet access are required, but repository write access is not. The issue shows progress and links to the BIN, HEX, and build report; artifacts expire after three days. Up to three requests per account are accepted per 24 hours. The estimate is approximate; use the completed build's reported size. Export, apply, or copy a versioned JSON profile to reuse configuration. Pre-release apps build from <code>dev</code>; stable apps build from <code>main</code>. The local source preview allows profile editing but cannot submit builds.</li>
           <li><strong>Firmware backup:</strong> a firmware write first asks for confirmation. Only after confirmation does the app reuse an existing original FLASH backup or capture one before programming. If capture fails, programming stops before erase. Manual Dump FLASH creates a separate copy; use <strong>Restore original</strong> for that copy.</li>
           <li><strong>SPI operations:</strong> direct SPI reads are attempted first. If a read needs the temporary SPI service firmware, the app asks before restarting, saves a temporary recovery copy, and restores and verifies the original firmware afterward. Keep the device connected until the operation finishes.</li>
           <li><strong>Downloads:</strong> saved FLASH backups, manual FLASH dumps, EEPROM dumps, and SPI dumps appear in Downloads when available. Download an image again or use its action to load it into the matching FLASH, EEPROM, or SPI operation. EEPROM and SPI filenames include the byte range; FLASH filenames identify automatic copies and firmware type.</li>
@@ -655,10 +648,17 @@
           <div class="release-history-content">
         <ul class="release-list">
           <li>
+            <time datetime="2026-11-20">2026-11-20</time> — GitHub custom-build request flow:
+            <ul>
+              <li>Custom builds can be requested without repository write access. The app opens a prefilled public issue; submitting it queues a GitHub Actions build, and the issue receives progress and the artifact link.</li>
+              <li>Build profiles are validated before compilation, requests are limited to three per GitHub account per 24 hours, and artifacts are retained for three days. Pre-release and stable apps select <code>dev</code> and <code>main</code> respectively.</li>
+            </ul>
+          </li>
+          <li>
             <time datetime="2026-11-19">2026-11-19</time> — Custom firmware builds, firmware page, RATE ACCURACY, and HV dose period:
             <ul>
               <li>Added custom firmware builds through GitHub Actions, with optional feature removal, configurable static settings and theme defaults, and an approximate Flash estimate.</li>
-              <li>Added versioned JSON build profiles with export, import, and copy actions. Building requires GitHub sign-in, internet access, and an app configured with the build API URL.</li>
+              <li>Added versioned JSON build profiles with export, import, and copy actions.</li>
               <li>Grouped Quick flash, stock firmware, and custom builds under Current Firmware. Stock images can be flashed directly from their buttons.</li>
               <li>Restored the full RATE ACCURACY range from 30% to 5% in 5% steps in both the app and device settings.</li>
               <li>Set RATE ACCURACY to 10% by default. During the blue sampling phase, detector pulse flashes are blue; after the target is reached, LED color follows the configured rate level.</li>

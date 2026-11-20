@@ -1,9 +1,6 @@
-const PORTAL_BUILD_API_URL =
-  document.querySelector('meta[name="portal-build-api"]')?.content.trim().replace(/\/+$/, '') || '';
 const PORTAL_BUILD_BRANCH =
   document.querySelector('meta[name="portal-build-branch"]')?.content.trim() || '';
-const PORTAL_BUILD_CONFIGURED = Boolean(PORTAL_BUILD_API_URL) &&
-  ['dev', 'main'].includes(PORTAL_BUILD_BRANCH);
+const PORTAL_BUILD_CONFIGURED = ['dev', 'main'].includes(PORTAL_BUILD_BRANCH);
 const CUSTOM_BUILD_PROFILE_FORMAT = 'geiger-custom-firmware-profile';
 const CUSTOM_BUILD_FEATURES = [
   'logs.enabled', 'device.graphs', 'device.debug', 'indication.flashlight',
@@ -17,9 +14,6 @@ const CUSTOM_BUILD_SETTING_OPTION_COUNTS = [
   6, 6, 4, 4, 4, 9, 9, 6, 2, 3, 4, 4, 6, 3, 6, 2,
   9, 2, 1, 1, 2, 6, 8, 4, 4, 4, 4, 8, 9, 3, 2, 6,
 ];
-let customBuildAccessToken = '';
-let customBuildAuthActive = false;
-let customBuildPollActive = false;
 let customBuildUnknownProfile = {};
 
 function customBuildSettingKey(setting) {
@@ -353,7 +347,7 @@ let customBuildViewInitialized = false;
 function updateCustomBuildProfileView() {
   if (!elements.customFirmwareBuilder) return;
   const hasEmbeddedFirmware = typeof globalThis.EMBEDDED_FIRMWARE_B64 === 'string';
-  const previewOnly = !PORTAL_BUILD_API_URL;
+  const previewOnly = typeof globalThis.EMBEDDED_FIRMWARE_B64 !== 'string';
   const initializeDisclosure = !customBuildViewInitialized;
   const customSummary = elements.customFirmwareBuilder.querySelector(':scope > summary');
   if (elements.firmwareCurrentSection) {
@@ -387,7 +381,6 @@ function updateCustomBuildProfileView() {
     }
   }
   elements.customFirmwareBuilder.hidden = false;
-  elements.customBuildSignIn.disabled = !PORTAL_BUILD_CONFIGURED || customBuildAuthActive;
   renderCustomBuildConfiguration();
   updateCustomBuildEstimate();
   if (elements.customBuildProfileJson && !elements.customBuildProfileJson.value) {
@@ -395,14 +388,11 @@ function updateCustomBuildProfileView() {
   }
   if (!PORTAL_BUILD_CONFIGURED) {
     elements.customBuildStart.disabled = true;
-    elements.customBuildStatus.textContent =
-      !PORTAL_BUILD_API_URL ?
-        'Preview only: custom builds are unavailable because this app has no build API URL.' :
-        'Custom builds are unavailable because this app has no valid build source branch.';
+    elements.customBuildStatus.textContent = 'Preview only: custom builds are available in a published app configured for dev or main.';
     customBuildViewInitialized = true;
     return;
   }
-  elements.customBuildStart.disabled = !customBuildAccessToken || customBuildPollActive;
+  elements.customBuildStart.disabled = false;
   customBuildViewInitialized = true;
 }
 
@@ -421,98 +411,8 @@ function updateCustomBuildEstimate() {
     '(rough estimate from measured Full and Minimal builds; exact size follows compilation).';
 }
 
-async function customBuildApi(path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  headers.set('Accept', 'application/json');
-  if (customBuildAccessToken) headers.set('Authorization', `Bearer ${customBuildAccessToken}`);
-  if (options.body) headers.set('Content-Type', 'application/json');
-  const response = await fetch(`${PORTAL_BUILD_API_URL}${path}`, {...options, headers});
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || `Build API returned HTTP ${response.status}.`);
-  return body;
-}
-
-async function customBuildSignIn() {
-  if (!PORTAL_BUILD_CONFIGURED || customBuildAuthActive) return;
-  customBuildAuthActive = true;
-  elements.customBuildSignIn.disabled = true;
-  elements.customBuildStatus.textContent = 'Starting GitHub device authorization…';
-  elements.customBuildAuthCode.hidden = true;
-  elements.customBuildAuthLink.hidden = true;
-  try {
-    const device = await customBuildApi('/api/auth/device', {method: 'POST', body: '{}'});
-    elements.customBuildAuthLink.href = device.verification_uri;
-    elements.customBuildAuthLink.hidden = false;
-    elements.customBuildAuthCode.textContent = device.user_code;
-    elements.customBuildAuthCode.hidden = false;
-    elements.customBuildStatus.textContent = 'Open the GitHub authorization link and enter the code.';
-    let interval = Math.max(5, Number(device.interval) || 5);
-    const deadline = Date.now() + Math.max(60, Number(device.expires_in) || 900) * 1000;
-    while (Date.now() < deadline && customBuildAuthActive) {
-      await new Promise((resolve) => setTimeout(resolve, interval * 1000));
-      const result = await customBuildApi('/api/auth/poll', {
-        method: 'POST', body: JSON.stringify({device_code: device.device_code}),
-      });
-      if (result.access_token) {
-        customBuildAccessToken = result.access_token;
-        elements.customBuildAuthCode.hidden = true;
-        elements.customBuildAuthLink.hidden = true;
-        elements.customBuildStatus.textContent = 'GitHub authorization complete. You can start a build.';
-        updateCustomBuildProfileView();
-        return;
-      }
-      if (result.error === 'authorization_pending') continue;
-      if (result.error === 'slow_down') { interval += 5; continue; }
-      if (result.error) throw new Error(result.error_description || result.error);
-    }
-    if (customBuildAuthActive) elements.customBuildStatus.textContent = 'GitHub authorization expired. Try again.';
-  } catch (error) {
-    elements.customBuildStatus.textContent = error.message;
-  } finally {
-    customBuildAuthActive = false;
-    elements.customBuildSignIn.disabled = false;
-  }
-}
-
-async function pollCustomBuild(buildId, statusUrl, runUrl) {
-  customBuildPollActive = true;
-  elements.customBuildStart.disabled = true;
-  elements.customBuildDownload.hidden = true;
-  if (runUrl) {
-    elements.customBuildRun.href = runUrl;
-    elements.customBuildRun.hidden = false;
-  }
-  try {
-    for (let attempt = 0; attempt < 80; ++attempt) {
-      await new Promise((resolve) => setTimeout(resolve, attempt < 8 ? 5000 : 15000));
-      const status = await customBuildApi(statusUrl);
-      if (status.runUrl) {
-        elements.customBuildRun.href = status.runUrl;
-        elements.customBuildRun.hidden = false;
-      }
-      if (status.status === 'success') {
-        if (!status.artifactUrl) throw new Error('Build succeeded, but its artifact is not available yet.');
-        elements.customBuildDownload.href = status.artifactUrl;
-        elements.customBuildDownload.hidden = false;
-        elements.customBuildStatus.textContent = 'Build complete. Download the ZIP; it contains BIN, HEX, profile, and exact Flash report.';
-        return;
-      }
-      if (['failure', 'cancelled', 'timed_out', 'action_required'].includes(status.status)) {
-        throw new Error(`Build ${status.status}. Open the GitHub run for details.`);
-      }
-      elements.customBuildStatus.textContent = `Build ${status.status || 'in progress'}…`;
-    }
-    throw new Error('Build is taking longer than expected. Check the GitHub run for its latest status.');
-  } catch (error) {
-    elements.customBuildStatus.textContent = error.message;
-  } finally {
-    customBuildPollActive = false;
-    updateCustomBuildProfileView();
-  }
-}
-
 async function startCustomBuild() {
-  if (!customBuildAccessToken || customBuildPollActive) return;
+  if (!PORTAL_BUILD_CONFIGURED) return;
   const invalidColor = elements.customBuildConfigList.querySelector('.theme-color-code[aria-invalid="true"]');
   const invalidThemeField = invalidColor ||
     elements.customBuildConfigList.querySelector('.theme-dimming-control input[aria-invalid="true"]');
@@ -522,24 +422,29 @@ async function startCustomBuild() {
     return;
   }
   const profile = customBuildProfile();
-  const idempotencyKey = crypto.randomUUID();
-  elements.customBuildStatus.textContent = 'Submitting build request…';
-  elements.customBuildDownload.hidden = true;
-  elements.customBuildRun.hidden = true;
   try {
-    const created = await customBuildApi('/api/builds', {
-      method: 'POST',
-      headers: {'Idempotency-Key': idempotencyKey},
-      body: JSON.stringify({profile, sourceBranch: PORTAL_BUILD_BRANCH}),
-    });
-    elements.customBuildStatus.textContent = 'Build queued on GitHub Actions.';
-    await pollCustomBuild(created.buildId, created.statusUrl, created.runUrl);
+    const requestId = crypto.randomUUID();
+    const issueBody = [
+      '<!-- geiger-custom-firmware-request:v1 -->',
+      `Source branch: ${PORTAL_BUILD_BRANCH}`,
+      `Request ID: ${requestId}`,
+      '',
+      '```json',
+      JSON.stringify(profile, null, 2),
+      '```',
+    ].join('\n');
+    const url = new URL('https://github.com/m0bua/geiger-custom/issues/new');
+    url.searchParams.set('title', `[Custom firmware] ${requestId.slice(0, 8)}`);
+    url.searchParams.set('body', issueBody);
+    elements.customBuildRun.href = url.href;
+    elements.customBuildRun.textContent = 'Open GitHub build request';
+    elements.customBuildRun.hidden = false;
+    elements.customBuildStatus.textContent = 'This creates a public GitHub issue. Open the request and submit it to start building; progress and the artifact link will appear in the issue.';
   } catch (error) {
     elements.customBuildStatus.textContent = error.message;
   }
 }
 
-elements.customBuildSignIn?.addEventListener('click', customBuildSignIn);
 elements.customBuildStart?.addEventListener('click', startCustomBuild);
 elements.customBuildExportProfile?.addEventListener('click', () => {
   elements.customBuildProfileJson.value = JSON.stringify(customBuildProfile(), null, 2);

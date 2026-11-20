@@ -127,8 +127,6 @@ jobs:
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      PORTAL_BUILD_API_URL: ${{ vars.PORTAL_BUILD_API_URL }}
     steps:
       - name: Check out release source
         uses: actions/checkout@v4
@@ -186,8 +184,6 @@ jobs:
     if: github.ref == 'refs/heads/dev'
     runs-on: windows-latest
     timeout-minutes: 35
-    env:
-      PORTAL_BUILD_API_URL: ${{ vars.PORTAL_BUILD_API_URL }}
     steps:
       - name: Check out dev
         uses: actions/checkout@v4
@@ -295,7 +291,7 @@ jobs:
           ## Changes
           **Changes since 202611191027-dev-b6e49f1:**
           - Added custom firmware builds from the app through an asynchronous GitHub Actions service. Choose optional firmware features, static settings and theme defaults, then start a build and download the compiled image when it finishes. The app shows an approximate Flash estimate; the completed build reports the actual image size.
-          - Added versioned JSON build-profile export, import, and copy. Custom builds require an internet connection, GitHub sign-in, and an app build configured with the build API URL. Pre-release apps build from `dev`; stable apps build from `main`.
+          - Added versioned JSON build-profile export, import, and copy. Custom builds require internet access and a GitHub account to submit a public build-request issue, but do not require repository write access. Pre-release apps build from `dev`; stable apps build from `main`.
           - Added embedded stock firmware images to the Stock list. Selecting a version flashes that exact image directly, without asking the user to locate a file.
 
           ### Known issue

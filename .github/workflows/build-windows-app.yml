@@ -19,8 +19,6 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 30
-    env:
-      PORTAL_BUILD_API_URL: ${{ vars.PORTAL_BUILD_API_URL }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4

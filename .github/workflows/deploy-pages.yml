@@ -47,7 +47,6 @@ jobs:
       - name: Assemble portal
         env:
           GH_TOKEN: ${{ github.token }}
-          PORTAL_BUILD_API_URL: ${{ vars.PORTAL_BUILD_API_URL }}
         run: |
           gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > /tmp/releases.json
           python tools/build_pages.py --releases-json /tmp/releases.json --spi-mini-bin .pio/build/geiger2_spi_mini/firmware.bin --custom-build-branch "${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || inputs.source_branch }}"

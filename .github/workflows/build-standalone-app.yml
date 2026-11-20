@@ -92,8 +92,6 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      PORTAL_BUILD_API_URL: ${{ vars.PORTAL_BUILD_API_URL }}
     outputs:
       tag: ${{ steps.release.outputs.tag }}
     steps:
@@ -155,8 +153,6 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: windows-latest
     timeout-minutes: 35
-    env:
-      PORTAL_BUILD_API_URL: ${{ vars.PORTAL_BUILD_API_URL }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -271,7 +267,7 @@ jobs:
           - Updated mobile layouts for settings, display themes, and navigation. On Android, Connect USB is the green primary action; Firefox for Android offers Open in Chrome for USB access and hides its unsupported Install button.
           - The Logs table now adapts to screen width without a separate horizontal scrollbar. Its column header and TOTAL row stay pinned while the page scrolls; fullscreen logs retain their own scrolling area. Controls wrap at intermediate widths and stay on one row on wide screens.
           - Updated the release portal to show the three newest stable releases and the first newer pre-release initially, with separate stable history and shared pre-release history controls.
-          - Added optional custom firmware builds from the app through an asynchronous GitHub Actions service. Users can select removable firmware features, choose which device settings and theme remain changeable, set build-time defaults, and export, import, or copy versioned JSON profiles. The app provides an approximate Flash estimate; the completed build reports exact usage. Builds require internet access, GitHub sign-in, and an app configured with the build API URL.
+          - Added optional custom firmware builds from the app through public GitHub build-request issues and GitHub Actions. Users can select removable firmware features, choose which device settings and theme remain changeable, set build-time defaults, and export, import, or copy versioned JSON profiles. The app provides an approximate Flash estimate; the completed build reports exact usage. Build requests require internet access and a GitHub account, but not repository write access.
           - The Firmware page groups embedded Quick flash, Stock images, and custom builds under Current Firmware. Stock images are embedded and flash directly from their buttons without a file picker.
           - Refreshed the manual's large screen digits to match the current Anonymous Pro Bold device font.
           - Improved newest-first MINUTES reads from SPI by searching the active stream and using the cached position instead of rescanning older sectors. Log coverage encoding now rounds to the nearest representable fraction.
